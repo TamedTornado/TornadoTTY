@@ -1,0 +1,77 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+binary="${repo_root}/target/debug/glib_quark_growth_reproducer"
+receipt="${repo_root}/build/linux/glib-quark-growth-memory-reproducer.raw.log"
+suppressed_receipt="${repo_root}/build/linux/glib-quark-growth-memory-reproducer.suppressed.log"
+suppression="${repo_root}/linux/tests/valgrind.supp"
+ghostty_lib_dir="${repo_root}/build/linux-profiles/debug/lib"
+
+fail() {
+    echo "glib-quark-growth-memory-reproducer: error: $*" >&2
+    exit 1
+}
+
+for dependency in cargo pkg-config valgrind ldd grep sed; do
+    command -v "${dependency}" >/dev/null || fail "${dependency} is required"
+done
+[[ "$(pkg-config --modversion glib-2.0)" == 2.80.0 ]] ||
+    fail "this tracked reproducer requires the qualified GLib 2.80.0"
+[[ -f "${ghostty_lib_dir}/libghostty-gtk-embed.so" ]] ||
+    fail "the prepared Debug Ghostty library is required to build the test-support package"
+
+GHOSTTY_LIB_DIR="${ghostty_lib_dir}" \
+    cargo build --locked -p zentty-test-support \
+        --bin glib_quark_growth_reproducer
+[[ -x "${binary}" ]] || fail "reproducer binary was not built"
+if ldd "${binary}" | grep -Fq 'libghostty'; then
+    fail "minimal GLib reproducer unexpectedly links Ghostty"
+fi
+
+mkdir -p "$(dirname "${receipt}")"
+rm -f -- "${receipt}" "${suppressed_receipt}"
+valgrind_flags=(
+    -s
+    --read-inline-info=no
+    --num-callers=20
+    --leak-check=full
+    "--show-leak-kinds=definite,indirect"
+    "--errors-for-leak-kinds=definite,indirect"
+)
+valgrind "${valgrind_flags[@]}" \
+    --log-file="${receipt}" \
+    "${binary}" >/dev/null
+valgrind "${valgrind_flags[@]}" \
+    --error-exitcode=99 \
+    --suppressions="${suppression}" \
+    --log-file="${suppressed_receipt}" \
+    "${binary}" >/dev/null
+
+[[ -s "${receipt}" ]] || fail "Valgrind did not produce a raw receipt"
+[[ -s "${suppressed_receipt}" ]] ||
+    fail "Valgrind did not produce a suppression-enabled receipt"
+finding="$(
+    sed -n \
+        '/16,384 bytes in 1 blocks are definitely lost/,/^==[0-9]*== $/p' \
+        "${receipt}" | head -40
+)"
+grep -Fq 'fun:g_malloc' <<<"${finding}" &&
+    fail "raw Valgrind output unexpectedly contained suppression syntax"
+grep -Fq 'g_malloc' <<<"${finding}" ||
+    fail "tracked quark-array allocation no longer originates in g_malloc"
+grep -Fq 'libglib-2.0.so.0.8000.0' <<<"${finding}" ||
+    fail "tracked quark-array allocation no longer originates in GLib 2.80.0"
+grep -Fq 'call_init' <<<"${finding}" ||
+    fail "tracked quark-array allocation no longer comes from GLib initialization"
+grep -Eq 'used_suppression:[[:space:]]+1 GLib quark array growth .* suppressed: 16,384 bytes in 1 blocks' \
+    "${suppressed_receipt}" ||
+    fail "reviewed suppression did not match exactly one 16 KiB quark array"
+grep -Eq 'ERROR SUMMARY: 0 errors from 0 contexts \(suppressed: 1 from 1\)' \
+    "${suppressed_receipt}" ||
+    fail "suppression-enabled reproducer retained an unexpected finding"
+grep -Fxq 'glib-quark-growth-reproducer: PASS created=2500' <(
+    "${binary}"
+) || fail "minimal reproducer did not complete its quark-growth boundary"
+
+echo "Tracked GLib quark-array growth reproduced without Ghostty: glib=2.80.0, raw_bytes=16384, post_bytes=0, receipts=${receipt},${suppressed_receipt}"

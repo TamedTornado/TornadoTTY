@@ -28,8 +28,8 @@ expect_failure() {
 
 summary="$(${runner} "${ledger}" "${matrix}")"
 jq -e '.total == 42 and .baseline.direct_unexpected == 36 and
-    .baseline.dependency_blocked == 6 and .replay.PASS == 39 and
-    .replay.FAIL == 1 and .replay.NOT_RUN == 2 and .unresolved == 3' \
+    .baseline.dependency_blocked == 6 and .replay.PASS == 42 and
+    (.replay | keys == ["PASS"]) and .unresolved == 0' \
     <<<"${summary}" >/dev/null ||
     fail "authoritative ledger summary is incorrect"
 

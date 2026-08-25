@@ -43,6 +43,7 @@ write_manifest() {
             manifest_semantics: {
                 "expected_suppressed.matches": "fixture match semantics",
                 "expected_suppressed.bytes": "fixture byte semantics",
+                expected_usage_lines_by_scenario: "fixture per-process usage-line semantics",
                 required_usage: "fixture scenario-conditional usage semantics",
                 usage_profiles: "fixture exact profile semantics",
                 "usage_profiles.evidence_identity": "fixture identity-only evidence semantics",
@@ -79,6 +80,8 @@ write_report() {
     local backend="$2"
     local rule="$3"
     local bytes="${4:-10}"
+    local usage_lines="${5:-1}"
+    local usage_line_index
     local raw_identity suppressed_identity report_generated_at_epoch
     local raw_metrics suppressed_metrics suppression_usage suppressed_contexts
     local raw_environment suppressed_environment phase_environment
@@ -93,7 +96,7 @@ write_report() {
 ==1== ERROR SUMMARY: 1 errors from 1 contexts (suppressed: 0 from 0)
 EOF
     if (( matches > 0 )); then
-        suppressed_contexts=1
+        suppressed_contexts="${usage_lines}"
     else
         suppressed_contexts=0
     fi
@@ -103,9 +106,11 @@ EOF
 ==2== ERROR SUMMARY: 0 errors from 0 contexts (suppressed: ${matches} from ${suppressed_contexts})
 EOF
     if (( matches > 0 )); then
-        printf '%s\n' \
-            "==2== used_suppression: ${matches} ${rule} ${suppression}:1 suppressed: ${bytes} bytes in 1 blocks" \
-            >>"${suppressed_receipt}"
+        for ((usage_line_index = 0; usage_line_index < usage_lines; usage_line_index++)); do
+            printf '%s\n' \
+                "==2== used_suppression: ${matches} ${rule} ${suppression}:1 suppressed: ${bytes} bytes in 1 blocks" \
+                >>"${suppressed_receipt}"
+        done
     fi
     raw_identity="$(zentty_valgrind_receipt_identity_json "${raw_receipt}")"
     suppressed_identity="$(zentty_valgrind_receipt_identity_json "${suppressed_receipt}")"
@@ -380,6 +385,20 @@ mv -- "${temp_dir}/missing-report.json" "${report}"
 
 write_report 2 wayland "fixture rule"
 expect_failure increased-count "suppression count outside reviewed range"
+
+jq '(.rules[] | select(.rule_name == "fixture rule") |
+    .expected_usage_lines_by_scenario) = {"Debug/single/wayland": 1}' \
+    "${manifest}" >"${temp_dir}/usage-line-manifest.json"
+mv "${temp_dir}/usage-line-manifest.json" "${manifest}"
+write_report 1 wayland "fixture rule" 10 2
+expect_failure increased-usage-lines "suppression usage-line count changed"
+write_report 1 wayland "fixture rule"
+ZENTTY_SUPPRESSION_MANIFEST="${manifest}" \
+ZENTTY_SUPPRESSION_REPORTS_DIR="${reports}" \
+ZENTTY_VALGRIND_EXPECTED_REPORTS_JSON="${expected_reports_json}" \
+ZENTTY_SUPPRESSION_VALIDATION_NOW_EPOCH="$(date +%s)" \
+    "${validator}" >/dev/null
+write_manifest
 
 write_report 1 wayland "fixture rule" 11
 expect_failure increased-bytes "suppressed bytes outside reviewed range"
@@ -1030,6 +1049,7 @@ EOF
                 manifest_semantics: {
                     "expected_suppressed.matches": "fixture match semantics",
                     "expected_suppressed.bytes": "fixture byte semantics",
+                    expected_usage_lines_by_scenario: "fixture per-process usage-line semantics",
                     required_usage: "fixture scenario-conditional usage semantics",
                     usage_profiles: "fixture exact profile semantics",
                     "usage_profiles.evidence_identity": "fixture evidence semantics",

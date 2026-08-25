@@ -72,7 +72,12 @@ jq -e '
                 $rule.allowed_scenarios | index($scenario) != null) and
             (.value.matches.min <= .value.matches.max) and
             ((.value.bytes == null) or
-                (.value.bytes.min <= .value.bytes.max)))
+                (.value.bytes.min <= .value.bytes.max))) and
+        (.expected_usage_lines_by_scenario // {} | type == "object") and
+        all((.expected_usage_lines_by_scenario // {}) | to_entries[];
+            (.key as $scenario |
+                $rule.allowed_scenarios | index($scenario) != null) and
+            (.value | type == "number" and floor == . and . >= 1))
     ) and
     ([.rules[].rule_name] | length == (unique | length)) and
     ([.rules[].tracking_id] | length == (unique | length)) and
@@ -720,6 +725,22 @@ for report in "${reports[@]}"; do
         --arg suffix "${project_suffix}" \
         '.suppression_usage[] | select(.file | endswith($suffix))' \
         "${report}")
+    while IFS=$'\t' read -r occurrence_rule expected_occurrences; do
+        [[ -n "${occurrence_rule}" ]] || continue
+        actual_occurrences="$(jq -r \
+            --arg suffix "${project_suffix}" \
+            --arg rule "${occurrence_rule}" '
+                [.suppression_usage[] |
+                    select((.file | endswith($suffix)) and
+                        .rule_name == $rule)] | length
+            ' "${report}")"
+        [[ "${actual_occurrences}" -eq "${expected_occurrences}" ]] ||
+            fail "suppression usage-line count changed: ${occurrence_rule}=${actual_occurrences}, expected ${expected_occurrences} in ${scenario}"
+    done < <(jq -r --arg scenario "${scenario}" '
+        .rules[] |
+        select(.expected_usage_lines_by_scenario[$scenario] != null) |
+        [.rule_name, .expected_usage_lines_by_scenario[$scenario]] | @tsv
+    ' "${manifest}")
     if jq -e --arg scenario "${scenario}" \
         '.usage_profiles | any(.scenario == $scenario)' \
         "${manifest}" >/dev/null; then

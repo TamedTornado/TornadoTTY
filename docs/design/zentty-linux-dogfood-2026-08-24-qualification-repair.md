@@ -810,3 +810,116 @@ cluster evidence is green.
   pass. The intended focused validators (`qualification-matrix-test`, the
   orchestration contract, visual-parity negative fixtures, and the ledger
   contract) were then invoked by name and passed.
+
+### Debug X11 Valgrind publication and suppression governance
+
+- Both GH-93 prerequisites were replayed independently before any suppression
+  change. The real Debug single-terminal and three-process interaction journeys
+  each exited 99 after their semantic checks because every X11 product process
+  retained one 16,384-byte definite allocation. The corresponding Wayland
+  journeys did not contain it. The original 2026-08-23 raw, suppressed,
+  environment, and product-diagnostic receipts were copied together, hashed,
+  and given a provenance receipt under the ignored
+  `build/linux/gh93-baseline-20260823/` directory before fresh evidence replaced
+  the normal report paths.
+- Address-to-symbol and loader-constructor inspection identified the allocation
+  as GLib 2.80.0's `g_quark_init` array. The matching upstream `glib/gquark.c`
+  implementation starts with 2,048 pointers and deliberately does not free an
+  old array after growth so lockless readers remain safe. Upstream calls
+  `g_ignore_leak(old_quarks)`, but `glib-private.h` defines that annotation for
+  LeakSanitizer, not Valgrind Memcheck. GLib's own `tools/glib.supp` documents
+  deliberate one-time leaks but does not contain an exact rule for this quark
+  growth allocation. This is therefore an external intentional lifetime, not
+  evidence that Zentty or Ghostty failed to destroy a surface.
+- A new Rust-only minimal reproducer creates 2,500 GLib quarks without linking
+  Ghostty. Its runner verifies the exact GLib 2.80.0 runtime, proves with `ldd`
+  that Ghostty is absent, preserves unsuppressed and suppression-enabled
+  receipts side by side, and requires the raw 16,384-byte constructor finding.
+  The reviewed project rule names `malloc`, `g_malloc`, the exact GLib soname,
+  `call_init.part.0`, `_dl_init`, and the loader soname. It is allowed only in
+  the two affected Debug/X11 scenarios. The manifest requires exactly one
+  16,384-byte use per process: one usage line for `single`, three for
+  `interaction`.
+- Suppression-governance tests now reject a scenario whose individual usage
+  lines remain in range but whose number of identical per-process usage lines
+  increases. This closes a gap where an additional process could have used a
+  project suppression without changing any one line's match or byte count. The
+  fixture covers that negative case alongside missing cells, unknown rules,
+  stale rules, scenario escape, and range increases.
+- The first controlled X11 retry failed before product startup because the
+  filesystem sandbox remapped `/tmp/.X11-unix` ownership to `nobody`; Xvfb
+  correctly refused that insecure directory. Restoring the standard
+  root-owned, mode-1777 directory and running the controlled display outside
+  that sandbox repaired the environment. The failure was not converted into a
+  product pass.
+- Fresh Debug/X11 reports now publish. Single recorded 721 raw errors,
+  141,608 definite bytes, and 270,888 indirect bytes; interaction recorded 629
+  raw errors, 107,840 definite bytes, and 213,837 indirect bytes. Both recorded
+  zero post-suppression errors and zero definite or indirect bytes. These are
+  **PASS with reviewed suppressions**, not unsuppressed-clean claims. Raw and
+  suppressed receipt SHA-256 pairs are respectively
+  `723803434594eb56b73728e53ea7f74863e9339d32025baf084c1de77cc34214` /
+  `3b0153036dfb65ff30f0264c7f7085686878f9526cc967dd659e50cf8073ffb6`
+  and
+  `fa711410ba624977e5a3f11251b994575e2ff19383ea27795d08fa061532a3ba` /
+  `2507bc5563dac77279616e216e267e1081a77ab62e6cb89384c7f47d41905b62`.
+- Refreshing the complete seven-report governance set did what the ceilings are
+  intended to do: it stopped on higher Fontconfig/Pango cache usage rather than
+  silently accepting it. Receipt review confirmed the already narrowed stacks
+  and same-process separately suppressed Pango roots. Only empirical ceilings
+  were extended to the observed values, including 90 children/2,880 bytes in
+  interaction/X11; no Fontconfig suppression pattern was broadened. ReleaseSafe
+  Wayland and X11 remain exit-99 XFAIL evidence and did not receive the project
+  suppressions. After review, all seven current raw/suppressed report pairs and
+  suppression governance passed.
+- The 42-cell baseline failure ledger is now 42 PASS with no unresolved replay
+  entries. This resolves the historical failure set; it is not yet the final
+  authoritative `qualify-local` result and does not change any matrix XFAIL,
+  BLOCKED, or NOT_IMPLEMENTED qualification cell.
+- A focused `zentty-test-support --all-targets` invocation first used a relative
+  `GHOSTTY_LIB_DIR`; Cargo build-script working-directory semantics made that
+  path invalid, so the run was rejected and repeated with the absolute prepared
+  library path. The next sandboxed run denied the controlled Anthropic fixture's
+  loopback socket bind (`Operation not permitted`). The same unchanged package
+  suite passed outside the network sandbox: 15 tests across the controlled
+  agent servers and AT-SPI parser, plus every zero-test support binary target.
+  Neither environmental failure was counted as a test pass.
+- The first authoritative `qualify-local` closeout did not pass. It completed
+  in 349,240 ms and correctly reported `build-release`, `build-debug`, and
+  `architecture-contract-v1` as failures while suppression governance passed.
+  Both builds entered the required private HOME, then the new publication-age
+  audit found no crates.io sparse index there. The matrix now resolves and
+  validates the host Cargo and Rustup tool homes before crossing the isolation
+  boundary, exports those tool-only cache identities to its children, and
+  passes the exact sparse-index cache to the audit. User application HOME/XDG
+  state remains private. This also prevents every isolated build from trying to
+  download the pinned nightly toolchain and all locked crates again.
+- The architecture failure was genuine contract drift from the earlier stable
+  pane-card repair: `ApplicationShell` had replaced the obsolete
+  `topology_generation` field with `pane_drag_source_state` and added the
+  `pane_drag_payloads` projection method, but its ownership inventory had not
+  changed. The contract now records those existing responsibilities without
+  changing product behavior. Architecture negative fixtures and the focused
+  matrix runner tests passed. Both exact isolated build cells then passed with
+  the bound host tool caches, including the 91-package age audit, binary
+  hardening, and Ghostty ABI surface checks.
+- The second authoritative run exercised all 204 declared matrix cells in
+  851,480 ms. Both repaired build cells and the architecture contract passed;
+  all five Debug Valgrind producers passed with reviewed suppressions, and both
+  ReleaseSafe cells remained the required exit-99 XFAIL. The run nevertheless
+  reported 17 implemented-cell failures and therefore correctly made no local,
+  release, full-Linux, or suppression-acceptance claim. Sixteen failures were
+  outside GH-93 (real tmux targeting, IME/focus, clipboard/search, and bookmark
+  journeys plus exact visual comparisons) and remain work for parent GH-88;
+  they were not rerun into passes or hidden from the machine summary.
+- The seventeenth failure was suppression governance doing its job against the
+  concurrently refreshed receipts. It found further Fontconfig/Pango process-
+  cache variability: interaction/Wayland layout children reached
+  32/1,024; single/Wayland metrics reached a lower 1,488-byte root with
+  14/448 children; and single/X11 retained a 25,387-byte root with 18 narrowed
+  string contexts and 75/2,400 calloc children. Each occurrence retained the
+  existing exact Pango consumer stack and same-process separately suppressed
+  root. Reviewed scenario ceilings now include those observations without any
+  suppression-pattern change. Governance passed against all seven fresh report
+  pairs after the review. The authoritative full-run summary remains failed;
+  the focused governance rerun is not represented as a full qualification.

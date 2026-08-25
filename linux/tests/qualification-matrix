@@ -98,6 +98,7 @@ command -v mktemp >/dev/null || fail "mktemp is required"
 command -v readlink >/dev/null || fail "readlink is required"
 command -v date >/dev/null || fail "date is required"
 command -v env >/dev/null || fail "env is required"
+command -v find >/dev/null || fail "find is required"
 
 jq -e '.schema_version == 1 and (.cells | type == "array")' \
     "${matrix}" >/dev/null || fail "invalid matrix schema"
@@ -551,6 +552,30 @@ if "${validate_only}"; then
     echo "Qualification matrix schema and coverage passed"
     exit 0
 fi
+
+# Display-independent cells run with a private HOME. Resolve the already
+# fetched sparse-index metadata before entering that isolation boundary rather
+# than allowing the supply-chain audit to consult an empty private Cargo home.
+qualification_cargo_home="${CARGO_HOME:-${HOME}/.cargo}"
+qualification_rustup_home="${RUSTUP_HOME:-${HOME}/.rustup}"
+[[ -d "${qualification_cargo_home}" ]] ||
+    fail "host Cargo home is missing: ${qualification_cargo_home}"
+[[ -d "${qualification_rustup_home}" ]] ||
+    fail "host Rustup home is missing: ${qualification_rustup_home}"
+export CARGO_HOME="${qualification_cargo_home}"
+export RUSTUP_HOME="${qualification_rustup_home}"
+if [[ -z "${ZENTTY_CARGO_AGE_INDEX_CACHE:-}" ]]; then
+    mapfile -t cargo_index_candidates < <(
+        find "${qualification_cargo_home}/registry/index" \
+            -mindepth 1 -maxdepth 1 -type d \
+            -name 'index.crates.io-*' -print 2>/dev/null | LC_ALL=C sort
+    )
+    (( ${#cargo_index_candidates[@]} == 1 )) ||
+        fail "exactly one host crates.io sparse index cache is required"
+    export ZENTTY_CARGO_AGE_INDEX_CACHE="${cargo_index_candidates[0]}/.cache"
+fi
+[[ -d "${ZENTTY_CARGO_AGE_INDEX_CACHE}" ]] ||
+    fail "host crates.io sparse index cache is missing: ${ZENTTY_CARGO_AGE_INDEX_CACHE}"
 
 expected_valgrind_report_paths="${normalized_valgrind_report_paths}"
 

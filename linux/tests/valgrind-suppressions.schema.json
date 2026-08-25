@@ -23,6 +23,7 @@
       "required": [
         "expected_suppressed.matches",
         "expected_suppressed.bytes",
+        "expected_usage_lines_by_scenario",
         "required_usage",
         "usage_profiles",
         "usage_profiles.evidence_identity",
@@ -31,6 +32,7 @@
       "properties": {
         "expected_suppressed.matches": {"type": "string", "minLength": 1},
         "expected_suppressed.bytes": {"type": "string", "minLength": 1},
+        "expected_usage_lines_by_scenario": {"type": "string", "minLength": 1},
         "required_usage": {"type": "string", "minLength": 1},
         "usage_profiles": {"type": "string", "minLength": 1},
         "usage_profiles.evidence_identity": {"type": "string", "minLength": 1},
@@ -428,6 +430,13 @@
             "pattern": "^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$"
           },
           "additionalProperties": {"$ref": "#/$defs/expected_usage"}
+        },
+        "expected_usage_lines_by_scenario": {
+          "type": "object",
+          "propertyNames": {
+            "pattern": "^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$"
+          },
+          "additionalProperties": {"type": "integer", "minimum": 1}
         },
         "allowed_scenarios": {
           "type": "array",

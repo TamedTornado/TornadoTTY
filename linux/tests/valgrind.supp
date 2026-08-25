@@ -1,3 +1,20 @@
+# Ubuntu GLib 2.80.0 intentionally leaves the previous 2,048-pointer quark
+# array allocated when lock-free lookup growth replaces it. Upstream marks the
+# object for LeakSanitizer only, so Memcheck reports the constructor allocation
+# once per process that crosses the first growth boundary. The exact library,
+# constructor, loader path, 16 KiB size, scenario, and count are manifest-bound.
+{
+   GLib quark array growth
+   Memcheck:Leak
+   match-leak-kinds: definite
+   fun:malloc
+   fun:g_malloc
+   obj:*libglib-2.0.so.0.8000.0
+   fun:call_init.part.0
+   fun:_dl_init
+   obj:*ld-linux-x86-64.so.2
+}
+
 # Ubuntu 24.04's stripped librsvg emits undefined-value reports while GTK's
 # icon loader initializes SVG types. Keep this test-only suppression bounded by
 # the external library at the source and GDK Pixbuf at the consumer.
