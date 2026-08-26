@@ -1,0 +1,80 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+product="${ZENTTY_LINUX_BINARY:-${repo_root}/build/linux/bin/zentty-linux}"
+backend="${GDK_BACKEND:-}"
+application_id="com.zentty.zentty"
+desktop_entry="${repo_root}/linux/packaging/com.zentty.zentty.desktop"
+state_directory=""
+log=""
+product_pid=""
+
+fail() {
+    [[ -z "${log}" || ! -f "${log}" ]] || tail -n 120 "${log}" >&2
+    echo "desktop-window-identity: error: $*" >&2
+    exit 1
+}
+
+cleanup() {
+    if [[ "${product_pid}" =~ ^[1-9][0-9]*$ ]]; then
+        kill -TERM "${product_pid}" 2>/dev/null || true
+        wait "${product_pid}" 2>/dev/null || true
+    fi
+    [[ -z "${state_directory}" ]] || rm -rf -- "${state_directory}"
+    [[ -z "${log}" ]] || rm -f -- "${log}"
+}
+trap cleanup EXIT
+
+[[ -x "${product}" ]] || fail "product is not executable: ${product}"
+grep -Fxq "StartupWMClass=${application_id}" "${desktop_entry}" ||
+    fail "packaged StartupWMClass does not match ${application_id}"
+
+case "${backend}" in
+    wayland)
+        [[ "${ZENTTY_NESTED_WAYLAND_SESSION_ID:-}" =~ ^[0-9a-f]{64}$ ]] ||
+            fail "Wayland identity must run through linux/tests/nested-wayland"
+        ;;
+    x11)
+        [[ "${ZENTTY_NESTED_X11_SESSION_ID:-}" =~ ^[0-9a-f]{64}$ ]] ||
+            fail "X11 identity must run through linux/tests/nested-x11"
+        for dependency in xdotool xprop; do
+            command -v "${dependency}" >/dev/null || fail "${dependency} is required"
+        done
+        ;;
+    *) fail "GDK_BACKEND must be wayland or x11" ;;
+esac
+
+state_directory="$(mktemp -d)"
+log="$(mktemp)"
+env WAYLAND_DEBUG="$([[ "${backend}" == wayland ]] && printf client || printf 0)" \
+    "${product}" --state-directory "${state_directory}" \
+    --command 'sleep 60' --no-session-restore >"${log}" 2>&1 &
+product_pid=$!
+
+if [[ "${backend}" == wayland ]]; then
+    expected="set_app_id(\"${application_id}\")"
+    for _ in {1..300}; do
+        grep -Fq "${expected}" "${log}" && break
+        kill -0 "${product_pid}" 2>/dev/null || fail "product exited before publishing app ID"
+        sleep 0.02
+    done
+    grep -Fq "${expected}" "${log}" || fail "Wayland app ID differs from ${application_id}"
+else
+    window_id=""
+    for _ in {1..300}; do
+        window_id="$(xdotool search --onlyvisible --name '^Zentty$' 2>/dev/null | tail -n 1 || true)"
+        [[ "${window_id}" =~ ^[1-9][0-9]*$ ]] && break
+        kill -0 "${product_pid}" 2>/dev/null || fail "product exited before mapping its X11 window"
+        sleep 0.02
+    done
+    [[ "${window_id}" =~ ^[1-9][0-9]*$ ]] || fail "X11 window was not mapped"
+    wm_class="$(xprop -id "${window_id}" WM_CLASS)"
+    [[ "${wm_class}" == *"\"${application_id}\","* ]] ||
+        fail "X11 WM_CLASS instance differs: ${wm_class}"
+fi
+
+kill -TERM "${product_pid}"
+wait "${product_pid}" 2>/dev/null || true
+product_pid=""
+echo "desktop-window-identity: PASS backend=${backend} application-id=${application_id}"

@@ -154,7 +154,8 @@ desktop_entry="${install_root}/usr/share/applications/com.zentty.zentty.desktop"
 appstream="${install_root}/usr/share/metainfo/com.zentty.zentty.metainfo.xml"
 grep -Fxq 'Exec=zentty-linux' "${desktop_entry}" || fail "desktop executable identity differs"
 grep -Fxq 'Icon=com.zentty.zentty' "${desktop_entry}" || fail "desktop icon identity differs"
-grep -Fxq 'StartupWMClass=Zentty' "${desktop_entry}" || fail "desktop window identity differs"
+grep -Fxq 'StartupWMClass=com.zentty.zentty' "${desktop_entry}" ||
+    fail "desktop window identity differs"
 grep -Fq '<id>com.zentty.zentty</id>' "${appstream}" || fail "AppStream application ID differs"
 grep -Fq '<launchable type="desktop-id">com.zentty.zentty.desktop</launchable>' "${appstream}" ||
     fail "AppStream desktop identity differs"

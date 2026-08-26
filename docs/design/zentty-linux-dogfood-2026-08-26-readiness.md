@@ -392,3 +392,37 @@ launch in pane-6, authenticated `session.start`, and
 `agent-restore-launch ... result=authenticated`. Live snapshot generation 5
 retains both worklanes, both panes, and the pane-6 restore draft. Operator
 dogfood acceptance: **Got my Bro session back**.
+
+## GH-109: GNOME dock used a generic gear icon
+
+The installed application launcher displayed Zentty's packaged icon, but the
+running GNOME dock item displayed a generic gear. This distinguished icon
+installation from window association: GNOME could resolve
+`Icon=com.zentty.zentty`, but could not associate the live toplevel with
+`com.zentty.zentty.desktop`.
+
+An isolated real-Wayland launch with client protocol tracing proved the defect:
+Zentty sent `xdg_toplevel.set_app_id("zentty")`. The Rust adapter set GIO's
+application ID to `com.zentty.zentty` but separately set GLib's program name to
+`zentty`. Because the product owns plain `gtk::Window` toplevels rather than
+`GtkApplicationWindow`s, GTK used the program name as the compositor-facing
+Wayland app ID. An isolated X11 launch also showed
+`WM_CLASS = "com.zentty.zentty", "com.mitchellh.ghostty-debug"`; the packaged
+`StartupWMClass=Zentty` matched neither value.
+
+The packaged reverse-DNS ID is now a single Rust constant and is supplied as
+both the host application ID and program name. `StartupWMClass` now matches the
+host-owned X11 instance rather than Ghostty's inherited class. The new focused
+`desktop-window-identity` actor launches the actual ReleaseSafe product and
+asserts the real Wayland protocol value or X11 property, while also rejecting a
+desktop-entry mismatch.
+
+Focused evidence passed: 82 core tests, ReleaseSafe build with publication-age
+audit and package notices, shellcheck, formatting, controlled Wayland
+`set_app_id("com.zentty.zentty")`, and controlled X11 WM_CLASS instance
+`com.zentty.zentty`. No full qualification was run or claimed. Installed GNOME
+visual acceptance then passed after the matched binary and desktop entry were
+installed and the desktop database refreshed: the operator relaunched from the
+GNOME launcher, confirmed the dock icon looked correct, and confirmed Bro still
+resumed automatically. The identity repair therefore did not regress GH-107's
+agent recovery path.

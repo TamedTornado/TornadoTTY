@@ -8,4 +8,4 @@ Terminal=false
 Categories=System;TerminalEmulator;
 Keywords=terminal;shell;workspace;agent;
 StartupNotify=true
-StartupWMClass=Zentty
+StartupWMClass=com.zentty.zentty

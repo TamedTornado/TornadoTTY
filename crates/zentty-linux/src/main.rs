@@ -279,7 +279,11 @@ fn run() -> Result<(), String> {
     // application root; otherwise assistive technologies see "ghostty" even
     // though Zentty owns every toplevel and its navigation hierarchy.
     runtime
-        .set_host_application_identity("com.zentty.zentty", zentty_core::PRODUCT_NAME, "zentty")
+        .set_host_application_identity(
+            zentty_core::APPLICATION_ID,
+            zentty_core::PRODUCT_NAME,
+            zentty_core::APPLICATION_ID,
+        )
         .map_err(|error| error.to_string())?;
     gtk::init().map_err(|error| format!("GTK initialization failed: {error}"))?;
 
