@@ -570,3 +570,27 @@ touchpad gestures or Shift-wheel input and scrolls the focused column into
 view; its focused unit remains green. The four-way palette test, source
 vocabulary test, gesture unit, and all-target `zentty-linux` clippy with
 warnings denied passed. No broad qualification was run or claimed.
+
+## GH-112: ordinary agent activity rendered as a permanent alarm banner
+
+The Agent Status chrome control showed a persistent orange/red vertical strip
+while Codex was simply running. Source inspection found two independent causes:
+the aggregate indicator policy deliberately exposed every non-idle state,
+including ordinary Active, and the nominal eight-pixel GTK box had minimum CSS
+dimensions but no fixed alignment or expansion policy. GTK could therefore
+allocate it the full button height. The result communicated an alarm even when
+the fleet popover correctly said Running.
+
+The chrome indicator is now reserved for exceptional aggregate states: Needs
+Input, Stopped Early, and Compacting. Active and Idle remain available through
+the unchanged tooltip, accessibility label, and fleet popover but do not light
+the chrome. A single typed geometry contract drives the GTK widget's eight-pixel
+size, centered alignment, and disabled horizontal/vertical expansion. Focused
+coverage pins empty, Active, Idle, Compacting, Stopped, Waiting, and mixed-state
+priority plus every applied geometry property. The adjacent status/progress
+copy test and all-target `zentty-linux` clippy with warnings denied passed.
+
+This is focused state and widget-property evidence, not a claim that a real GTK
+allocation has been visually accepted. The installed GNOME dogfood build still
+requires relaunch and operator review before GH-112 closes. No broad
+qualification was run or claimed.

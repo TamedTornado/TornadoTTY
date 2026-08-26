@@ -2,6 +2,23 @@ use gtk::glib::variant::ToVariant;
 use gtk::prelude::*;
 use zentty_core::{FleetPaneSnapshot, FleetState, FleetSummary};
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct IndicatorLayout {
+    size: i32,
+    horizontal_alignment: gtk::Align,
+    vertical_alignment: gtk::Align,
+    expand_horizontally: bool,
+    expand_vertically: bool,
+}
+
+const INDICATOR_LAYOUT: IndicatorLayout = IndicatorLayout {
+    size: 8,
+    horizontal_alignment: gtk::Align::Center,
+    vertical_alignment: gtk::Align::Center,
+    expand_horizontally: false,
+    expand_vertically: false,
+};
+
 pub(crate) fn install_styles() {
     let provider = gtk::CssProvider::new();
     provider.load_from_string(
@@ -20,7 +37,7 @@ pub(crate) fn install_styles() {
          .agent-fleet-dot { min-width: 8px; min-height: 8px; border-radius: 999px; background: alpha(currentColor, 0.35); }\n\
          .agent-fleet-dot.waiting { background: @warning_color; }\n\
          .agent-fleet-dot.stopped { background: @error_color; }\n\
-         .agent-fleet-dot.compacting, .agent-fleet-dot.active { background: @accent_color; }",
+         .agent-fleet-dot.compacting { background: @accent_color; }",
     );
     if let Some(display) = gtk::gdk::Display::default() {
         gtk::style_context_add_provider_for_display(
@@ -36,6 +53,11 @@ pub(crate) fn button_content() -> (gtk::Box, gtk::Box) {
     content.append(&gtk::Image::from_icon_name("system-run-symbolic"));
     let dot = gtk::Box::new(gtk::Orientation::Horizontal, 0);
     dot.add_css_class("agent-fleet-dot");
+    dot.set_size_request(INDICATOR_LAYOUT.size, INDICATOR_LAYOUT.size);
+    dot.set_halign(INDICATOR_LAYOUT.horizontal_alignment);
+    dot.set_valign(INDICATOR_LAYOUT.vertical_alignment);
+    dot.set_hexpand(INDICATOR_LAYOUT.expand_horizontally);
+    dot.set_vexpand(INDICATOR_LAYOUT.expand_vertically);
     dot.set_visible(false);
     content.append(&dot);
     (content, dot)
@@ -45,12 +67,21 @@ pub(crate) fn update_indicator(dot: &gtk::Box, summary: FleetSummary) {
     for class in ["waiting", "stopped", "compacting", "active", "idle"] {
         dot.remove_css_class(class);
     }
-    if summary.total_count() == 0 {
+    let Some(state) = indicator_state(summary) else {
         dot.set_visible(false);
         return;
+    };
+    dot.add_css_class(state_class(state));
+    dot.set_visible(true);
+}
+
+fn indicator_state(summary: FleetSummary) -> Option<FleetState> {
+    match summary.aggregate_state() {
+        FleetState::Waiting => Some(FleetState::Waiting),
+        FleetState::Stopped => Some(FleetState::Stopped),
+        FleetState::Compacting => Some(FleetState::Compacting),
+        FleetState::Active | FleetState::Idle => None,
     }
-    dot.add_css_class(state_class(summary.aggregate_state()));
-    dot.set_visible(summary.aggregate_state() != FleetState::Idle);
 }
 
 pub(crate) fn popover(snapshots: &[FleetPaneSnapshot]) -> gtk::Popover {
@@ -283,9 +314,9 @@ fn state_class(state: FleetState) -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    use zentty_core::{AgentProgress, AttentionTarget, FleetPaneSnapshot, FleetState};
+    use zentty_core::{AgentProgress, AttentionTarget, FleetPaneSnapshot, FleetState, FleetSummary};
 
-    use super::fleet_status_text;
+    use super::{INDICATOR_LAYOUT, IndicatorLayout, fleet_status_text, indicator_state};
 
     fn snapshot(progress: Option<AgentProgress>) -> FleetPaneSnapshot {
         FleetPaneSnapshot {
@@ -309,5 +340,57 @@ mod tests {
             "Running · 2/5"
         );
         assert_eq!(fleet_status_text(&snapshot(None)), "Running");
+    }
+
+    #[test]
+    fn chrome_indicator_is_compact_and_reserved_for_exceptional_states() {
+        assert_eq!(
+            INDICATOR_LAYOUT,
+            IndicatorLayout {
+                size: 8,
+                horizontal_alignment: gtk::Align::Center,
+                vertical_alignment: gtk::Align::Center,
+                expand_horizontally: false,
+                expand_vertically: false,
+            }
+        );
+        assert_eq!(indicator_state(FleetSummary::default()), None);
+        assert_eq!(
+            indicator_state(FleetSummary {
+                active_count: 1,
+                ..FleetSummary::default()
+            }),
+            None
+        );
+        assert_eq!(
+            indicator_state(FleetSummary {
+                idle_count: 1,
+                ..FleetSummary::default()
+            }),
+            None
+        );
+        assert_eq!(
+            indicator_state(FleetSummary {
+                compacting_count: 1,
+                ..FleetSummary::default()
+            }),
+            Some(FleetState::Compacting)
+        );
+        assert_eq!(
+            indicator_state(FleetSummary {
+                stopped_count: 1,
+                active_count: 2,
+                ..FleetSummary::default()
+            }),
+            Some(FleetState::Stopped)
+        );
+        assert_eq!(
+            indicator_state(FleetSummary {
+                waiting_count: 1,
+                stopped_count: 1,
+                ..FleetSummary::default()
+            }),
+            Some(FleetState::Waiting)
+        );
     }
 }
