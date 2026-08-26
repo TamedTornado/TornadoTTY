@@ -426,3 +426,38 @@ installed and the desktop database refreshed: the operator relaunched from the
 GNOME launcher, confirmed the dock icon looked correct, and confirmed Bro still
 resumed automatically. The identity repair therefore did not regress GH-107's
 agent recovery path.
+
+## GH-102: live fleet updates closed the open Agent Status popover
+
+While the Agent Status popover was open, any semantic agent-state change
+replaced the `GtkPopover` attached to its `GtkMenuButton`. GTK correctly
+unmapped the old transient, so a normal Running-to-Idle or Needs-input
+transition made the operator's open fleet view disappear. Spinner-only title
+updates had prior coverage, but that did not exercise the semantic snapshot
+path that replaced the widget.
+
+`WindowChrome` now creates and retains one fleet popover for its lifetime.
+Fleet refreshes replace only that popover's child presentation, preserving the
+mapped transient and menu-button relationship. Focus-on-map handlers belong to
+each replacement child rather than accumulating on the long-lived popover.
+
+The existing `rust-multi-window` actor gained an event-driven regression rather
+than another harness or a timing assumption. A PTY child arms an authenticated
+Codex Idle event and blocks on a private FIFO. The actor opens Agent Status,
+proves it is mapped, releases the event, and requires a newly observed shared
+fleet refresh plus a newly rendered idle presentation without a new popover
+close receipt. Initial review found that simple text waits could have accepted
+identical idle summaries from an earlier lifecycle step; the test was repaired
+to capture pre-event counts and require both counts to increase.
+
+The first nested-X11 invocation did not start because sandboxed Xvfb could not
+bind its Unix display socket. That environmental failure was not treated as a
+test result. The identical focused journey then passed on an isolated Xvfb
+display outside the GUI sandbox: two native Zentty windows, two real Ghostty
+PTYs, physical command-palette input, authenticated agent IPC, and the live
+semantic transition all completed while the popover remained open. Formatting,
+shellcheck, warnings-as-errors Clippy, and diff-integrity checks also passed.
+The package run passed 317 tests before its existing real-`/proc` listener test
+received sandbox `EPERM`; that exact test passed outside the sandbox, while two
+display-only accessibility tests remained intentionally ignored. No full
+qualification was run or claimed for this focused dogfood repair.

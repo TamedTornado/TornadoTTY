@@ -95,6 +95,8 @@ layer_runpath="$(
 
 state_dir="$(mktemp -d)"
 log="$(mktemp)"
+fleet_transition_fifo="${state_dir}/fleet-transition"
+mkfifo "${fleet_transition_fifo}"
 config_file="${XDG_CONFIG_HOME:?}/zentty/config.toml"
 mkdir -p "$(dirname "${config_file}")"
 cat >"${config_file}" <<'EOF'
@@ -137,6 +139,12 @@ while IFS= read -r value; do
                     printf '\033]2;Working %s Bro\a' "$glyph"
                     sleep 0.1
                 done
+            ) &
+            ;;
+        agent-arm-idle)
+            (
+                IFS= read -r _ < "$ZENTTY_FLEET_TRANSITION_FIFO"
+                printf '%s' '{"version":1,"event":"agent.idle","agent":{"name":"Codex"},"session":{"id":"moved-live-pane"}}' | "$ZENTTY_CLI_BIN" ipc agent-event
             ) &
             ;;
         agent-progress)
@@ -193,6 +201,7 @@ start_product() {
         cd "${state_dir}"
         exec env \
             CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1 \
+            ZENTTY_FLEET_TRANSITION_FIFO="${fleet_transition_fifo}" \
             GSK_RENDERER=cairo \
             LD_LIBRARY_PATH="${bundle_lib}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" \
             "${product}" \
@@ -1448,6 +1457,8 @@ zentty_product_wait_for_log_count "${log}" \
     "new activity did not resolve stopped state" || fail "fleet stopped recovery missing"
 zentty_product_type "${backend}" "codex-spinner"
 zentty_product_key "${backend}" Return
+zentty_product_type "${backend}" "agent-arm-idle"
+zentty_product_key "${backend}" Return
 zentty_product_wait_for_log "${log}" 'zentty-linux: title-pane=pane-2 value=Working ⠋ Bro' \
     "controlled Codex spinner did not begin" || fail "fleet spinner fixture missing"
 fleet_closed_before="$(grep -Fc 'zentty-linux: chrome-popover=agent-fleet state=closed' "${log}" || true)"
@@ -1465,6 +1476,21 @@ zentty_product_wait_for_log_count "${log}" \
     fail "fleet spinner completion missing"
 [[ "$(grep -Fc 'zentty-linux: chrome-popover=agent-fleet state=closed' "${log}" || true)" == "${fleet_closed_before}" ]] ||
     fail "spinner-only titles replaced and closed the open Agent Status popover"
+fleet_idle_refresh_before="$(grep -Fc 'zentty-linux: fleet-refresh windows=2 agents=2 waiting=1 stopped=0 compacting=0 active=0 idle=1 progress=0' "${log}" || true)"
+fleet_idle_render_before="$(grep -Fc 'zentty-linux: fleet-popover-render agents=2 waiting=1 stopped=0 compacting=0 active=0 idle=1 progress=0' "${log}" || true)"
+printf 'release\n' >"${fleet_transition_fifo}"
+zentty_product_wait_for_log_count "${log}" \
+    'zentty-linux: fleet-refresh windows=2 agents=2 waiting=1 stopped=0 compacting=0 active=0 idle=1 progress=0' \
+    "$((fleet_idle_refresh_before + 1))" \
+    "delayed semantic transition did not update the shared fleet" ||
+    fail "fleet semantic transition missing"
+zentty_product_wait_for_log_count "${log}" \
+    'zentty-linux: fleet-popover-render agents=2 waiting=1 stopped=0 compacting=0 active=0 idle=1 progress=0' \
+    "$((fleet_idle_render_before + 1))" \
+    "open fleet did not render the semantic transition" ||
+    fail "open fleet semantic render missing"
+[[ "$(grep -Fc 'zentty-linux: chrome-popover=agent-fleet state=closed' "${log}" || true)" == "${fleet_closed_before}" ]] ||
+    fail "semantic agent transition replaced and closed the open Agent Status popover"
 # The same typed fleet target is projected into Zentty's real command palette,
 # keeping exact cross-window routing keyboard accessible without compositor-
 # specific coordinates. The opened popover and priority-focus receipt above

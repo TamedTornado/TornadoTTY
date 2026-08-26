@@ -55,6 +55,11 @@ pub(crate) fn update_indicator(dot: &gtk::Box, summary: FleetSummary) {
 
 pub(crate) fn popover(snapshots: &[FleetPaneSnapshot]) -> gtk::Popover {
     let popover = gtk::Popover::new();
+    render_popover(&popover, snapshots);
+    popover
+}
+
+pub(crate) fn render_popover(popover: &gtk::Popover, snapshots: &[FleetPaneSnapshot]) {
     let root = gtk::Box::new(gtk::Orientation::Vertical, 2);
     root.add_css_class("agent-fleet");
     let summary = FleetSummary::from_snapshots(snapshots);
@@ -122,7 +127,7 @@ pub(crate) fn popover(snapshots: &[FleetPaneSnapshot]) -> gtk::Popover {
         scroll.set_child(Some(&list));
         root.append(&scroll);
         if let Some(initial_focus) = initial_focus {
-            popover.connect_map(move |_| {
+            root.connect_map(move |_| {
                 let initial_focus = initial_focus.clone();
                 gtk::glib::idle_add_local_once(move || {
                     initial_focus.grab_focus();
@@ -131,12 +136,11 @@ pub(crate) fn popover(snapshots: &[FleetPaneSnapshot]) -> gtk::Popover {
         }
     }
 
-    append_footer(&root, &popover, snapshots.is_empty());
+    append_footer(&root, snapshots.is_empty());
     popover.set_child(Some(&root));
-    popover
 }
 
-fn append_footer(root: &gtk::Box, popover: &gtk::Popover, initially_empty: bool) {
+fn append_footer(root: &gtk::Box, initially_empty: bool) {
     let footer = gtk::Box::new(gtk::Orientation::Horizontal, 6);
     footer.set_margin_top(8);
     let settings = gtk::Button::with_mnemonic("_Settings…");
@@ -165,7 +169,7 @@ fn append_footer(root: &gtk::Box, popover: &gtk::Popover, initially_empty: bool)
     footer.append(&quit);
     root.append(&footer);
     if initially_empty {
-        popover.connect_map(move |_| {
+        root.connect_map(move |_| {
             let settings = settings.clone();
             gtk::glib::idle_add_local_once(move || {
                 settings.grab_focus();

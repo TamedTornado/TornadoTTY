@@ -70,6 +70,7 @@ pub(crate) struct WindowChrome {
     notification_badge: gtk::Label,
     rendered_attention: RefCell<Vec<zentty_core::AttentionItem>>,
     fleet: gtk::MenuButton,
+    fleet_popover: gtk::Popover,
     fleet_indicator: gtk::Box,
     rendered_fleet: RefCell<Vec<zentty_core::FleetPaneSnapshot>>,
     server_primary: gtk::Button,
@@ -107,7 +108,7 @@ impl WindowChrome {
         let (notifications, notification_badge) = notification_control();
         notifications.set_margin_start(4);
         leading.append(&notifications);
-        let (fleet, fleet_indicator) = fleet_control();
+        let (fleet, fleet_popover, fleet_indicator) = fleet_control();
         leading.append(&fleet);
 
         let context = gtk::Label::new(None);
@@ -213,6 +214,7 @@ impl WindowChrome {
             notification_badge,
             rendered_attention: RefCell::new(Vec::new()),
             fleet,
+            fleet_popover,
             fleet_indicator,
             rendered_fleet: RefCell::new(Vec::new()),
             server_primary,
@@ -350,8 +352,7 @@ impl WindowChrome {
         }
         let summary = zentty_core::FleetSummary::from_snapshots(snapshots);
         crate::agent_fleet::update_indicator(&self.fleet_indicator, summary);
-        self.fleet
-            .set_popover(Some(&crate::agent_fleet::popover(snapshots)));
+        crate::agent_fleet::render_popover(&self.fleet_popover, snapshots);
         self.fleet.set_tooltip_text(Some(&summary.header()));
         self.fleet
             .update_property(&[gtk::accessible::Property::Label(
@@ -511,19 +512,20 @@ fn notification_control() -> (gtk::MenuButton, gtk::Label) {
     (button, badge)
 }
 
-fn fleet_control() -> (gtk::MenuButton, gtk::Box) {
+fn fleet_control() -> (gtk::MenuButton, gtk::Popover, gtk::Box) {
     let button = gtk::MenuButton::new();
     configure_menu_button(&button, CHROME_CONTROLS[5]);
     let (content, indicator) = crate::agent_fleet::button_content();
     button.set_child(Some(&content));
-    button.set_popover(Some(&crate::agent_fleet::popover(&[])));
+    let popover = crate::agent_fleet::popover(&[]);
+    button.set_popover(Some(&popover));
     button.connect_active_notify(|button| {
         eprintln!(
             "zentty-linux: chrome-popover=agent-fleet state={}",
             if button.is_active() { "open" } else { "closed" }
         );
     });
-    (button, indicator)
+    (button, popover, indicator)
 }
 
 fn navigation_controls() -> (gtk::Button, gtk::Button) {
