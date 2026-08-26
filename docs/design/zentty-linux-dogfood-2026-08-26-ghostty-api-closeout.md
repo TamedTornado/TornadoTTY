@@ -298,3 +298,8 @@ the same canonical absolute path after masking the developer checkout. A
 contract test requires both the canonical submount and `GHOSTTY_SOURCE_DIR`;
 it does not compare or copy from the hidden developer checkout. The real
 byte-for-byte test must pass before this repair is accepted.
+
+The isolated rerun at Zentty `6e31a8f7a1ab60212896566ef439f26fe38b4890`
+passed: all four release outputs were byte-identical while the developer
+checkout remained masked. This confirms the source-identity repair rather than
+accepting a differing binary or weakening the comparison.
