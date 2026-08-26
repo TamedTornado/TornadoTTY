@@ -594,3 +594,46 @@ This is focused state and widget-property evidence, not a claim that a real GTK
 allocation has been visually accepted. The installed GNOME dogfood build still
 requires relaunch and operator review before GH-112 closes. No broad
 qualification was run or claimed.
+
+The audited package for commit `07acda1e5af4` passed its release-safe build,
+Rust publish-age audit, notice collection, and Debian package audit. APT called
+the descendant package a downgrade because the package version embeds a Git
+hash and `07ac...` sorts below the previously installed `7944...`; installation
+therefore required an explicit `--allow-downgrades`. This is a package-version
+ordering limitation, not evidence that the source revision moved backward, and
+must be reconciled before release update ordering is claimed. After a normal
+GNOME relaunch, the operator confirmed that ordinary Running produced no alarm
+strip and that the Agent Status popover still reported the active Codex
+session. That supplies the real allocation/visual acceptance and closes
+GH-112's remaining uncertainty.
+
+## GH-113: untouched shell bootstrap looked like user session history
+
+After creating full-width and visibly split panes, the operator closed them
+without typing into them. Both showed **Close this pane?**. The live journal
+showed each new pane emitting several authenticated `shell-state running`
+signals with command payloads during integration bootstrap before its first
+prompt. The Linux shell-signal handler stored every such payload as
+`last_run_command`; existing close evidence correctly treated that field as
+session history and therefore asked for confirmation. The close-decision
+policy was not missing—the provenance supplied to it was false.
+
+Pane lifecycle state now owns one ephemeral pending-submission marker. A
+physical terminal Enter records the pending submission before input reaches
+Ghostty. The next authenticated shell command consumes that marker and becomes
+durable `last_run_command`; command-bearing bootstrap signals without physical
+submission cannot create history. Explicit launch, task, restore, and agent
+resume recipes continue to set their meaningful command directly. The
+existing close-evidence priority for active agents and non-idle foreground
+processes is unchanged.
+
+A focused regression covers bootstrap command rejection, first physical
+submission and authenticated command acceptance, later bootstrap rejection,
+and explicit Codex resume history. The complete 69-test workspace-state file,
+all six close-decision tests including idle-history-free immediate closure, the
+existing Linux bootstrap-history test, and all-target core/Linux clippy with
+warnings denied passed. The boolean return from terminal submission remains
+the existing debounced agent-presentation contract; the new ephemeral marker
+does not cause unrelated redraws. Installed GNOME dogfood still needs to prove
+that a newly opened untouched pane closes without a dialog. No broad
+qualification was run or claimed.

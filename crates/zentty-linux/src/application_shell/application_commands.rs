@@ -328,16 +328,10 @@ fn apply_shell_signal(
             if state == "running"
                 && let Some(command) = command
             {
-                let working_directory = shell
-                    .borrow()
+                shell
+                    .borrow_mut()
                     .state
-                    .pane(&target.pane_id)
-                    .and_then(|pane| pane.working_directory.clone());
-                shell.borrow_mut().state.configure_pane_launch(
-                    &target.pane_id,
-                    working_directory,
-                    Some(command.clone()),
-                );
+                    .record_submitted_shell_command(&target.pane_id, command);
             }
             eprintln!(
                 "zentty-linux: shell-signal pane={} kind=shell-state state={} command-present={}",

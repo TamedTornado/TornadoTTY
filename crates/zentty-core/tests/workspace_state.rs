@@ -1365,6 +1365,43 @@ fn pane_launch_context_updates_without_changing_identity_or_focus() {
 }
 
 #[test]
+fn shell_history_requires_physical_submission_but_explicit_launches_do_not() {
+    let mut state = WorkspaceState::new("lane-1", "pane-1");
+
+    assert!(!state.record_submitted_shell_command(
+        "pane-1",
+        "source /usr/share/zentty/shell-integration/bash/zentty.bash"
+    ));
+    assert_eq!(state.pane("pane-1").unwrap().last_run_command, None);
+
+    assert!(!state.record_terminal_input_submitted("pane-1", 100));
+    assert!(state.record_submitted_shell_command("pane-1", "cargo test"));
+    assert_eq!(
+        state.pane("pane-1").unwrap().last_run_command.as_deref(),
+        Some("cargo test")
+    );
+    assert!(!state.record_submitted_shell_command(
+        "pane-1",
+        "_zentty_prompt_bootstrap"
+    ));
+    assert_eq!(
+        state.pane("pane-1").unwrap().last_run_command.as_deref(),
+        Some("cargo test")
+    );
+
+    assert!(state.split_focused_pane_right("pane-2"));
+    assert!(state.configure_pane_launch(
+        "pane-2",
+        Some("/repo/bro".to_owned()),
+        Some("codex resume bro".to_owned()),
+    ));
+    assert_eq!(
+        state.pane("pane-2").unwrap().last_run_command.as_deref(),
+        Some("codex resume bro")
+    );
+}
+
+#[test]
 fn pane_navigation_history_crosses_worklanes_and_preserves_browser_semantics() {
     let mut state = WorkspaceState::new("lane-1", "pane-1");
     assert!(state.split_focused_pane_right("pane-2"));

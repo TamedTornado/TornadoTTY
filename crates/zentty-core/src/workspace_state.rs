@@ -65,6 +65,10 @@ pub struct PaneState {
     pub live_title: String,
     pub working_directory: Option<String>,
     pub last_run_command: Option<String>,
+    /// Ephemeral provenance for the next authenticated shell command signal.
+    /// Bootstrap commands do not have a preceding physical submission and
+    /// therefore cannot become user session history.
+    pending_user_command_submission: bool,
     /// Live process-derived identity. This is deliberately excluded from the
     /// workspace recipe and must be reprobed after restore.
     pub ssh_connection_label: Option<String>,
@@ -78,6 +82,7 @@ impl PaneState {
             live_title: "shell".to_owned(),
             working_directory: None,
             last_run_command: None,
+            pending_user_command_submission: false,
             ssh_connection_label: None,
         }
     }
@@ -107,6 +112,7 @@ impl PaneState {
                 .to_owned(),
             working_directory: recipe.working_directory.clone(),
             last_run_command: recipe.last_run_command.clone(),
+            pending_user_command_submission: false,
             ssh_connection_label: None,
         }
     }
@@ -1799,6 +1805,32 @@ impl WorkspaceState {
         };
         pane.working_directory = working_directory;
         pane.last_run_command = last_run_command;
+        pane.pending_user_command_submission = false;
+        true
+    }
+
+    /// Consumes a physical terminal submission and records the authenticated
+    /// shell command that it caused. Shell bootstrap signals have no pending
+    /// submission and are deliberately ignored.
+    pub fn record_submitted_shell_command(&mut self, pane_id: &str, command: &str) -> bool {
+        let Some(pane) = self
+            .worklanes
+            .iter_mut()
+            .flat_map(|worklane| &mut worklane.columns)
+            .flat_map(|column| &mut column.panes)
+            .find(|pane| pane.id == pane_id)
+        else {
+            return false;
+        };
+        if !pane.pending_user_command_submission {
+            return false;
+        }
+        pane.pending_user_command_submission = false;
+        let command = command.trim();
+        if command.is_empty() {
+            return false;
+        }
+        pane.last_run_command = Some(command.to_owned());
         true
     }
 
@@ -2965,6 +2997,15 @@ impl WorkspaceState {
     /// Records a physical terminal input submission after the product has
     /// allowed the key event to reach the embedded Ghostty surface.
     pub fn record_terminal_input_submitted(&mut self, pane_id: &str, now: u64) -> bool {
+        if let Some(pane) = self
+            .worklanes
+            .iter_mut()
+            .flat_map(|worklane| &mut worklane.columns)
+            .flat_map(|column| &mut column.panes)
+            .find(|pane| pane.id == pane_id)
+        {
+            pane.pending_user_command_submission = true;
+        }
         self.agent_statuses.apply_codex_user_submitted(pane_id, now)
     }
 
