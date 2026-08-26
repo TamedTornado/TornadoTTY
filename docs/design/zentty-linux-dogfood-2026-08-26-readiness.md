@@ -539,3 +539,34 @@ foregrounded Zentty and delivered the operator directly to the notifying Codex
 session; no second notification was required for navigation. This supplies the
 real GNOME compositor acceptance that the controlled fixture cannot mint and
 closes GH-110's remaining uncertainty.
+
+## GH-111: the palette hid the non-resizing right-pane operation
+
+The operator selected **Add Pane Right** from the command palette and observed
+a visible split rather than another full-width column in the horizontally
+scrolling worklane. Live application receipts confirmed that the palette
+invoked `new-pane-right`, which selected `split-pane-right` at the 2279-pixel
+adaptive viewport and produced two 1139-pixel columns. Source review corrected
+an initially over-broad diagnosis: macOS deliberately defines **Add Pane
+Right** as the adaptive command. Its separate forced worklane operation is
+**Add Pane Right Without Resizing**. Linux already owned that typed action and
+shortcut registration but omitted it from the command palette. **Add Pane
+Left** is not similarly adaptive; it already preserves the source column width
+and inserts a full-width column before it.
+
+The missing source command is now present in the palette and routes to the
+existing `add-pane-right` operation. A focused regression pins **Split Right**,
+adaptive **Add Pane Right**, **Add Pane Right Without Resizing**, and **Add Pane
+Left** to four explicit action targets. The first version of that regression
+incorrectly required ordinary Add Right to be non-adaptive; it failed against
+`new-pane-right`, was reconciled against the checked-in Swift source, and was
+replaced rather than changing product semantics to satisfy a mistaken test.
+
+Inspection also found a stale Linux comment claiming horizontal pane gestures
+and Worklane Peek were absent. Both are already installed. The comment now
+describes the actual adaptive presentation and reachable offscreen-column
+routes. The existing real implementation switches adjacent panes on horizontal
+touchpad gestures or Shift-wheel input and scrolls the focused column into
+view; its focused unit remains green. The four-way palette test, source
+vocabulary test, gesture unit, and all-target `zentty-linux` clippy with
+warnings denied passed. No broad qualification was run or claimed.

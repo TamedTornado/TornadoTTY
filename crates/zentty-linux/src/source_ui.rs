@@ -27,6 +27,7 @@ pub(crate) const COPY_AS_MARKDOWN: &str = "Copy as Markdown";
 pub(crate) const SELECT_ALL: &str = "Select All";
 pub(crate) const SPLIT_RIGHT: &str = "Split Right";
 pub(crate) const ADD_PANE_RIGHT: &str = "Add Pane Right";
+pub(crate) const ADD_PANE_RIGHT_WITHOUT_RESIZING: &str = "Add Pane Right Without Resizing";
 pub(crate) const ADD_PANE_LEFT: &str = "Add Pane Left";
 pub(crate) const NEW_PANE_BELOW: &str = "New Pane Below";
 pub(crate) const MOVE_PANE_LEFT: &str = "Move Pane Left";
@@ -150,6 +151,8 @@ mod tests {
         assert!(LAYOUT_SOURCE.contains("case .worklaneAdd"));
         assert!(LAYOUT_SOURCE.contains("\"Split Right\""));
         assert!(LAYOUT_SOURCE.contains("\"Add Pane Right\""));
+        assert!(LAYOUT_SOURCE.contains(".addPaneRightWithoutResizing"));
+        assert!(SHORTCUT_SOURCE.contains(ADD_PANE_RIGHT_WITHOUT_RESIZING));
         assert_ne!(SPLIT_RIGHT, "Add Pane Right");
         assert_ne!(SPLIT_RIGHT, "New Pane Right");
     }

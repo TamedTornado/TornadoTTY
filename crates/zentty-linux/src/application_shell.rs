@@ -3064,9 +3064,15 @@ impl ApplicationShell {
             ),
             CommandPaletteItem::action(
                 "Add Pane Right",
-                "Add a full-width pane to the right of the focused column",
-                "pane column canvas",
+                "Add a pane using the adaptive visible-split or full-width policy",
+                "pane column canvas adaptive",
                 ACTION_NEW_PANE_RIGHT,
+            ),
+            CommandPaletteItem::action(
+                source_ui::ADD_PANE_RIGHT_WITHOUT_RESIZING,
+                "Add a full-width pane without resizing existing columns",
+                "pane column canvas horizontal scroll",
+                ACTION_ADD_PANE_RIGHT,
             ),
             CommandPaletteItem::action(
                 "Add Pane Left",
@@ -5166,10 +5172,10 @@ impl ApplicationShell {
     fn refresh_right_insertion_behavior(&self) {
         for pane_id in self.state.active_pane_ids() {
             if let Some(frame) = self.pane_runtime.frame(pane_id) {
-                // Linux does not yet provide Zentty's horizontal gesture,
-                // Worklane Peek, and recent-pane management. Keep the
-                // pane-local primary action visible until that navigation
-                // ecosystem makes full-width offscreen panes discoverable.
+                // The adaptive source command changes its visible operation at
+                // the configured viewport threshold. Horizontal gestures,
+                // traversal commands, and sidebar focus keep offscreen columns
+                // reachable when the non-resizing operation is selected.
                 frame.set_right_behavior(
                     self.config
                         .pane_layout
@@ -5961,15 +5967,52 @@ fn default_window_recipe(id: &str, working_directory: Option<String>) -> WindowR
 #[cfg(test)]
 mod allocation_tests {
     use super::{
-        TerminalGesture, UserActivationClock, bounded_pane_viewport_height, codex_terminal_gesture,
-        default_window_recipe, focus_follow_should_apply, is_close_window_shortcut,
-        model_heights_to_pixels, pane_content_width, pane_layout_can_overflow_horizontally,
+        ACTION_ADD_PANE_LEFT, ACTION_ADD_PANE_RIGHT, ACTION_NEW_PANE_RIGHT,
+        ACTION_SPLIT_PANE_RIGHT, ApplicationShell, TerminalGesture, UserActivationClock,
+        bounded_pane_viewport_height, codex_terminal_gesture, default_window_recipe,
+        focus_follow_should_apply, is_close_window_shortcut, model_heights_to_pixels,
+        pane_content_width, pane_layout_can_overflow_horizontally,
         pane_width_allocation_is_settled, settings_refresh_section, snapshot_window_frame,
         validated_window_size,
     };
     use crate::sidebar_visibility::Mode as SidebarVisibilityMode;
     use gtk::gdk;
-    use zentty_core::WindowFrame;
+    use zentty_core::{CommandPaletteTarget, WindowFrame};
+
+    #[test]
+    fn pane_palette_exposes_adaptive_split_and_non_resizing_source_commands() {
+        let items = ApplicationShell::command_palette_action_items();
+        let item = |title: &str| {
+            items
+                .iter()
+                .find(|item| item.title == title)
+        };
+
+        assert_eq!(
+            item("Split Right").map(|item| item.target.clone()),
+            Some(CommandPaletteTarget::Action(ACTION_SPLIT_PANE_RIGHT)),
+        );
+        assert_eq!(
+            item("Add Pane Right").map(|item| item.target.clone()),
+            Some(CommandPaletteTarget::Action(ACTION_NEW_PANE_RIGHT)),
+        );
+        assert!(
+            item("Add Pane Right")
+                .is_some_and(|item| item.subtitle.contains("adaptive"))
+        );
+        assert_eq!(
+            item("Add Pane Right Without Resizing").map(|item| item.target.clone()),
+            Some(CommandPaletteTarget::Action(ACTION_ADD_PANE_RIGHT)),
+        );
+        assert!(
+            item("Add Pane Right Without Resizing")
+                .is_some_and(|item| item.subtitle.contains("without resizing"))
+        );
+        assert_eq!(
+            item("Add Pane Left").map(|item| item.target.clone()),
+            Some(CommandPaletteTarget::Action(ACTION_ADD_PANE_LEFT)),
+        );
+    }
 
     #[test]
     fn pointer_focus_requires_current_generation_active_window_and_no_transient_ui() {

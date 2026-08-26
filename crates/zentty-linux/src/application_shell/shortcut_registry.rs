@@ -2,6 +2,8 @@ use std::collections::HashSet;
 
 use zentty_core::{KeyboardShortcut, ShortcutDefinition};
 
+use crate::source_ui;
+
 #[allow(clippy::wildcard_imports)]
 // This registry intentionally mirrors the authoritative action schema.
 use super::action_router::*;
@@ -43,7 +45,7 @@ pub(crate) struct ShortcutCommandSpec {
 }
 
 macro_rules! command {
-    ($id:literal, $title:literal, $description:literal, $category:ident, $action:ident, $default:expr) => {
+    ($id:literal, $title:expr, $description:literal, $category:ident, $action:ident, $default:expr) => {
         ShortcutCommandSpec {
             command_id: $id,
             title: $title,
@@ -332,7 +334,7 @@ pub(crate) const COMMANDS: &[ShortcutCommandSpec] = &[
     ),
     command!(
         "pane.add_right.force",
-        "Add Pane Right Without Resizing",
+        source_ui::ADD_PANE_RIGHT_WITHOUT_RESIZING,
         "Add a right-hand pane without resizing columns.",
         Panes,
         ACTION_ADD_PANE_RIGHT,
