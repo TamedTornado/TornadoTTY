@@ -7,6 +7,7 @@ source "${repo_root}/linux/tests/lib/shell-binaries"
 stage_root="${ZENTTY_STAGE_ROOT:-${repo_root}/build/linux}"
 integration="${stage_root}/share/zentty/shell-integration"
 shim="${stage_root}/libexec/zentty/tmux-shim"
+wrapper_root="${stage_root}/libexec/zentty/agent-wrappers"
 shell_name="${1:-}"
 
 fail() {
@@ -74,17 +75,31 @@ common_environment=(
     "ZENTTY_INSTANCE_SOCKET=${fixture}/instance.sock"
 )
 mkdir -p "${fixture}/home" "${fixture}/user-zdotdir"
+mkdir -p "${fixture}/late-real-bin"
+cat >"${fixture}/late-real-bin/codex" <<'LATE_CODEX'
+#!/usr/bin/env bash
+exit 0
+LATE_CODEX
+chmod 0700 "${fixture}/late-real-bin/codex"
 
 case "${shell_name}" in
     bash)
+        [[ -x "${wrapper_root}/codex/codex" ]] || fail "staged Codex wrapper is missing"
         # shellcheck disable=SC2016 # Expanded by the tested Bash process.
         "${common_environment[@]}" \
+            "ZENTTY_ALL_WRAPPER_BIN_DIRS=${wrapper_root}/codex" \
+            "ZENTTY_TEST_LATE_REAL_BIN=${fixture}/late-real-bin" \
+            "ZENTTY_TEST_CODEX_WRAPPER=${wrapper_root}/codex/codex" \
             ZENTTY_BASH_ORIGINAL_PROMPT_COMMAND='PATH=/usr/bin:/bin; export ZENTTY_USER_PROMPT_RAN=1' \
             "${shell_binary}" --noprofile --norc -c '
                 source "$ZENTTY_SHELL_INTEGRATION_DIR/zentty-bash-integration.bash"
                 [[ "$ZENTTY_BASH_INTEGRATION_LOADED" == 1 ]]
                 [[ "$ZENTTY_USER_PROMPT_RAN" == 1 ]]
                 [[ "$(command -v tmux)" == "$ZENTTY_TMUX_SHIM_DIR/tmux" ]]
+                ! command -v codex >/dev/null
+                PATH="$ZENTTY_TEST_LATE_REAL_BIN:$PATH"
+                _zentty_ensure_wrapper_path
+                [[ "$(command -v codex)" == "$ZENTTY_TEST_CODEX_WRAPPER" ]]
             '
         # PROMPT_COMMAND is a prompt hook, not a non-interactive startup-file
         # override. Both login and non-login command shells must remain quiet

@@ -304,3 +304,91 @@ control cluster, and that cluster is non-targetable while hidden. Terminal
 content—including its first row—therefore retains Ghostty pointer and selection
 ownership except beneath controls that are actually visible. No full
 qualification is run or claimed for this focused dogfood repair.
+
+## GH-107: GNOME launch omitted Codex restore tracking
+
+### Operator discovery and durable evidence
+
+The operator started the Bro Codex session in a new pane, cleanly quit Zentty,
+and relaunched it. The worklane and pane returned, but Codex did not resume and
+the failed-restore recovery page did not appear. Durable structural receipts
+showed the new pane in generations 3 through 7, including the clean-exit
+publication, while every generation reported an empty restore-draft set. The
+relaunch consequently admitted zero restore drafts and opened an ordinary
+shell. No authenticated agent event for the pane appeared before shutdown.
+The saved pane retained the non-sensitive fact that its last command was a
+Codex resume invocation, confirming that Codex had run without establishing an
+authenticated Zentty session identity.
+
+### Root cause and repair
+
+`AgentRuntime` selected bundled agent wrappers using the GUI process's startup
+`PATH`. A GNOME launcher does not see the Codex installation added by the
+operator's interactive Bash startup files, so Zentty omitted the Codex wrapper
+directory before the shell existed. Bash later found the real Codex binary but
+could not select a wrapper directory it had never received. This made the TUI
+functional while silently disabling lifecycle capture and session restore.
+
+The GUI now exports every executable bundled wrapper directory unless that
+integration is explicitly disabled. The existing shell integration remains
+responsible for adding a wrapper only after it can also find the corresponding
+real binary in the shell's final `PATH`; absent tools are therefore not
+shadowed. A new non-sensitive receipt lists installed and active wrapper tool
+names per pane. Focused coverage models a launcher with no Codex, proves no
+wrapper is initially selected, adds Codex as a shell startup file would, and
+then proves the staged wrapper becomes the resolved command.
+
+Focused validation passed eight agent-runtime tests, the staged Bash boundary
+scenario, shellcheck for the changed runner, Clippy with warnings denied, and a
+controlled nested-X11 real-Codex journey. The latter used Codex 0.147.0, a real
+Ghostty PTY, the staged wrapper, real Codex hooks and notify callback,
+authenticated IPC, a controlled loopback Responses endpoint, physical window
+close, a persisted UUID resume draft, exact relaunch command, and a rendered
+resumed TUI. Operator confirmation that the GNOME-launched Bro pane now either
+resumes or exposes the explicit failed-restore recovery page remains pending.
+No full qualification is run or claimed for this dogfood repair.
+
+### Automatic retry follow-up
+
+The installed wrapper-selection repair made a manually entered `codex resume`
+observable, but the operator's next GNOME relaunch still reached the recovery
+page and both Retry attempts failed. The journal showed that the draft was
+accepted and the exact resume command was selected, but the terminal child
+exited before an authenticated event. This was a second PATH boundary: an
+automatic Ghostty command starts before an interactive prompt, while the real
+Codex path is added by the user's shell startup files. The wrapper was present
+in the pane environment but could not find the real executable in the desktop
+launcher's PATH.
+
+The first correction ran the canonical resume command through the configured
+interactive login shell. A new controlled desktop-PATH journey correctly
+failed it: the user's startup file put the real executable ahead of Zentty's
+wrapper, and the normal prompt-time reconciliation never ran for `-c`. Restore
+launches now run the validated canonical command through Bash, Zsh, or Fish
+with `env PATH="$ZENTTY_ALL_WRAPPER_BIN_DIRS:$PATH"` applied *after* shell
+initialization. This preserves user tool discovery while selecting the
+instrumented wrapper first; it does not hardcode Bun, duplicate shell PATH
+parsing, poll, or use a timer.
+
+The first version of the new fixture also failed because repository Codex is a
+Node launcher and the simulated login environment exposed its shim without
+the `node` runtime. After the fixture exposed both as login-shell-only paths,
+automatic resume reached the real Codex Ready TUI and retained the pane draft.
+Codex does not emit a new lifecycle hook merely by displaying an already-idle
+resumed fixture, so the final journey physically focuses that TUI, submits a
+real prompt to the controlled Responses endpoint, and then requires the
+authenticated restore confirmation. The focused result is PASS: restricted
+desktop PATH, real login-shell initialization, staged wrapper, real Ghostty
+PTY, exact UUID resume, rendered TUI, physical input, real hook and notify,
+authenticated IPC, controlled model turn, and physical close. No full
+qualification was run or claimed.
+
+The validated ReleaseSafe build was installed over the existing dogfood
+package as one matched binary/CLI/wrapper/shell-integration set. The operator
+then cleanly quit the old process and relaunched Zentty from GNOME. Bro resumed
+automatically into the real Codex session without the recovery page. Journal
+receipts for process 1058201 show one draft requested and accepted, exact UUID
+launch in pane-6, authenticated `session.start`, and
+`agent-restore-launch ... result=authenticated`. Live snapshot generation 5
+retains both worklanes, both panes, and the pane-6 restore draft. Operator
+dogfood acceptance: **Got my Bro session back**.

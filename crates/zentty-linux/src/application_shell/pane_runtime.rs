@@ -505,13 +505,20 @@ impl PaneRuntimeCoordinator {
                 .insert(pane_id.to_owned(), command.clone());
             eprintln!("zentty-linux: agent-resume-launch pane={pane_id} command={command}");
         }
+        let restored_surface_command = restored_command.as_deref().map(|command| {
+            let command = format!("exec env PATH=\"$ZENTTY_ALL_WRAPPER_BIN_DIRS:$PATH\" {command}");
+            crate::tmux_compat::shell_wrapped_command(
+                &command,
+                std::env::var("SHELL").ok().as_deref(),
+            )
+        });
         Ok(SurfaceConfig {
             command: shell
                 .pane_runtime
                 .command()
                 .map(str::to_owned)
                 .or_else(|| pending_launch.map(|launch| launch.command))
-                .or(restored_command),
+                .or(restored_surface_command),
             title: zentty_core::PRODUCT_NAME.to_owned(),
             working_directory: shell
                 .state

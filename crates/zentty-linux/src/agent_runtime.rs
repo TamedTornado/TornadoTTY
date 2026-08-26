@@ -71,7 +71,7 @@ impl AgentRuntime {
             .and_then(std::path::Path::parent)
             .map(|root| root.join("libexec/zentty/agent-wrappers"));
         let wrapper_directories = wrapper_root
-            .map(|root| enabled_wrapper_directories(&root, &current_path()))
+            .map(|root| installed_wrapper_directories(&root))
             .unwrap_or_default();
         let tmux_shim_directory = cli_path
             .parent()
@@ -192,6 +192,12 @@ impl AgentRuntime {
             ),
         ];
         let active_wrapper_directories = self.active_wrapper_directories();
+        eprintln!(
+            "zentty-linux: agent-wrapper-export pane={} installed={} active={}",
+            pane_id,
+            wrapper_names(&self.wrapper_directories),
+            wrapper_names(&active_wrapper_directories)
+        );
         if !active_wrapper_directories.is_empty() {
             let wrappers = std::env::join_paths(&active_wrapper_directories)
                 .map_err(|error| format!("agent wrapper path is invalid: {error}"))?
@@ -558,10 +564,7 @@ fn socket_path_fits(directory: &std::path::Path) -> bool {
     directory.join("instance.sock").as_os_str().as_bytes().len() <= 107
 }
 
-fn enabled_wrapper_directories(
-    wrapper_root: &std::path::Path,
-    path: &std::ffi::OsStr,
-) -> Vec<PathBuf> {
+fn installed_wrapper_directories(wrapper_root: &std::path::Path) -> Vec<PathBuf> {
     [
         ("amp", &["amp"][..]),
         ("claude", &["claude"][..]),
@@ -583,22 +586,20 @@ fn enabled_wrapper_directories(
     .into_iter()
     .filter_map(|(tool, binaries)| {
         let wrapper_directory = wrapper_root.join(tool);
-        if !binaries
+        binaries
             .iter()
             .any(|binary| is_executable(&wrapper_directory.join(binary)))
-        {
-            return None;
-        }
-        std::env::split_paths(path)
-            .any(|directory| {
-                !directory.starts_with(wrapper_root)
-                    && binaries
-                        .iter()
-                        .any(|binary| is_executable(&directory.join(binary)))
-            })
             .then_some(wrapper_directory)
     })
     .collect()
+}
+
+fn wrapper_names(directories: &[PathBuf]) -> String {
+    directories
+        .iter()
+        .filter_map(|directory| directory.file_name().and_then(|name| name.to_str()))
+        .collect::<Vec<_>>()
+        .join(",")
 }
 
 fn is_executable(path: &std::path::Path) -> bool {
@@ -620,8 +621,9 @@ impl Drop for AgentRuntime {
 #[cfg(test)]
 mod tests {
     use super::{
-        agent_teams_environment, color_terminal_environment, enabled_wrapper_directories,
+        agent_teams_environment, color_terminal_environment, installed_wrapper_directories,
         instance_runtime_directory, integration_enabled, pane_path, shell_integration_environment,
+        wrapper_names,
     };
     use std::collections::BTreeMap;
     use std::fs;
@@ -642,11 +644,10 @@ mod tests {
     }
 
     #[test]
-    fn wrappers_are_enabled_only_for_installed_real_tools() {
+    fn installed_wrappers_do_not_depend_on_the_launcher_path() {
         let root =
             std::env::temp_dir().join(format!("zentty-wrapper-selection-{}", std::process::id()));
         let wrappers = root.join("wrappers");
-        let real = root.join("real");
         let _ = fs::remove_dir_all(&root);
         for tool in ["claude", "codex", "gemini"] {
             fs::create_dir_all(wrappers.join(tool)).unwrap();
@@ -664,32 +665,18 @@ mod tests {
             fs::write(&wrapper, "wrapper").unwrap();
             fs::set_permissions(&wrapper, fs::Permissions::from_mode(0o700)).unwrap();
         }
-        fs::create_dir_all(&real).unwrap();
-        let codex = real.join("codex");
-        fs::write(&codex, "real").unwrap();
-        fs::set_permissions(&codex, fs::Permissions::from_mode(0o700)).unwrap();
-        let gemini = real.join("gemini");
-        fs::write(&gemini, "real").unwrap();
-        fs::set_permissions(&gemini, fs::Permissions::from_mode(0o700)).unwrap();
-        let cursor = real.join("cursor-agent");
-        fs::write(&cursor, "real").unwrap();
-        fs::set_permissions(&cursor, fs::Permissions::from_mode(0o700)).unwrap();
-        let kimi = real.join("kimi-cli");
-        fs::write(&kimi, "real").unwrap();
-        fs::set_permissions(&kimi, fs::Permissions::from_mode(0o700)).unwrap();
-
+        let installed = installed_wrapper_directories(&wrappers);
         assert_eq!(
-            enabled_wrapper_directories(&wrappers, real.as_os_str()),
+            installed,
             [
+                wrappers.join("claude"),
                 wrappers.join("codex"),
                 wrappers.join("cursor"),
                 wrappers.join("gemini"),
                 wrappers.join("kimi")
             ]
         );
-        assert!(
-            enabled_wrapper_directories(&wrappers, wrappers.join("codex").as_os_str()).is_empty()
-        );
+        assert_eq!(wrapper_names(&installed), "claude,codex,cursor,gemini,kimi");
         fs::remove_dir_all(root).unwrap();
     }
 
