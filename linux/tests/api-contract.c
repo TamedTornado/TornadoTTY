@@ -27,9 +27,8 @@ static int reject_null_and_foreign_handles(void) {
     ghostty_gtk_embed_runtime_free(foreign_runtime);
     if (ghostty_gtk_embed_runtime_tick(NULL) ||
         ghostty_gtk_embed_runtime_tick(foreign_runtime) ||
-        ghostty_gtk_embed_surface_new(NULL, NULL, NULL) != NULL ||
         ghostty_gtk_embed_surface_new_with_options(NULL, NULL) != NULL ||
-        ghostty_gtk_embed_surface_new(foreign_runtime, NULL, NULL) != NULL) {
+        ghostty_gtk_embed_surface_new_with_options(foreign_runtime, NULL) != NULL) {
         fputs("api-contract: null or foreign runtime accepted\n", stderr);
         return 1;
     }
@@ -73,9 +72,7 @@ static int reject_null_and_foreign_handles(void) {
             &text_callbacks
         ) ||
         ghostty_gtk_embed_surface_foreground_process_id(NULL) != 0 ||
-        ghostty_gtk_embed_surface_foreground_process_id(foreign_surface) != 0 ||
-        ghostty_gtk_embed_surface_request_paste(NULL) ||
-        ghostty_gtk_embed_surface_request_paste(foreign_surface)) {
+        ghostty_gtk_embed_surface_foreground_process_id(foreign_surface) != 0) {
         fputs("api-contract: null or foreign surface accepted\n", stderr);
         return 1;
     }
@@ -96,7 +93,8 @@ static int reject_null_and_foreign_handles(void) {
 static int enforce_runtime_lifecycle(
     ghostty_gtk_embed_runtime_t *runtime
 ) {
-    if (ghostty_gtk_embed_runtime_new() != NULL) {
+    if (ghostty_gtk_embed_runtime_new_with_async_backend(
+            GHOSTTY_GTK_EMBED_ASYNC_DEFAULT) != NULL) {
         fputs("api-contract: concurrent runtime accepted\n", stderr);
         return 1;
     }
@@ -202,10 +200,14 @@ static int enforce_runtime_lifecycle(
         return 1;
     }
 
-    GtkWidget *surface = ghostty_gtk_embed_surface_new(
+    ghostty_gtk_embed_surface_options_t uninitialized_options = {
+        .struct_size = sizeof(uninitialized_options),
+        .command = "exit 0",
+        .title = "API contract",
+    };
+    GtkWidget *surface = ghostty_gtk_embed_surface_new_with_options(
         runtime,
-        "exit 0",
-        "API contract"
+        &uninitialized_options
     );
     if (surface == NULL) {
         fputs("api-contract: active runtime surface rejected\n", stderr);
@@ -247,8 +249,7 @@ static int enforce_runtime_lifecycle(
             NULL,
             NULL
         ) ||
-        ghostty_gtk_embed_surface_foreground_process_id(surface) != 0 ||
-        ghostty_gtk_embed_surface_request_paste(surface)) {
+        ghostty_gtk_embed_surface_foreground_process_id(surface) != 0) {
         fputs("api-contract: uninitialized surface operation accepted\n", stderr);
         return 1;
     }
@@ -271,12 +272,17 @@ static int enforce_runtime_lifecycle(
     ghostty_gtk_embed_runtime_free(runtime);
     ghostty_gtk_embed_runtime_free(runtime);
     if (ghostty_gtk_embed_runtime_tick(runtime) ||
-        ghostty_gtk_embed_surface_new(runtime, NULL, NULL) != NULL) {
+        ghostty_gtk_embed_surface_new_with_options(
+            runtime,
+            &uninitialized_options
+        ) != NULL) {
         fputs("api-contract: stale runtime accepted\n", stderr);
         return 1;
     }
 
-    runtime = ghostty_gtk_embed_runtime_new();
+    runtime = ghostty_gtk_embed_runtime_new_with_async_backend(
+        GHOSTTY_GTK_EMBED_ASYNC_DEFAULT
+    );
     if (runtime != NULL) {
         fputs("api-contract: runtime recreation accepted\n", stderr);
         return 1;

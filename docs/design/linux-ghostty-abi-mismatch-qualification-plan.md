@@ -4,6 +4,11 @@
 - **Date:** 2026-08-07
 - **Owner:** #11
 
+Current-state note (2026-08-26): GH-11 retained this real historical fixture
+but strengthened it to prove both mismatch directions reject before `main`.
+The separately tracked backend representation XFAIL mentioned below is now a
+fixed-width PASS contract.
+
 ## Problem
 
 The remaining Ghostty ABI compatibility row is prose-only. Zentty does not yet

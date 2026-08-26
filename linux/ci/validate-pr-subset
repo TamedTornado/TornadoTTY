@@ -51,12 +51,7 @@ jq -e '
     release_qualification_passed:false,
     full_linux_qualification_passed:false
   } and
-  .known_gaps == [
-    {
-      id:"ghostty-async-backend-abi-representation",expected_status:"XFAIL",
-      prerequisite:"DOGFOOD-2026-08-02-GHOSTTY-ASYNC-ENUM-ABI must remain an explicit expected failure until the fixed-width ABI contract lands."
-    }
-  ]
+  .known_gaps == []
 ' "${policy}" >/dev/null || fail "policy schema, coverage, gaps, or claims drifted"
 
 if ! jq -e --slurpfile policy "${policy}" '

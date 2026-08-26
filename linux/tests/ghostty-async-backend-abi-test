@@ -12,8 +12,10 @@ git -C "${source_checkout}" rev-parse --is-inside-work-tree >/dev/null 2>&1 || {
     echo "ghostty-async-backend-abi-test: source checkout missing" >&2
     exit 1
 }
-git clone --quiet --no-hardlinks "${source_checkout}" "${temp_dir}/ghostty"
-git -C "${temp_dir}/ghostty" checkout --quiet --detach "${expected_revision}"
+git -c advice.detachedHead=false clone --quiet --no-hardlinks \
+    "${source_checkout}" "${temp_dir}/ghostty"
+git -C "${temp_dir}/ghostty" -c advice.detachedHead=false \
+    checkout --quiet --detach "${expected_revision}"
 mkdir -p "${temp_dir}/ghostty/zig-out/include/ghostty"
 cp "${temp_dir}/ghostty/include/ghostty/gtk.h" \
     "${temp_dir}/ghostty/zig-out/include/ghostty/gtk.h"
@@ -22,8 +24,8 @@ set +e
 GHOSTTY_SOURCE_DIR="${temp_dir}/ghostty" "${runner}" >"${temp_dir}/current.log" 2>&1
 current_status=$?
 set -e
-[[ "${current_status}" -eq 99 ]] || {
-    echo "ghostty-async-backend-abi-test: current tracked defect did not exit 99" >&2
+[[ "${current_status}" -eq 0 ]] || {
+    echo "ghostty-async-backend-abi-test: fixed-width current contract did not pass" >&2
     cat "${temp_dir}/current.log" >&2
     exit 1
 }
@@ -35,12 +37,12 @@ set +e
 GHOSTTY_SOURCE_DIR="${temp_dir}/ghostty" "${runner}" >"${temp_dir}/stale.log" 2>&1
 stale_status=$?
 set -e
-[[ "${stale_status}" -eq 77 ]] &&
-    grep -F "generated installed header differs from the pinned source header" \
-        "${temp_dir}/stale.log" >/dev/null || {
+if [[ "${stale_status}" -ne 77 ]] ||
+   ! grep -F "generated installed header differs from the pinned source header" \
+        "${temp_dir}/stale.log" >/dev/null; then
     echo "ghostty-async-backend-abi-test: stale installed header was accepted" >&2
     cat "${temp_dir}/stale.log" >&2
     exit 1
-}
+fi
 
 echo "Ghostty async-backend ABI probe self-tests passed"

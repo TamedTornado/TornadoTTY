@@ -16,7 +16,6 @@ fi
 expected="$({
     printf '%s\n' \
         ghostty_gtk_embed_runtime_free \
-        ghostty_gtk_embed_runtime_new \
         ghostty_gtk_embed_runtime_new_with_async_backend \
         ghostty_gtk_embed_runtime_reload_config \
         ghostty_gtk_embed_runtime_tick \
@@ -25,11 +24,9 @@ expected="$({
         ghostty_gtk_embed_surface_close \
         ghostty_gtk_embed_surface_foreground_process_id \
         ghostty_gtk_embed_surface_grab_focus \
-        ghostty_gtk_embed_surface_new \
         ghostty_gtk_embed_surface_new_with_options \
         ghostty_gtk_embed_surface_read_text \
         ghostty_gtk_embed_surface_read_selection \
-        ghostty_gtk_embed_surface_request_paste \
         ghostty_gtk_embed_surface_send_text
 } | sort)"
 actual="$(

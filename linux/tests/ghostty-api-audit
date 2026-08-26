@@ -2,7 +2,7 @@
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-inventory="${repo_root}/linux/ghostty-api-audit.json"
+inventory="${GHOSTTY_API_INVENTORY:-${repo_root}/linux/ghostty-api-audit.json}"
 matrix="${repo_root}/linux/qualification-matrix.json"
 ghostty_source="${GHOSTTY_SOURCE_DIR:-}"
 mode="${1:-}"
@@ -12,16 +12,15 @@ fail() {
     exit 1
 }
 
-for command in git jq sha256sum awk grep sed sort; do
+for command in git jq grep sed sort mktemp; do
     command -v "${command}" >/dev/null || fail "required command not found: ${command}"
 done
-
 [[ "$#" -le 1 ]] || fail "usage: $0 [--self-test]"
 [[ -z "${mode}" || "${mode}" == "--self-test" ]] || fail "unknown option: ${mode}"
-
 [[ -f "${inventory}" ]] || fail "inventory not found: ${inventory}"
+
+expected_revision="$(sed -n 's/^revision=//p' "${repo_root}/linux/ghostty.lock")"
 if [[ -z "${ghostty_source}" ]]; then
-    expected_revision="$(sed -n 's/^revision=//p' "${repo_root}/linux/ghostty.lock")"
     for candidate in "${repo_root}/../ghostty" "${repo_root}/build/linux-deps/ghostty"; do
         if git -C "${candidate}" rev-parse --is-inside-work-tree >/dev/null 2>&1 &&
            [[ "$(git -C "${candidate}" rev-parse HEAD)" == "${expected_revision}" ]]; then
@@ -30,377 +29,170 @@ if [[ -z "${ghostty_source}" ]]; then
         fi
     done
 fi
-[[ -n "${ghostty_source}" ]] ||
-    fail "no exact locked Ghostty checkout found in the sibling or managed dependency path"
+[[ -n "${ghostty_source}" ]] || fail "no exact locked Ghostty checkout found"
 git -C "${ghostty_source}" rev-parse --is-inside-work-tree >/dev/null 2>&1 ||
     fail "Ghostty source is not a Git checkout: ${ghostty_source}"
 
-# Patch identities must not depend on operator Git configuration. Keep every
-# identity-producing diff on one explicit format: full SHA-1 index lines,
-# Myers/no-indent/no-rename hunking, fixed prefixes, no color, external diff,
-# or text conversion, and SHA-256 over C-locale bytes.
-normalized_diff() {
-    LC_ALL=C git -C "${ghostty_source}" \
-        -c core.abbrev=40 \
-        -c core.attributesFile=/dev/null \
-        -c core.quotePath=true \
-        -c color.ui=false \
-        -c diff.algorithm=myers \
-        -c diff.indentHeuristic=false \
-        -c diff.renames=false \
-        -c diff.relative=false \
-        -c diff.orderFile=/dev/null \
-        diff --no-ext-diff --no-textconv --no-color --no-renames \
-        --no-indent-heuristic --diff-algorithm=myers "$@"
-}
-
-normalized_patch() {
-    normalized_diff --full-index --binary --unified=3 --inter-hunk-context=0 \
-        --src-prefix=a/ --dst-prefix=b/ "$@"
-}
-
 jq -e '
-    . as $inventory |
-    .schema_version == 1 and
-    (.snapshot.recorded_official_base | type) == "string" and
-    (.snapshot.local_fork_main | type) == "string" and
-    (.snapshot.embedding_series_base | type) == "string" and
-    (.snapshot.head | type) == "string" and
-    (.diff_identity.git_object_format == "sha1") and
-    (.diff_identity.digest_algorithm == "sha256") and
-    (.diff_identity.locale == "C") and
-    (.diff_identity.normalization | length) == 21 and
-    (.ranges | length) == 5 and
-    (.files | length) == 25 and
-    (.abi.exported_function_count == 16) and
+    .schema_version == 2 and
+    .issue == 11 and
+    .decision.outcome == "retain_downstream" and
+    .decision.upstream_submission == "not_now" and
+    .decision.communication_requires_operator_approval == true and
+    .decision.rust_binding_in_ghostty == false and
+    (.snapshot.official_base | test("^[0-9a-f]{40}$")) and
+    (.snapshot.head | test("^[0-9a-f]{40}$")) and
+    (.snapshot.downstream_commit_count | type) == "number" and
+    (.patch_series | length) > 0 and
+    all(.patch_series[];
+        (.first | test("^[0-9a-f]{40}$")) and
+        (.last | test("^[0-9a-f]{40}$")) and
+        (.purpose | length) > 0 and
+        (.upstream_disposition | length) > 0) and
+    (.changed_files | length) == 19 and
+    ([.changed_files[].path] | length == (unique | length)) and
+    all(.changed_files[];
+        (.status == "A" or .status == "M") and
+        (.owner | length) > 0 and
+        (.purpose | length) > 0 and
+        (.tests | length) > 0) and
+    (.changed_files | any(.path == "AGENTS.md") | not) and
+    .abi.exported_function_count == 13 and
     (.abi.operations | length) == .abi.exported_function_count and
-    (.abi.ghostty_owned_public_type_count == 6) and
-    (.abi.ghostty_owned_public_types | length) == .abi.ghostty_owned_public_type_count and
-    (.abi.external_public_type_dependencies | length) == 1 and
-    (.abi.external_public_type_dependencies[0].name == "GtkWidget") and
-        (.abi.external_public_type_dependencies[0].roles | length) == 11 and
-    (.abi.public_enum_values | length) == 3 and
-    (.abi.public_text_extent_values | length) == 2 and
-    (.abi.compatibility_fixture.historical_exported_function_count == 10) and
-    ((.abi.compatibility_fixture.historical_exports | length) == 10) and
-    (.abi.compatibility_fixture.historical_exports | length == (unique | length)) and
-    (.abi.compatibility_fixture.historical_revision as $revision |
-        any($inventory.commits[]; .id == $revision)) and
-    (.abi.compatibility_fixture.current_only_probe_symbol as $probe |
-        any($inventory.abi.operations[]; .symbol == $probe) and
-        ($inventory.abi.compatibility_fixture.historical_exports | index($probe) == null)) and
-    (.abi.compatibility_fixture.expected_version_node == .abi.symbol_version_node) and
-    (.abi.compatibility_fixture.expected_loader_exit == 127) and
-    (.abi.prerequisites | any(.id == "runtime-before-gtk-init")) and
-    (.abi.abi_defects | any(
-        .id == "async-backend-enum-representation" and
-        .severity == "HIGH" and
-        .status == "OPEN" and
-        .requirement_id == "ZL-11-GHOSTTY-ABI-COMPAT" and
-        .test_id == "TEST-GHOSTTY-ASYNC-BACKEND-ABI" and
-        .matrix_cell_id == "ghostty-async-backend-abi-representation")) and
-    ([.files[] | "\(.partition):\(.path)"] | length == (unique | length)) and
     ([.abi.operations[].symbol] | length == (unique | length)) and
-    (.rust_binding.declared_function_count == 13) and
-    ((.rust_binding.operations | length) == .rust_binding.declared_function_count) and
-    (.rust_binding.excluded_exports | length == 3) and
-    ([.rust_binding.operations[].symbol] | length == (unique | length)) and
-    ([.rust_binding.excluded_exports[].symbol] | length == (unique | length)) and
-    (([.rust_binding.operations[].symbol] + [.rust_binding.excluded_exports[].symbol]) |
-        sort == ([$inventory.abi.operations[].symbol] | sort)) and
-    all(.rust_binding.operations[];
+    (.abi.removed_unproven_exports | length) == 3 and
+    ([.abi.removed_unproven_exports[]] | length == (unique | length)) and
+    .abi.async_backend_type == "int32_t" and
+    .abi.text_extent_type == "uint32_t" and
+    .abi.external_public_type == "GtkWidget" and
+    all(.abi.operations[];
         (.safe_owner.path | length) > 0 and
         (.safe_owner.needle | length) > 0 and
         (.product_callers | length) > 0 and
         all(.product_callers[]; (.path | length) > 0 and (.needle | length) > 0) and
-        (.real_journeys | length) > 0) and
-    (.rust_binding.callback_owners | length) == 4 and
-    all(.rust_binding.callback_owners[];
-        (.safe_owner.path | length) > 0 and
-        (.safe_owner.needle | length) > 0 and
-        (.product_caller.path | length) > 0 and
-        (.product_caller.needle | length) > 0 and
-        (.real_journey | length) > 0) and
-    ([.proposed_matrix_cells[].id] | length == (unique | length)) and
-    all(.proposed_matrix_cells[];
-        (.requirement_id | test("^ZL-[0-9]+-[A-Z0-9-]+$")) and
-        (.test_id | test("^TEST-[A-Z0-9-]+$")) and
-        (.integration_owner | length) > 0 and
-        (.status_proposal == "PASS" or
-         .status_proposal == "XFAIL" or
-         .status_proposal == "NOT_IMPLEMENTED")) and
-    all(.proposed_matrix_cells[] | select(.status_proposal == "XFAIL");
-        (.tracking | length) > 0 and
-        (.command | length) > 0 and
-        (.expected_exit | type) == "number") and
-    any(.proposed_matrix_cells[];
-        .id == "ghostty-async-backend-abi-representation" and
-        .requirement_id == "ZL-11-GHOSTTY-ABI-COMPAT" and
-        .test_id == "TEST-GHOSTTY-ASYNC-BACKEND-ABI" and
-        .status_proposal == "XFAIL" and
-        .tracking == "DOGFOOD-2026-08-02-GHOSTTY-ASYNC-ENUM-ABI" and
-        .command == "linux/tests/ghostty-async-backend-abi-test && linux/tests/ghostty-async-backend-abi" and
-        .expected_exit == 99 and
-        .prerequisite_exit == 77 and
-        .repair_acceptance_status == "NOT_IMPLEMENTED") and
-    any(.proposed_matrix_cells[];
-        .id == "ghostty-runtime-initialization-order" and
-        .requirement_id == "ZL-11-GHOSTTY-API-AUDIT" and
-        .test_id == "TEST-GHOSTTY-RUNTIME-INIT-ORDER" and
-        .status_proposal == "PASS") and
-    any(.proposed_matrix_cells[];
-        .id == "ghostty-api-audit-inventory" and
-        .requirement_id == "ZL-11-GHOSTTY-API-AUDIT" and
-        .test_id == "TEST-GHOSTTY-API-AUDIT") and
-    any(.proposed_matrix_cells[];
-        .id == "ghostty-abi-version-node" and
-        .test_id == "TEST-GHOSTTY-ABI-VERSION" and
-        .status_proposal == "PASS") and
-    any(.proposed_matrix_cells[];
-        .id == "ghostty-abi-old-new-mismatch" and
-        .test_id == "TEST-GHOSTTY-ABI-MISMATCH" and
-        .status_proposal == "PASS") and
-    all(.proposed_matrix_cells[] | select(.id | startswith("rust-ghostty-"));
-        .requirement_id == "ZL-13-RUST-GHOSTTY-ADAPTER") and
-    all(.files[];
-        (.status == "A" or .status == "M") and
-        (.additions | type) == "number" and
-        (.deletions | type) == "number" and
-        (.hunks | type) == "number" and .hunks > 0 and
-        (.patch_sha256 | test("^[0-9a-f]{64}$"))) and
-    all(.abi.operations[];
-        (.thread | length) > 0 and
-        (.ownership | length) > 0 and
-        (.gobject_transfer | length) > 0 and
-        (.callbacks | length) > 0 and
-        (.teardown | length) > 0 and
-        (.configuration | length) > 0 and
-        (.symbol_version | length) > 0 and
-        (.current_callers | length) > 0 and
-        (.proven_current_need | length) > 0 and
-        (.predicted_product_need | length) > 0 and
-        (.missing_evidence | length) > 0 and
-        (.recommendation | length) > 0)
-' "${inventory}" >/dev/null || fail "inventory schema or required audit fields are invalid"
+        (.real_journeys | length) > 0 and
+        (.negative_test | length) > 0) and
+    (.qualification_cells | length) == 6 and
+    ([.qualification_cells[].id] | length == (unique | length)) and
+    all(.qualification_cells[]; .status == "PASS")
+' "${inventory}" >/dev/null || fail "inventory schema or required review fields are invalid"
 
-official_base="$(jq -r '.snapshot.recorded_official_base' "${inventory}")"
-fork_main_ref="$(jq -r '.snapshot.local_fork_main_ref' "${inventory}")"
-fork_main="$(jq -r '.snapshot.local_fork_main' "${inventory}")"
-embedding_base="$(jq -r '.snapshot.embedding_series_base' "${inventory}")"
+base="$(jq -r '.snapshot.official_base' "${inventory}")"
 head="$(jq -r '.snapshot.head' "${inventory}")"
-locked_head="$(sed -n 's/^revision=//p' "${repo_root}/linux/ghostty.lock")"
-
-[[ "${locked_head}" == "${head}" ]] || fail "linux/ghostty.lock and audit head differ"
-[[ "$(git -C "${ghostty_source}" rev-parse --show-object-format)" == "$(jq -r '.diff_identity.git_object_format' "${inventory}")" ]] ||
-    fail "Ghostty object format differs from normalized diff identity"
+[[ "${expected_revision}" == "${head}" ]] || fail "linux/ghostty.lock and audit head differ"
 [[ "$(git -C "${ghostty_source}" rev-parse HEAD)" == "${head}" ]] ||
     fail "Ghostty checkout HEAD differs from audited head"
-[[ -z "$(git -C "${ghostty_source}" status --porcelain)" ]] ||
+[[ -z "$(git -C "${ghostty_source}" status --porcelain=v1)" ]] ||
     fail "Ghostty checkout must be clean"
+git -C "${ghostty_source}" merge-base --is-ancestor "${base}" "${head}" ||
+    fail "official base is not an ancestor of the candidate"
+[[ "$(git -C "${ghostty_source}" rev-list --count "${base}..${head}")" == \
+   "$(jq -r '.snapshot.downstream_commit_count' "${inventory}")" ]] ||
+    fail "downstream commit count differs"
 
-for commit in "${official_base}" "${fork_main}" "${embedding_base}" "${head}"; do
-    [[ "$(git -C "${ghostty_source}" cat-file -t "${commit}" 2>/dev/null)" == "commit" ]] ||
-        fail "audited commit is unavailable locally: ${commit}"
-done
-[[ "$(git -C "${ghostty_source}" rev-parse "${fork_main_ref}^{commit}")" == "${fork_main}" ]] ||
-    fail "${fork_main_ref} moved; the local-ref snapshot needs review"
-[[ "$(git -C "${ghostty_source}" merge-base "${head}" "${fork_main_ref}")" == "${fork_main}" ]] ||
-    fail "local fork-main merge base differs from the audit"
-git -C "${ghostty_source}" merge-base --is-ancestor "${official_base}" "${embedding_base}" ||
-    fail "recorded official base is not an ancestor of the embedding base"
-[[ "$(git -C "${ghostty_source}" rev-parse 4de99904a04be6af23c89013d78ec2605986ade7^)" == "${embedding_base}" ]] ||
-    fail "embedding series no longer begins immediately after the recorded embedding base"
+while IFS=$'\t' read -r first last; do
+    git -C "${ghostty_source}" merge-base --is-ancestor "${base}" "${first}" ||
+        fail "patch-series first commit is outside the downstream range: ${first}"
+    git -C "${ghostty_source}" merge-base --is-ancestor "${first}" "${last}" ||
+        fail "patch-series order is invalid: ${first}..${last}"
+    git -C "${ghostty_source}" merge-base --is-ancestor "${last}" "${head}" ||
+        fail "patch-series last commit is outside the downstream range: ${last}"
+done < <(jq -r '.patch_series[] | [.first, .last] | @tsv' "${inventory}")
 
-upstream_refs_present=false
-if [[ -n "$(git -C "${ghostty_source}" for-each-ref --format='%(refname)' refs/remotes/upstream/)" ]]; then
-    upstream_refs_present=true
-fi
-[[ "${upstream_refs_present}" == "$(jq -r '.snapshot.upstream_remote_tracking_ref_available' "${inventory}")" ]] ||
-    fail "upstream remote-tracking ref availability changed; review the base statement"
-
-validate_range() {
-    local id="$1"
-    local base range_head expected_files expected_hunks expected_additions
-    local expected_deletions expected_hash actual_files actual_hunks
-    local actual_additions actual_deletions actual_hash actual_commits expected_commits
-
-    base="$(jq -r --arg id "${id}" '.ranges[] | select(.id == $id) | .base' "${inventory}")"
-    range_head="$(jq -r --arg id "${id}" '.ranges[] | select(.id == $id) | .head' "${inventory}")"
-    expected_files="$(jq -r --arg id "${id}" '.ranges[] | select(.id == $id) | .file_count' "${inventory}")"
-    expected_hunks="$(jq -r --arg id "${id}" '.ranges[] | select(.id == $id) | .hunk_count' "${inventory}")"
-    expected_additions="$(jq -r --arg id "${id}" '.ranges[] | select(.id == $id) | .additions' "${inventory}")"
-    expected_deletions="$(jq -r --arg id "${id}" '.ranges[] | select(.id == $id) | .deletions' "${inventory}")"
-    expected_hash="$(jq -r --arg id "${id}" '.ranges[] | select(.id == $id) | .patch_sha256' "${inventory}")"
-    expected_commits="$(jq -r --arg id "${id}" '.ranges[] | select(.id == $id) | .commit_count' "${inventory}")"
-
-    [[ -n "${base}" && "${base}" != "null" ]] || fail "unknown range: ${id}"
-    actual_files="$(normalized_diff --name-only "${base}..${range_head}" | wc -l)"
-    actual_hunks="$(normalized_diff --unified=0 --inter-hunk-context=0 "${base}..${range_head}" | grep -c '^@@ ')"
-    read -r actual_additions actual_deletions < <(
-        normalized_diff --numstat "${base}..${range_head}" |
-            awk '{ additions += $1; deletions += $2 } END { print additions + 0, deletions + 0 }'
-    )
-    actual_hash="$(normalized_patch "${base}..${range_head}" | LC_ALL=C sha256sum | awk '{print $1}')"
-    actual_commits="$(git -C "${ghostty_source}" rev-list --count "${base}..${range_head}")"
-
-    [[ "${actual_files}" == "${expected_files}" ]] || fail "${id} file count differs"
-    [[ "${actual_hunks}" == "${expected_hunks}" ]] || fail "${id} hunk count differs"
-    [[ "${actual_additions}" == "${expected_additions}" ]] || fail "${id} additions differ"
-    [[ "${actual_deletions}" == "${expected_deletions}" ]] || fail "${id} deletions differ"
-    [[ "${actual_hash}" == "${expected_hash}" ]] || fail "${id} patch hash differs"
-    [[ "${actual_commits}" == "${expected_commits}" ]] || fail "${id} commit count differs"
-}
-
-validate_range gtk-embedding
-validate_range packaging-reproducibility
-validate_range all-downstream-from-recorded-official-base
-validate_range ime-lifecycle
-validate_range embed-logging-control
-
-for partition in gtk-embedding packaging-reproducibility ime-lifecycle embed-logging-control; do
-    range_id="${partition}"
-    base="$(jq -r --arg id "${range_id}" '.ranges[] | select(.id == $id) | .base' "${inventory}")"
-    range_head="$(jq -r --arg id "${range_id}" '.ranges[] | select(.id == $id) | .head' "${inventory}")"
-    expected_count="$(jq -r --arg p "${partition}" '[.files[] | select(.partition == $p)] | length' "${inventory}")"
-    range_count="$(normalized_diff --name-only "${base}..${range_head}" | wc -l)"
-    [[ "${expected_count}" == "${range_count}" ]] || fail "${partition} file ledger count differs"
-
-    while IFS=$'\t' read -r status additions deletions hunks patch_hash path; do
-        actual_status="$(normalized_diff --name-status "${base}..${range_head}" -- "${path}" | awk 'NR == 1 {print $1}')"
-        read -r actual_additions actual_deletions < <(
-            normalized_diff --numstat "${base}..${range_head}" -- "${path}" |
-                awk 'NR == 1 {print $1, $2}'
-        )
-        actual_hunks="$(normalized_diff --unified=0 --inter-hunk-context=0 "${base}..${range_head}" -- "${path}" | grep -c '^@@ ')"
-        actual_patch_hash="$(normalized_patch "${base}..${range_head}" -- "${path}" | LC_ALL=C sha256sum | awk '{print $1}')"
-
-        [[ "${actual_status}" == "${status}" ]] || fail "status differs for ${path}"
-        [[ "${actual_additions}" == "${additions}" ]] || fail "additions differ for ${path}"
-        [[ "${actual_deletions}" == "${deletions}" ]] || fail "deletions differ for ${path}"
-        [[ "${actual_hunks}" == "${hunks}" ]] || fail "hunk count differs for ${path}"
-        [[ "${actual_patch_hash}" == "${patch_hash}" ]] || fail "patch hash differs for ${path}"
-    done < <(
-        jq -r --arg p "${partition}" '
-            .files[] | select(.partition == $p) |
-            [.status, (.additions | tostring), (.deletions | tostring),
-             (.hunks | tostring), .patch_sha256, .path] | @tsv
-        ' "${inventory}"
-    )
-done
-
-expected_commits="$(jq -r '.commits[].id' "${inventory}")"
-actual_commits="$(git -C "${ghostty_source}" rev-list --reverse "${official_base}..${head}")"
-[[ "${actual_commits}" == "${expected_commits}" ]] || fail "commit inventory differs"
+expected_files="$(jq -r '.changed_files[] | [.status, .path] | @tsv' "${inventory}" | sort)"
+actual_files="$(git -C "${ghostty_source}" diff --name-status "${base}..${head}" | sort)"
+[[ "${actual_files}" == "${expected_files}" ]] || fail "changed-file ledger differs"
+! grep -Fx $'M\tAGENTS.md' <<<"${actual_files}" >/dev/null ||
+    fail "Zentty policy leaked into the Ghostty candidate"
 
 expected_symbols="$(jq -r '.abi.operations[].symbol' "${inventory}" | sort)"
 header_symbols="$(
-    grep -Eo 'ghostty_gtk_embed_[a-z_]+[[:space:]]*\(' "${ghostty_source}/include/ghostty/gtk.h" |
-        sed -E 's/[[:space:]]*\($//' |
-        sort -u
+    grep -Eo 'ghostty_gtk_embed_[a-z_]+[[:space:]]*\(' \
+        "${ghostty_source}/include/ghostty/gtk.h" |
+        sed -E 's/[[:space:]]*\($//' | sort -u
 )"
 zig_symbols="$(
-    sed -n -E 's/^export fn (ghostty_gtk_embed_[a-z_]+).*/\1/p' "${ghostty_source}/src/gtk_embed_lib.zig" |
-        sort -u
+    sed -n -E 's/^export fn (ghostty_gtk_embed_[a-z_]+).*/\1/p' \
+        "${ghostty_source}/src/gtk_embed_lib.zig" | sort -u
 )"
 version_symbols="$(
-    sed -n -E 's/^[[:space:]]+(ghostty_gtk_embed_[a-z_]+);/\1/p' "${ghostty_source}/src/gtk_embed_lib.version-script" |
-        sort -u
+    sed -n -E 's/^[[:space:]]+(ghostty_gtk_embed_[a-z_]+);/\1/p' \
+        "${ghostty_source}/src/gtk_embed_lib.version-script" | sort -u
 )"
-historical_revision="$(jq -r '.abi.compatibility_fixture.historical_revision' "${inventory}")"
-historical_symbols="$(
-    git -C "${ghostty_source}" show \
-        "${historical_revision}:src/gtk_embed_lib.version-script" |
-        sed -n -E 's/^[[:space:]]+(ghostty_gtk_embed_[a-z_]+);/\1/p' |
-        sort -u
-)"
-expected_historical_symbols="$(
-    jq -r '.abi.compatibility_fixture.historical_exports[]' "${inventory}" | sort
-)"
-
 [[ "${header_symbols}" == "${expected_symbols}" ]] || fail "header operations differ from inventory"
 [[ "${zig_symbols}" == "${expected_symbols}" ]] || fail "Zig exports differ from inventory"
 [[ "${version_symbols}" == "${expected_symbols}" ]] || fail "version-script allowlist differs from inventory"
-[[ "${historical_symbols}" == "${expected_historical_symbols}" ]] ||
-    fail "historical ABI mismatch fixture symbols differ from inventory"
 [[ "$(grep -c '^GHOSTTY_GTK_EMBED_1\.0 {' "${ghostty_source}/src/gtk_embed_lib.version-script")" == 1 ]] ||
     fail "symbol-version node differs"
 
-expected_enum_values="$(jq -r '.abi.public_enum_values[] | "\(.name)=\(.value)"' "${inventory}")"
-actual_enum_values="$(
-    sed -n -E 's/^[[:space:]]*(GHOSTTY_GTK_EMBED_ASYNC_[A-Z_]+)[[:space:]]*=[[:space:]]*([0-9]+),/\1=\2/p' \
-        "${ghostty_source}/include/ghostty/gtk.h"
-)"
-[[ "${actual_enum_values}" == "${expected_enum_values}" ]] || fail "public async enum differs from inventory"
-
-expected_text_extent_values="$(jq -r '.abi.public_text_extent_values[] | "\(.name)=\(.value)"' "${inventory}")"
-actual_text_extent_values="$(
-    sed -n -E 's/^#define[[:space:]]+(GHOSTTY_GTK_EMBED_TEXT_[A-Z_]+)[[:space:]]+\(\(ghostty_gtk_embed_text_extent_t\)[[:space:]]+([0-9]+)\)/\1=\2/p' \
-        "${ghostty_source}/include/ghostty/gtk.h"
-)"
-[[ "${actual_text_extent_values}" == "${expected_text_extent_values}" ]] ||
-    fail "public text-extent values differ from inventory"
+grep -Fx 'typedef int32_t ghostty_gtk_embed_async_backend_t;' \
+    "${ghostty_source}/include/ghostty/gtk.h" >/dev/null ||
+    fail "async backend is not fixed-width int32_t"
 grep -Fx 'typedef uint32_t ghostty_gtk_embed_text_extent_t;' \
     "${ghostty_source}/include/ghostty/gtk.h" >/dev/null ||
-    fail "public text-extent representation differs from inventory"
+    fail "text extent is not fixed-width uint32_t"
+grep -Fx 'typedef struct _GtkWidget GtkWidget;' \
+    "${ghostty_source}/include/ghostty/gtk.h" >/dev/null ||
+    fail "GtkWidget forward declaration differs"
+while IFS= read -r removed; do
+    ! grep -Fq "${removed}(" "${ghostty_source}/include/ghostty/gtk.h" ||
+        fail "removed unproven export remains in the public header: ${removed}"
+    ! grep -Fq "export fn ${removed}(" "${ghostty_source}/src/gtk_embed_lib.zig" ||
+        fail "removed unproven export remains in the Zig ABI: ${removed}"
+done < <(jq -r '.abi.removed_unproven_exports[]' "${inventory}")
 
-grep -Fx 'typedef struct _GtkWidget GtkWidget;' "${ghostty_source}/include/ghostty/gtk.h" >/dev/null ||
-    fail "GtkWidget forward declaration differs from inventory"
-[[ "$(grep -Ec '^GtkWidget \*ghostty_gtk_embed_surface_new\(' "${ghostty_source}/include/ghostty/gtk.h")" == 1 ]] ||
-    fail "GtkWidget surface-constructor return role differs from inventory"
-[[ "$(grep -Eoc 'GtkWidget \*surface' "${ghostty_source}/include/ghostty/gtk.h")" == 9 ]] ||
-    fail "GtkWidget surface-operation parameter roles differ from inventory"
-
-expected_rust_symbols="$(jq -r '.rust_binding.operations[].symbol' "${inventory}" | sort)"
 actual_rust_symbols="$(
     sed -n -E 's/^[[:space:]]+pub fn (ghostty_gtk_embed_[a-z_]+).*/\1/p' \
         "${repo_root}/crates/zentty-ghostty-sys/src/lib.rs" | sort -u
 )"
-[[ "${actual_rust_symbols}" == "${expected_rust_symbols}" ]] ||
-    fail "raw Rust declarations differ from the product-owned binding ledger"
+[[ "${actual_rust_symbols}" == "${expected_symbols}" ]] ||
+    fail "raw Rust declarations differ from the reviewed public ABI"
 
 while IFS=$'\t' read -r path needle; do
-    [[ -f "${repo_root}/${path}" ]] || fail "Rust binding ledger path is missing: ${path}"
+    [[ -f "${repo_root}/${path}" ]] || fail "product-usage path is missing: ${path}"
     grep -Fq -- "${needle}" "${repo_root}/${path}" ||
-        fail "Rust binding ledger callsite is missing: ${path}: ${needle}"
+        fail "reviewed product callsite is missing: ${path}: ${needle}"
 done < <(
-    jq -r '
-        .rust_binding.operations[] |
-        .safe_owner, .product_callers[] |
-        [.path, .needle] | @tsv
-    ' "${inventory}"
-    jq -r '
-        .rust_binding.callback_owners[] |
-        .safe_owner, .product_caller |
-        [.path, .needle] | @tsv
-    ' "${inventory}"
+    jq -r '.abi.operations[] | .safe_owner, .product_callers[] | [.path, .needle] | @tsv' \
+        "${inventory}"
 )
 
 while IFS= read -r journey; do
-    [[ -x "${repo_root}/${journey}" ]] || fail "Rust binding real journey is missing: ${journey}"
+    [[ -x "${repo_root}/${journey}" ]] || fail "real product journey is missing: ${journey}"
     jq -e --arg journey "${journey}" '
         any(.cells[]; .status == "PASS" and ((.command // "") | contains($journey)))
-    ' "${matrix}" >/dev/null ||
-        fail "Rust binding real journey has no PASS qualification cell: ${journey}"
-done < <(
-    jq -r '
-        ([.rust_binding.operations[].real_journeys[]] +
-         [.rust_binding.callback_owners[].real_journey]) |
-        unique[]
-    ' "${inventory}"
-)
+    ' "${matrix}" >/dev/null || fail "real product journey has no PASS matrix cell: ${journey}"
+done < <(jq -r '[.abi.operations[].real_journeys[]] | unique[]' "${inventory}")
 
-pass_message="Ghostty API audit inventory passed: 16 embedding files, 7 packaging files, 1 IM lifecycle file, 1 embed logging-control file, 70 partition hunks, 16 allowlisted function exports, 13 product-owned Rust declarations, 6 Ghostty-owned public types, 1 external GtkWidget dependency"
+while IFS=$'\t' read -r id status; do
+    jq -e --arg id "${id}" --arg status "${status}" '
+        any(.cells[]; .id == $id and .status == $status)
+    ' "${matrix}" >/dev/null || fail "qualification cell differs from audit: ${id}"
+done < <(jq -r '.qualification_cells[] | [.id, .status] | @tsv' "${inventory}")
+
+pass_message="Ghostty API audit passed: current official base, 19 reviewed files, 13 product-used exports, fixed-width backend ABI, no Zentty policy in Ghostty, downstream maintenance decision recorded"
 echo "${pass_message}"
 
 if [[ "${mode}" == "--self-test" ]]; then
-    conflict_output="$(
-        GIT_CONFIG_COUNT=1 \
-        GIT_CONFIG_KEY_0=core.abbrev \
-        GIT_CONFIG_VALUE_0=12 \
-        GHOSTTY_SOURCE_DIR="${ghostty_source}" \
-            "$0"
-    )"
-    grep -Fx "${pass_message}" <<<"${conflict_output}" >/dev/null ||
-        fail "core.abbrev=12 normalization self-test did not reproduce the inventory PASS"
-    echo "Ghostty API audit normalization self-test passed: conflicting core.abbrev=12 did not change diff identities"
+    temporary="$(mktemp -d -t zentty-ghostty-audit.XXXXXX)"
+    trap 'rm -rf -- "${temporary}"' EXIT
+
+    jq '.changed_files |= .[1:]' "${inventory}" >"${temporary}/missing-file.json"
+    if GHOSTTY_API_INVENTORY="${temporary}/missing-file.json" \
+       GHOSTTY_SOURCE_DIR="${ghostty_source}" "$0" >"${temporary}/missing.out" 2>&1; then
+        fail "self-test accepted a missing changed-file cell"
+    fi
+    grep -Eq 'inventory schema|changed-file ledger differs' "${temporary}/missing.out" ||
+        fail "missing changed-file self-test failed for the wrong reason"
+
+    jq '.decision.outcome = "submit_upstream"' "${inventory}" >"${temporary}/wrong-decision.json"
+    if GHOSTTY_API_INVENTORY="${temporary}/wrong-decision.json" \
+       GHOSTTY_SOURCE_DIR="${ghostty_source}" "$0" >"${temporary}/decision.out" 2>&1; then
+        fail "self-test accepted an unreviewed upstream decision"
+    fi
+    grep -F 'inventory schema or required review fields are invalid' \
+        "${temporary}/decision.out" >/dev/null ||
+        fail "decision self-test failed for the wrong reason"
+
+    echo "Ghostty API audit self-tests passed: missing ledger entries and unreviewed decision changes rejected"
 fi

@@ -160,12 +160,12 @@ qualification cells. The former recursive runner, Bash-governance mutation,
 attestation, and archive layers were intentionally retired by the recovery
 plan because they tested the evidence machinery rather than Zentty.
 
-`ghostty-async-backend-abi-representation` is a command-backed tracked XFAIL:
-the C17/C++17 probe rejects generated-header drift, prints default and
-`-fshort-enums` sizes, and exits exactly 99 for the current enum-versus-`c_int`
-mismatch. Its focused self-test runs before the matrix. Missing checkout,
-compiler, or header prerequisites exit 77; every other nonzero exit is an
-unexpected XFAIL failure rather than the tracked defect.
+`ghostty-async-backend-abi-representation` is a command-backed PASS cell. The
+C17/C++17 probe rejects generated-header drift and proves the fixed-width
+`int32_t` backend type remains four bytes with default flags and
+`-fshort-enums`. Its focused self-test runs before the matrix. Missing checkout,
+compiler, or header prerequisites exit 77; any other nonzero exit is a real
+qualification failure.
 
 ## Controlled local environments
 

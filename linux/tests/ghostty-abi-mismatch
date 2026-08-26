@@ -7,6 +7,7 @@ fixture_root="${GHOSTTY_ABI_MISMATCH_ROOT:-${repo_root}/build/linux-abi-mismatch
 current_revision="$(sed -n 's/^revision=//p' "${repo_root}/linux/ghostty.lock")"
 historical_revision="$(jq -r '.abi.compatibility_fixture.historical_revision' "${inventory}")"
 probe_symbol="$(jq -r '.abi.compatibility_fixture.current_only_probe_symbol' "${inventory}")"
+historical_probe_symbol="$(jq -r '.abi.compatibility_fixture.historical_only_probe_symbol' "${inventory}")"
 version_node="$(jq -r '.abi.compatibility_fixture.expected_version_node' "${inventory}")"
 expected_exit="$(jq -r '.abi.compatibility_fixture.expected_loader_exit' "${inventory}")"
 
@@ -33,9 +34,10 @@ validate_mismatch_receipt() {
     local status="$1"
     local stdout_file="$2"
     local stderr_file="$3"
+    local symbol="$4"
     [[ "${status}" == "${expected_exit}" ]] || return 1
     [[ ! -s "${stdout_file}" ]] || return 1
-    grep -F "undefined symbol: ${probe_symbol}, version ${version_node}" \
+    grep -F "undefined symbol: ${symbol}, version ${version_node}" \
         "${stderr_file}" >/dev/null
 }
 
@@ -67,9 +69,10 @@ validate_fixture() {
     expected="$(jq -r '.abi.operations[].symbol' "${inventory}" | sort)"
     [[ "${actual}" == "${expected}" ]] || return 1
     actual="$(dynamic_exports "${historical_lib}")"
-    expected="$(jq -r '.abi.compatibility_fixture.historical_exports[]' \
-        "${inventory}" | sort)"
-    [[ "${actual}" == "${expected}" ]] || return 1
+    grep -Fx "${historical_probe_symbol}" <<<"${actual}" >/dev/null || return 1
+    ! grep -Fx "${probe_symbol}" <<<"${actual}" >/dev/null || return 1
+    grep -Fx "${probe_symbol}" <<<"$(dynamic_exports "${current_lib}")" >/dev/null || return 1
+    ! grep -Fx "${historical_probe_symbol}" <<<"$(dynamic_exports "${current_lib}")" >/dev/null || return 1
 
     for binary in "${root}/bin/current-consumer" "${root}/bin/historical-consumer"; do
         readelf -h "${binary}" | grep -F "DYN" >/dev/null || return 1
@@ -92,16 +95,16 @@ self_test() {
     : >"${stdout_file}"
     printf 'loader: undefined symbol: %s, version %s\n' \
         "${probe_symbol}" "${version_node}" >"${stderr_file}"
-    validate_mismatch_receipt "${expected_exit}" "${stdout_file}" "${stderr_file}" ||
+    validate_mismatch_receipt "${expected_exit}" "${stdout_file}" "${stderr_file}" "${probe_symbol}" ||
         return 1
-    ! validate_mismatch_receipt 0 "${stdout_file}" "${stderr_file}" || return 1
+    ! validate_mismatch_receipt 0 "${stdout_file}" "${stderr_file}" "${probe_symbol}" || return 1
     printf 'abi-mismatch-current-consumer: MAIN\n' >"${stdout_file}"
-    ! validate_mismatch_receipt "${expected_exit}" "${stdout_file}" "${stderr_file}" ||
+    ! validate_mismatch_receipt "${expected_exit}" "${stdout_file}" "${stderr_file}" "${probe_symbol}" ||
         return 1
     : >"${stdout_file}"
     printf 'loader: undefined symbol: ghostty_gtk_embed_wrong, version %s\n' \
         "${version_node}" >"${stderr_file}"
-    ! validate_mismatch_receipt "${expected_exit}" "${stdout_file}" "${stderr_file}" ||
+    ! validate_mismatch_receipt "${expected_exit}" "${stdout_file}" "${stderr_file}" "${probe_symbol}" ||
         return 1
     ! validate_fixture "${temporary}/missing" || return 1
     validate_metadata "${fixture_root}/metadata.json" || return 1
@@ -122,11 +125,11 @@ run_real() {
         "${fixture_root}/bin/current-consumer")" || fail "matching current pair failed"
     [[ "${current_output}" == $'abi-mismatch-current-consumer: MAIN\nabi-mismatch-current-consumer: PASS' ]] ||
         fail "matching current pair returned an unexpected receipt"
-    historical_output="$(LD_LIBRARY_PATH="${fixture_root}/current" \
+    historical_output="$(LD_LIBRARY_PATH="${fixture_root}/historical:${fixture_root}/current" \
         "${fixture_root}/bin/historical-consumer")" ||
-        fail "historical-header/current-library compatible pair failed"
+        fail "matching historical pair failed"
     [[ "${historical_output}" == $'abi-mismatch-historical-consumer: MAIN\nabi-mismatch-historical-consumer: PASS' ]] ||
-        fail "compatible historical consumer returned an unexpected receipt"
+        fail "matching historical pair returned an unexpected receipt"
 
     set +e
     LD_LIBRARY_PATH="${fixture_root}/historical:${fixture_root}/current" \
@@ -135,9 +138,19 @@ run_real() {
     status=$?
     set -e
     validate_mismatch_receipt "${status}" "${temporary}/mismatch.stdout" \
-        "${temporary}/mismatch.stderr" ||
+        "${temporary}/mismatch.stderr" "${probe_symbol}" ||
         fail "incompatible current-consumer/historical-library pair did not fail before main"
-    echo "Ghostty ABI mismatch passed: matching=current, historical-header=current-compatible, current-header=historical-rejected-before-main"
+
+    set +e
+    LD_LIBRARY_PATH="${fixture_root}/current" \
+        "${fixture_root}/bin/historical-consumer" \
+        >"${temporary}/reverse.stdout" 2>"${temporary}/reverse.stderr"
+    status=$?
+    set -e
+    validate_mismatch_receipt "${status}" "${temporary}/reverse.stdout" \
+        "${temporary}/reverse.stderr" "${historical_probe_symbol}" ||
+        fail "incompatible historical-consumer/current-library pair did not fail before main"
+    echo "Ghostty ABI mismatch passed: both matching pairs load; both old/new mismatch directions reject before main"
 }
 
 for command in awk grep jq mktemp readelf sed sha256sum sort; do

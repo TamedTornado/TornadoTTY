@@ -83,7 +83,7 @@ cc "${c_flags[@]}" \
 cc "${c_flags[@]}" \
     -I"${historical_source}/zig-out/include" \
     "${repo_root}/linux/tests/abi-mismatch-historical-consumer.c" \
-    -L"${fixture_root}/current" -lghostty-gtk-embed "${link_flags[@]}" \
+    -L"${fixture_root}/historical" -lghostty-gtk-embed "${link_flags[@]}" \
     -o "${fixture_root}/bin/historical-consumer"
 
 jq -n \

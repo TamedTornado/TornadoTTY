@@ -5,7 +5,10 @@
 #include <string.h>
 
 static int runtime_first(void) {
-    ghostty_gtk_embed_runtime_t *runtime = ghostty_gtk_embed_runtime_new();
+    ghostty_gtk_embed_runtime_t *runtime =
+        ghostty_gtk_embed_runtime_new_with_async_backend(
+            GHOSTTY_GTK_EMBED_ASYNC_DEFAULT
+        );
     if (runtime == NULL) {
         fputs("runtime-init-order: runtime-first constructor rejected\n", stderr);
         return 1;
@@ -25,7 +28,10 @@ static int gtk_first(void) {
     GtkWidget *before = gtk_button_new_with_label("before rejected runtime");
     g_object_ref_sink(before);
 
-    ghostty_gtk_embed_runtime_t *runtime = ghostty_gtk_embed_runtime_new();
+    ghostty_gtk_embed_runtime_t *runtime =
+        ghostty_gtk_embed_runtime_new_with_async_backend(
+            GHOSTTY_GTK_EMBED_ASYNC_DEFAULT
+        );
     if (runtime != NULL) {
         ghostty_gtk_embed_runtime_free(runtime);
         g_object_unref(before);

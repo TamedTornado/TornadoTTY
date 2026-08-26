@@ -156,6 +156,12 @@ also pins `ghostty-async-backend-abi-representation` to XFAIL and rejects it if
 the outcome becomes stale rather than silently treating the old expectation as
 coverage.
 
+**Current-state reconciliation (2026-08-26):** GH-11 replaced the public enum
+with a fixed-width `int32_t` contract, promoted the authoritative matrix cell
+to PASS, and removed this entry from the public-subset known-gap list. The text
+above records the policy behavior at the time of this historical run; it is not
+the current qualification status.
+
 The runner now compares its clean HEAD with `ZENTTY_EXPECTED_COMMIT` when the
 workflow supplies it. The workflow contract separately pins the event SHA and
 requires commit- plus attempt-specific artifact names, while ref-scoped
