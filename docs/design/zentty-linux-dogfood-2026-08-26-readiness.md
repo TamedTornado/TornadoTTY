@@ -180,3 +180,95 @@ shell syntax/static analysis for the extended existing multi-window actor, and
 an added real-product assertion that an open Agent Status popover survives
 three complete controlled spinner cycles. No full qualification is part of
 this dogfood deployment.
+
+## GH-103: failed automatic agent restore erased its worklane
+
+### Operator discovery and durable evidence
+
+After quitting and relaunching Zentty from the GNOME launcher, the operator's
+**Bro** worklane was missing while **Consulting** remained. This was real
+workspace loss, not a stale sidebar projection. The user journal for process
+796313 establishes the exact sequence on 2026-08-26:
+
+1. at 13:27:45 the restored topology was
+   `worklane-4[title=Bro]:pane-6*|worklane-3[title=Consulting]:pane-5`;
+2. Zentty configured pane-6 with the stored Codex resume command and Ghostty
+   initialized its terminal surface;
+3. Ghostty delivered `child-exited-pane=pane-6`;
+4. Zentty immediately projected only `worklane-3: pane-5`;
+5. live persistence published that damaged one-worklane topology; and
+6. the later clean exit therefore correctly, but destructively, retained only
+   Consulting.
+
+The callback does not expose an exit code, signal, or child identity. It proves
+that the configured terminal child exited during automatic restoration; it
+does **not** prove that Codex itself was the process that exited. The original
+cause of that child exit remains uncertain.
+
+The pre-loss state was reconstructed in an isolated `/tmp` state directory
+using the journaled worklane, pane, directory, and restore-draft identities.
+The deployed dogfood binary reproduced the failure exactly: Bro appeared,
+pane-6 initialized, `child-exited-pane=pane-6` arrived, Bro disappeared, and
+the isolated live snapshot contained only Consulting. The operator visually
+confirmed the reproduced disappearance. No real user snapshot was modified.
+
+### Repair and GUI behavior
+
+An automatic restore command is now pending until a routed, authenticated
+agent lifecycle event proves that the resumed agent owns the pane. Surface
+construction or initialization alone does not establish success, and there is
+no timing heuristic. If the terminal child exits while restoration is still
+pending, Zentty preserves the pane and worklane, clears the failed agent draft,
+mounts a real fallback shell, and covers it with a persistent pane-local
+recovery panel. The panel explains the failure and offers **Retry**, **Open
+Shell Instead**, expandable **Details**, and the existing confirmation-aware
+**Remove Pane** action. Retry retains the in-memory resume command without
+printing its session identifier in the new recovery receipts.
+
+The first implementation attempted to classify a restore as stable ten seconds
+after surface ownership. The focused integration test disproved that design:
+inactive Ghostty surfaces can be owned before they are initialized, and elapsed
+time is not evidence of successful agent restoration. The timer was removed
+entirely. Authentication is now the sole success boundary.
+
+Persistence now emits structural receipts to the user journal at live queueing
+and clean publication. They include reason, generation, active window, ordered
+window/worklane/pane IDs, and restore-draft pane IDs. They deliberately exclude
+terminal text, commands, directories, environment, prompts, session IDs, and
+tokens. This makes future topology loss diagnosable for GNOME-launched builds
+without requiring an attached stderr session.
+
+### Focused evidence
+
+- pane-runtime disposition regression: PASS;
+- core failed-draft clearing plus pane/worklane projection regression: PASS;
+- 14 persistence coordinator tests after adding structural receipts: PASS;
+- shellcheck with sourced helpers, formatting, and targeted binary check: PASS;
+- ReleaseSafe build, including cargo publication-age audit and package-notice
+  collection: PASS;
+- controlled nested-X11 real-product journey:
+  `PASS failed-agent-restore topology=preserved fallback=real-shell snapshot=clean`.
+
+The controlled actor exits from a real command running behind a real Ghostty
+PTY. The focused mode asserts the persistent recovery panel was mounted, closes
+the real window through compositor input, and proves the clean snapshot retains
+all three worklanes and all five panes while excluding the failed resume draft.
+No full Linux qualification was run or claimed.
+
+The staged ReleaseSafe build was then launched on the operator's GNOME desktop
+with a second fresh reconstruction of the lost Bro state. The first overlay
+implementation incorrectly exposed the fallback shell even though GTK reported
+the recovery overlay mounted; this failed visual acceptance. `PaneFrame` now
+uses explicit terminal and restore-failure stack pages rather than relying on
+native-widget overlay ordering. The operator confirmed the corrected recovery
+page and terminal-row presentation as **all good**. The build remained staged
+and isolated; it was not installed over the dogfood binary during this repair.
+
+### Adjacent visual and CLI discoveries
+
+The screenshot accompanying this incident also showed a passive pane label
+overlapping Ghostty's first terminal row. Single-pane worklanes no longer render
+that redundant overlay label; multi-pane labels remain available for
+disambiguation. The deployed binary also rejects `--help` as an unknown
+argument. That CLI defect is tracked separately rather than being folded into
+the restore repair.

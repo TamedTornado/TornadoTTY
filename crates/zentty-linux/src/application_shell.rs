@@ -6,7 +6,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use crate::{
     command_palette::CommandPaletteView,
     global_search_view::GlobalSearchView,
-    pane_controls::{self, PaneControlAction, PanePresentation},
+    pane_controls::{self, PaneControlAction, PanePresentation, pane_labels_visible},
     pane_dividers::{self, PaneDivider},
     pane_drag_drop::{
         PaneDragPayload, PaneDragPresentation, PaneDropOutcome, SidebarDropTarget, SplitAxis,
@@ -188,6 +188,7 @@ pub(crate) struct ApplicationShell {
     pane_runtime: PaneRuntimeCoordinator,
     config: AppConfig,
     restored_pane_commands: BTreeMap<String, String>,
+    failed_restore_commands: BTreeMap<String, String>,
     main_loop: glib::MainLoop,
     next_worklane_number: usize,
     next_pane_number: usize,
@@ -466,6 +467,7 @@ impl ApplicationShell {
             pane_runtime: PaneRuntimeCoordinator::new(&runtimes.ghostty, command),
             config: runtimes.config.clone(),
             restored_pane_commands,
+            failed_restore_commands: BTreeMap::new(),
             main_loop: main_loop.clone(),
             next_worklane_number,
             next_pane_number,
@@ -5121,6 +5123,9 @@ impl ApplicationShell {
     fn refresh_pane_presentation(&self) {
         let focused_pane_id = self.state.focused_pane_id();
         let worklane_color = self.state.active_worklane().color;
+        let active_pane_ids = self.state.active_pane_ids();
+        let show_pane_labels =
+            pane_labels_visible(self.config.panes.show_labels, active_pane_ids.len());
         let pane_labels = self
             .state
             .sidebar_summaries()
@@ -5142,16 +5147,13 @@ impl ApplicationShell {
             .map(|column| column.panes.len())
             .sum::<usize>()
             >= 2;
-        for pane_id in self.state.active_pane_ids() {
+        for pane_id in active_pane_ids {
             if let Some(frame) = self.pane_runtime.frame(pane_id) {
                 frame.set_presentation(&PanePresentation {
                     focused: Some(pane_id) == focused_pane_id,
                     worklane_color,
                     show_borders: self.config.panes.show_borders,
-                    label: self
-                        .config
-                        .panes
-                        .show_labels
+                    label: show_pane_labels
                         .then(|| pane_labels.get(pane_id).cloned())
                         .flatten(),
                 });

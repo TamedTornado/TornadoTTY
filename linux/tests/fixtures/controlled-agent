@@ -63,6 +63,11 @@ codex_has_hook() {
 }
 
 case "${profile}" in
+    restore-immediate-failure)
+        printf 'restore-failure pid:%s pane:%s\n' "$$" "${ZENTTY_PANE_ID:-}" \
+            >>"${ZENTTY_CONTROLLED_AGENT_START_RECEIPT}"
+        exit 42
+        ;;
     attention-inbox)
         require_helper
         receipt="${ZENTTY_CONTROLLED_ATTENTION_RECEIPT:-}"

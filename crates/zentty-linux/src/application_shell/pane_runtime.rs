@@ -28,10 +28,40 @@ enum RemovalDecision {
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 enum ChildExitDisposition {
     CloseWorkspacePane,
+    RecoverFailedRestore,
     PreserveTmuxTeammate,
     DisposeDuringShutdown,
     #[default]
     IgnoreStale,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct ChildExitContext {
+    registration: ChildRegistration,
+    lifecycle: ChildLifecycle,
+    ownership: ChildOwnership,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+enum ChildRegistration {
+    Registered,
+    #[default]
+    Stale,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+enum ChildLifecycle {
+    #[default]
+    Active,
+    ShuttingDown,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+enum ChildOwnership {
+    #[default]
+    Ordinary,
+    TmuxTeammate,
+    PendingRestore,
 }
 
 fn registration_decision(already_registered: bool) -> RegistrationDecision {
@@ -50,16 +80,14 @@ fn removal_decision(is_registered: bool) -> RemovalDecision {
     }
 }
 
-fn child_exit_disposition(
-    is_registered: bool,
-    shutting_down: bool,
-    preserve_tmux_teammate: bool,
-) -> ChildExitDisposition {
-    if !is_registered {
+fn child_exit_disposition(context: ChildExitContext) -> ChildExitDisposition {
+    if context.registration == ChildRegistration::Stale {
         ChildExitDisposition::IgnoreStale
-    } else if shutting_down {
+    } else if context.lifecycle == ChildLifecycle::ShuttingDown {
         ChildExitDisposition::DisposeDuringShutdown
-    } else if preserve_tmux_teammate {
+    } else if context.ownership == ChildOwnership::PendingRestore {
+        ChildExitDisposition::RecoverFailedRestore
+    } else if context.ownership == ChildOwnership::TmuxTeammate {
         ChildExitDisposition::PreserveTmuxTeammate
     } else {
         ChildExitDisposition::CloseWorkspacePane
@@ -80,6 +108,7 @@ pub(super) struct PaneRuntimeCoordinator {
     pending_prefills: BTreeMap<String, String>,
     pending_launches: BTreeMap<String, PendingPaneLaunch>,
     explicit_environments: BTreeMap<String, BTreeMap<String, String>>,
+    pending_restore_launches: BTreeMap<String, String>,
 }
 
 pub(super) struct PendingPaneLaunch {
@@ -106,6 +135,7 @@ impl PaneRuntimeCoordinator {
             pending_prefills: BTreeMap::new(),
             pending_launches: BTreeMap::new(),
             explicit_environments: BTreeMap::new(),
+            pending_restore_launches: BTreeMap::new(),
         }
     }
 
@@ -202,6 +232,10 @@ impl PaneRuntimeCoordinator {
     pub(super) fn cancel_launch(&mut self, pane_id: &str) {
         self.pending_launches.remove(pane_id);
         self.explicit_environments.remove(pane_id);
+    }
+
+    pub(super) fn confirm_restored_agent(&mut self, pane_id: &str) -> bool {
+        self.pending_restore_launches.remove(pane_id).is_some()
     }
 
     pub(super) fn take_launch(&mut self, pane_id: &str) -> Option<PendingPaneLaunch> {
@@ -425,13 +459,15 @@ impl PaneRuntimeCoordinator {
         surface.widget().add_controller(focus_controller.clone());
         let frame = Self::create_pane_frame(shell, pane_id, surface.widget());
 
-        let mut shell = shell.borrow_mut();
-        shell
-            .pane_runtime
-            .insert(pane_id, surface, frame, focus_controller)?;
+        {
+            let mut shell_ref = shell.borrow_mut();
+            shell_ref
+                .pane_runtime
+                .insert(pane_id, surface, frame, focus_controller)?;
+        }
         eprintln!(
             "zentty-linux: surface-owned pane={pane_id} live={}",
-            shell.pane_runtime.live_children()
+            shell.borrow().pane_runtime.live_children()
         );
         Ok(())
     }
@@ -459,10 +495,14 @@ impl PaneRuntimeCoordinator {
                 }
             }
         }
-        let restored_command = shell.restored_pane_commands.get(pane_id).cloned();
+        let restored_command = shell.restored_pane_commands.remove(pane_id);
         if shell.pane_runtime.command().is_none()
             && let Some(command) = &restored_command
         {
+            shell
+                .pane_runtime
+                .pending_restore_launches
+                .insert(pane_id.to_owned(), command.clone());
             eprintln!("zentty-linux: agent-resume-launch pane={pane_id} command={command}");
         }
         Ok(SurfaceConfig {
@@ -780,15 +820,126 @@ impl PaneRuntimeCoordinator {
         frame
     }
 
+    fn present_restore_failure(shell: &Rc<RefCell<ApplicationShell>>, pane_id: &str) {
+        let retry_weak = Rc::downgrade(shell);
+        let retry_pane = pane_id.to_owned();
+        let shell_weak = Rc::downgrade(shell);
+        let shell_pane = pane_id.to_owned();
+        let remove_weak = Rc::downgrade(shell);
+        let remove_pane = pane_id.to_owned();
+        let shell_ref = shell.borrow();
+        let Some(frame) = shell_ref.pane_runtime.frame(pane_id) else {
+            return;
+        };
+        frame.show_restore_failure(
+            move || {
+                let Some(shell) = retry_weak.upgrade() else {
+                    return;
+                };
+                let command = {
+                    let mut shell_ref = shell.borrow_mut();
+                    let Some(command) = shell_ref.failed_restore_commands.remove(&retry_pane)
+                    else {
+                        return;
+                    };
+                    if let Err(error) = shell_ref.pane_runtime.remove(&retry_pane, false) {
+                        eprintln!(
+                            "zentty-linux: agent-restore-retry pane={retry_pane} result=failed-cleanup detail={error}"
+                        );
+                        return;
+                    }
+                    shell_ref
+                        .restored_pane_commands
+                        .insert(retry_pane.clone(), command.clone());
+                    command
+                };
+                eprintln!("zentty-linux: agent-restore-retry pane={retry_pane} result=started");
+                if let Err(error) = Self::create_surface(&shell, &retry_pane) {
+                    eprintln!(
+                        "zentty-linux: agent-restore-retry pane={retry_pane} result=failed detail={error}"
+                    );
+                    {
+                        let mut shell_ref = shell.borrow_mut();
+                        shell_ref
+                            .pane_runtime
+                            .pending_restore_launches
+                            .remove(&retry_pane);
+                        shell_ref.restored_pane_commands.remove(&retry_pane);
+                        shell_ref
+                            .failed_restore_commands
+                            .insert(retry_pane.clone(), command);
+                    }
+                    if let Err(fallback_error) = Self::create_surface(&shell, &retry_pane) {
+                        eprintln!(
+                            "zentty-linux: agent-restore-retry pane={retry_pane} result=fallback-failed detail={fallback_error}"
+                        );
+                        shell.borrow().main_loop.quit();
+                    } else {
+                        shell.borrow().render();
+                        Self::present_restore_failure(&shell, &retry_pane);
+                    }
+                } else {
+                    shell.borrow().render();
+                }
+            },
+            move || {
+                let Some(shell) = shell_weak.upgrade() else {
+                    return;
+                };
+                let mut shell_ref = shell.borrow_mut();
+                shell_ref.failed_restore_commands.remove(&shell_pane);
+                if let Some(frame) = shell_ref.pane_runtime.frame(&shell_pane) {
+                    frame.clear_restore_failure();
+                }
+                shell_ref.focus_selected_surface();
+                eprintln!(
+                    "zentty-linux: agent-restore-recovery pane={shell_pane} choice=open-shell"
+                );
+            },
+            move || {
+                if let Some(shell) = remove_weak.upgrade() {
+                    eprintln!(
+                        "zentty-linux: agent-restore-recovery pane={remove_pane} choice=remove-pane"
+                    );
+                    ApplicationShell::request_close_pane(&shell, &remove_pane);
+                }
+            },
+        );
+    }
+
+    fn child_exit_context(shell: &ApplicationShell, pane_id: &str) -> ChildExitContext {
+        let ownership = if shell
+            .pane_runtime
+            .pending_restore_launches
+            .contains_key(pane_id)
+        {
+            ChildOwnership::PendingRestore
+        } else if shell
+            .tmux_compat
+            .retains_exited_teammate(&shell.state, pane_id)
+        {
+            ChildOwnership::TmuxTeammate
+        } else {
+            ChildOwnership::Ordinary
+        };
+        ChildExitContext {
+            registration: if shell.pane_runtime.contains(pane_id) {
+                ChildRegistration::Registered
+            } else {
+                ChildRegistration::Stale
+            },
+            lifecycle: if shell.shutting_down {
+                ChildLifecycle::ShuttingDown
+            } else {
+                ChildLifecycle::Active
+            },
+            ownership,
+        }
+    }
+
     fn handle_child_exit(shell: &Rc<RefCell<ApplicationShell>>, pane_id: &str) {
         let mut shell_ref = shell.borrow_mut();
-        match child_exit_disposition(
-            shell_ref.pane_runtime.contains(pane_id),
-            shell_ref.shutting_down,
-            shell_ref
-                .tmux_compat
-                .retains_exited_teammate(&shell_ref.state, pane_id),
-        ) {
+        match child_exit_disposition(Self::child_exit_context(&shell_ref, pane_id)) {
             ChildExitDisposition::IgnoreStale => {
                 eprintln!("zentty-linux: child-exit-after-dispose pane={pane_id} ignored");
                 return;
@@ -811,6 +962,39 @@ impl PaneRuntimeCoordinator {
                 } else {
                     eprintln!("zentty-linux: tmux-teammate-exited pane={pane_id} awaiting=respawn");
                 }
+                return;
+            }
+            ChildExitDisposition::RecoverFailedRestore => {
+                let _ = shell_ref.pane_runtime.note_child_exit(pane_id);
+                shell_ref.agent_events.unregister_pane(pane_id);
+                let restore_command = shell_ref
+                    .pane_runtime
+                    .pending_restore_launches
+                    .remove(pane_id)
+                    .unwrap_or_default();
+                shell_ref
+                    .failed_restore_commands
+                    .insert(pane_id.to_owned(), restore_command);
+                let _ = shell_ref.state.clear_failed_agent_restore(pane_id);
+                if let Err(error) = shell_ref.pane_runtime.remove(pane_id, true) {
+                    eprintln!("zentty-linux: failed restore cleanup failed: {error}");
+                    shell_ref.main_loop.quit();
+                    return;
+                }
+                eprintln!(
+                    "zentty-linux: agent-restore-launch pane={pane_id} result=failed fallback=shell"
+                );
+                drop(shell_ref);
+                if let Err(error) = Self::create_surface(shell, pane_id) {
+                    eprintln!("zentty-linux: failed restore shell fallback failed: {error}");
+                    shell.borrow().main_loop.quit();
+                    return;
+                }
+                let shell_ref = shell.borrow();
+                shell_ref.render();
+                shell_ref.focus_selected_surface();
+                drop(shell_ref);
+                Self::present_restore_failure(shell, pane_id);
                 return;
             }
             ChildExitDisposition::CloseWorkspacePane => {
@@ -862,9 +1046,9 @@ fn surface_focus_event_should_apply(
 #[cfg(test)]
 mod tests {
     use super::{
-        ChildExitDisposition, RegistrationDecision, RemovalDecision, SurfaceFocusBlocker,
-        child_exit_disposition, registration_decision, removal_decision,
-        surface_focus_event_should_apply,
+        ChildExitContext, ChildExitDisposition, ChildLifecycle, ChildOwnership, ChildRegistration,
+        RegistrationDecision, RemovalDecision, SurfaceFocusBlocker, child_exit_disposition,
+        registration_decision, removal_decision, surface_focus_event_should_apply,
     };
 
     #[test]
@@ -893,11 +1077,15 @@ mod tests {
     #[test]
     fn callback_after_detach_is_ignored_as_stale() {
         assert_eq!(
-            child_exit_disposition(false, false, false),
+            child_exit_disposition(ChildExitContext::default()),
             ChildExitDisposition::IgnoreStale
         );
         assert_eq!(
-            child_exit_disposition(false, true, true),
+            child_exit_disposition(ChildExitContext {
+                lifecycle: ChildLifecycle::ShuttingDown,
+                ownership: ChildOwnership::PendingRestore,
+                ..ChildExitContext::default()
+            }),
             ChildExitDisposition::IgnoreStale
         );
     }
@@ -905,7 +1093,11 @@ mod tests {
     #[test]
     fn child_exit_during_shutdown_disposes_without_mutating_workspace() {
         assert_eq!(
-            child_exit_disposition(true, true, true),
+            child_exit_disposition(ChildExitContext {
+                registration: ChildRegistration::Registered,
+                lifecycle: ChildLifecycle::ShuttingDown,
+                ownership: ChildOwnership::PendingRestore,
+            }),
             ChildExitDisposition::DisposeDuringShutdown
         );
     }
@@ -913,7 +1105,10 @@ mod tests {
     #[test]
     fn active_child_exit_closes_the_workspace_pane() {
         assert_eq!(
-            child_exit_disposition(true, false, false),
+            child_exit_disposition(ChildExitContext {
+                registration: ChildRegistration::Registered,
+                ..ChildExitContext::default()
+            }),
             ChildExitDisposition::CloseWorkspacePane
         );
     }
@@ -921,8 +1116,24 @@ mod tests {
     #[test]
     fn exited_tmux_teammate_is_preserved_for_source_respawn() {
         assert_eq!(
-            child_exit_disposition(true, false, true),
+            child_exit_disposition(ChildExitContext {
+                registration: ChildRegistration::Registered,
+                ownership: ChildOwnership::TmuxTeammate,
+                ..ChildExitContext::default()
+            }),
             ChildExitDisposition::PreserveTmuxTeammate
+        );
+    }
+
+    #[test]
+    fn failed_restore_launch_preserves_workspace_for_shell_fallback() {
+        assert_eq!(
+            child_exit_disposition(ChildExitContext {
+                registration: ChildRegistration::Registered,
+                ownership: ChildOwnership::PendingRestore,
+                ..ChildExitContext::default()
+            }),
+            ChildExitDisposition::RecoverFailedRestore
         );
     }
 

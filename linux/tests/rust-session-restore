@@ -12,6 +12,8 @@ log=""
 agent_receipt=""
 product_pid=""
 agent_start_delay=0
+agent_profile=codex-restore
+agent_sleep_seconds=30
 agent_start_receipt=""
 drag_source_pid=""
 drag_receipt=""
@@ -183,13 +185,13 @@ start_product() {
     : >"${log}"
     env \
         PATH="${fake_bin}:${PATH}" \
-        ZENTTY_CONTROLLED_AGENT_PROFILE=codex-restore \
+        ZENTTY_CONTROLLED_AGENT_PROFILE="${agent_profile}" \
         ZENTTY_CONTROLLED_AGENT_SESSIONS=session-codex,session-two \
         ZENTTY_CONTROLLED_AGENT_COMPLETE_TASK_SESSION=session-codex \
         ZENTTY_CONTROLLED_AGENT_RECEIPT="${agent_receipt}" \
         ZENTTY_CONTROLLED_AGENT_START_DELAY_SECONDS="${agent_start_delay}" \
         ZENTTY_CONTROLLED_AGENT_START_RECEIPT="${agent_start_receipt}" \
-        ZENTTY_CONTROLLED_AGENT_SLEEP_SECONDS=30 \
+        ZENTTY_CONTROLLED_AGENT_SLEEP_SECONDS="${agent_sleep_seconds}" \
         GSK_RENDERER=cairo \
         LD_LIBRARY_PATH="${bundle_lib}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" \
         "${product}" --state-directory "${state_dir}" "${product_args[@]}" >"${log}" 2>&1 &
@@ -313,6 +315,46 @@ verify_remote_file_drop() {
     xdotool windowfocus --sync "${ZENTTY_PRODUCT_WINDOW_ID}"
     sleep 0.1
 }
+
+if [[ "${ZENTTY_FAILED_RESTORE_ONLY:-false}" == true ]]; then
+    agent_profile=restore-immediate-failure
+    agent_sleep_seconds=0
+    agent_start_receipt="$(mktemp)"
+    jq '
+        .workspace.windows[0].activeWorklaneID = "worklane-second-agent" |
+        .restoreDraftWindows[0].paneDrafts |= map(select(.paneID == "pane-agent-two"))
+    ' "${state_dir}/restore-snapshot.json" >"${state_dir}/restore-snapshot.focused"
+    mv -- "${state_dir}/restore-snapshot.focused" "${state_dir}/restore-snapshot.json"
+    start_product
+    pane_id=pane-agent-two
+    zentty_product_wait_for_log "${log}" \
+        "zentty-linux: agent-restore-launch pane=${pane_id} result=failed fallback=shell" \
+        "failed restore for ${pane_id} did not preserve the pane" ||
+        fail "failed restore recovery missing for ${pane_id}"
+    zentty_product_wait_for_log "${log}" \
+        "zentty-linux: restore-failure pane=${pane_id} state=shown" \
+        "failed restore did not present its persistent recovery controls" ||
+        fail "failed restore recovery panel missing for ${pane_id}"
+    zentty_product_wait_for_log "${log}" \
+        'zentty-linux: topology=worklane-main[title=Nimbu API,color=blue]:pane-agent,pane-shell,pane-ordinary-inactive|worklane-second-agent[title=Second agent,color=none]:pane-agent-two*|worklane-active[title=Active shell,color=none]:pane-shell-active' \
+        "failed restore changed the durable workspace topology" ||
+        fail "failed restore erased a pane or worklane"
+    zentty_product_prepare_input "${backend}" "${log}" ||
+        fail "could not prepare failed-restore close input"
+    zentty_product_close_window "${backend}"
+    wait_for_product_exit
+    jq -e '
+        .reason == "cleanExit" and
+        [.workspace.windows[0].worklanes[].id] ==
+            ["worklane-main", "worklane-second-agent", "worklane-active"] and
+        ([.workspace.windows[0].worklanes[].columns[].panes[].id] | sort) ==
+            ["pane-agent", "pane-agent-two", "pane-ordinary-inactive", "pane-shell", "pane-shell-active"] and
+        ([.restoreDraftWindows[]?.paneDrafts[]?] | length) == 0
+    ' "${state_dir}/restore-snapshot.json" >/dev/null ||
+        fail "clean snapshot lost failed-restore topology or retained a failed draft"
+    printf 'rust-session-restore: PASS failed-agent-restore topology=preserved fallback=real-shell snapshot=clean\n'
+    exit 0
+fi
 
 start_product
 assert_background_start 2

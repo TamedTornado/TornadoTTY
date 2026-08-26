@@ -665,6 +665,23 @@ fn active_supported_agents_produce_restorable_per_pane_drafts() {
             .progress,
         Some(zentty_core::AgentProgress { done: 2, total: 2 })
     );
+
+    assert!(codex_relaunched.clear_failed_agent_restore("pane-agent"));
+    assert!(codex_relaunched.agent_restore_drafts().is_empty());
+    assert!(codex_relaunched.pane("pane-agent").is_some());
+    let projected = codex_relaunched.to_window_recipe(&envelope.workspace.windows[0]);
+    assert_eq!(
+        projected.worklanes.len(),
+        envelope.workspace.windows[0].worklanes.len()
+    );
+    assert!(
+        projected
+            .worklanes
+            .iter()
+            .flat_map(|worklane| &worklane.columns)
+            .flat_map(|column| &column.panes)
+            .any(|pane| pane.id == "pane-agent")
+    );
 }
 
 #[test]

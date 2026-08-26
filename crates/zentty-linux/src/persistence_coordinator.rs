@@ -318,6 +318,10 @@ impl PersistenceCoordinator {
         let Some(pending) = self.pending_live_snapshot.take() else {
             return Ok(false);
         };
+        let receipt = snapshot_topology_receipt(
+            &pending.content.windows,
+            pending.content.active_window_id.as_deref(),
+        );
         let request = snapshot_request(
             pending.content,
             self.normal_restore_enabled,
@@ -326,6 +330,10 @@ impl PersistenceCoordinator {
         );
         self.next_generation = self.next_generation.wrapping_add(1);
         self.worker.persist(request, self.next_generation)?;
+        eprintln!(
+            "zentty-linux: persistence-save reason=liveSnapshot stage=queued generation={} {receipt}",
+            self.next_generation
+        );
         Ok(true)
     }
 
@@ -344,8 +352,12 @@ impl PersistenceCoordinator {
             CleanExitDecision::Begin => self.phase = PersistencePhase::Saving,
             decision => return Err(format!("clean-exit persistence rejected: {decision:?}")),
         }
+        let receipt = snapshot_topology_receipt(&windows, active_window_id.as_deref());
         if let Err(error) = validate_window_snapshots(&windows) {
             self.phase = PersistencePhase::Failed;
+            eprintln!(
+                "zentty-linux: persistence-save reason=cleanExit stage=rejected {receipt} detail={error}"
+            );
             return Err(format!("clean-exit workspace validation failed: {error}"));
         }
         let request = snapshot_request(
@@ -370,14 +382,58 @@ impl PersistenceCoordinator {
         match result {
             Ok(()) => {
                 self.phase = PersistencePhase::Complete;
+                eprintln!(
+                    "zentty-linux: persistence-save reason=cleanExit stage=published generation={} {receipt}",
+                    self.next_generation
+                );
                 Ok(())
             }
             Err(error) => {
                 self.phase = PersistencePhase::Failed;
+                eprintln!(
+                    "zentty-linux: persistence-save reason=cleanExit stage=failed generation={} {receipt} detail={error}",
+                    self.next_generation
+                );
                 Err(error)
             }
         }
     }
+}
+
+fn snapshot_topology_receipt(windows: &[WindowSnapshot], active_window_id: Option<&str>) -> String {
+    let topology = windows
+        .iter()
+        .map(|snapshot| {
+            let worklanes = snapshot
+                .window
+                .worklanes
+                .iter()
+                .map(|worklane| {
+                    let panes = worklane
+                        .columns
+                        .iter()
+                        .flat_map(|column| &column.panes)
+                        .map(|pane| pane.id.as_str())
+                        .collect::<Vec<_>>()
+                        .join(",");
+                    format!("{}:{panes}", worklane.id)
+                })
+                .collect::<Vec<_>>()
+                .join("|");
+            let drafts = snapshot
+                .restored_drafts
+                .iter()
+                .map(|draft| draft.pane_id.as_str())
+                .collect::<Vec<_>>()
+                .join(",");
+            format!("{}[{worklanes}]{{drafts={drafts}}}", snapshot.window.id)
+        })
+        .collect::<Vec<_>>()
+        .join(";");
+    format!(
+        "active-window={} topology={topology}",
+        active_window_id.unwrap_or("none")
+    )
 }
 
 fn snapshot_request(

@@ -2865,6 +2865,18 @@ impl WorkspaceState {
         true
     }
 
+    /// Clears agent lifecycle state after an accepted restore command fails to
+    /// stay running. The durable pane and worklane remain intact so a failed
+    /// resume can fall back to an interactive shell without erasing workspace
+    /// topology from the next live snapshot.
+    pub fn clear_failed_agent_restore(&mut self, pane_id: &str) -> bool {
+        if self.pane(pane_id).is_none() || !self.agent_statuses.has_pane_data(pane_id) {
+            return false;
+        }
+        self.agent_statuses.remove_pane(pane_id);
+        true
+    }
+
     /// Reconciles a real terminal-title callback into the canonical per-pane
     /// agent store. Unknown panes, non-Codex sessions, and unrelated titles
     /// are no-ops.

@@ -154,6 +154,16 @@ impl AgentEventCoordinator {
         self.transcript_enricher.shutdown();
     }
 
+    fn confirm_restored_agent(shell: &Rc<RefCell<ApplicationShell>>, pane_id: &str) {
+        if shell
+            .borrow_mut()
+            .pane_runtime
+            .confirm_restored_agent(pane_id)
+        {
+            eprintln!("zentty-linux: agent-restore-launch pane={pane_id} result=authenticated");
+        }
+    }
+
     pub(super) fn apply_inputs(
         shell: &Rc<RefCell<ApplicationShell>>,
         tmux_commands: Vec<AuthenticatedTmuxRequest>,
@@ -204,6 +214,7 @@ impl AgentEventCoordinator {
                 event.event_kind(),
                 event.session_id().unwrap_or("pane-default")
             );
+            Self::confirm_restored_agent(shell, &pane_id);
             let mut shell = shell.borrow_mut();
             shell.state.apply_agent_event(event, now);
             if refresh_review {

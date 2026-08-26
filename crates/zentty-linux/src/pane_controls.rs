@@ -58,6 +58,8 @@ impl PaneControlAction {
 
 pub(crate) struct PaneFrame {
     root: gtk::Overlay,
+    content: gtk::Stack,
+    terminal: gtk::Widget,
     pane_id: String,
     label: gtk::Label,
     right_button: gtk::Button,
@@ -65,6 +67,7 @@ pub(crate) struct PaneFrame {
     right_action: Rc<Cell<PaneControlAction>>,
     drag_zone: gtk::Label,
     drag_source: RefCell<Option<gtk::DragSource>>,
+    restore_failure: RefCell<Option<gtk::Box>>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -87,6 +90,10 @@ impl PanePresentation {
     }
 }
 
+pub(crate) const fn pane_labels_visible(configured: bool, pane_count: usize) -> bool {
+    configured && pane_count > 1
+}
+
 impl PaneFrame {
     #[allow(clippy::too_many_lines)] // Declarative construction of one pane frame and its controls.
     pub(crate) fn new(
@@ -99,7 +106,11 @@ impl PaneFrame {
         root.add_css_class("zentty-pane-frame");
         root.set_hexpand(true);
         root.set_vexpand(true);
-        root.set_child(Some(terminal));
+        let content = gtk::Stack::new();
+        content.set_transition_type(gtk::StackTransitionType::None);
+        content.add_named(terminal, Some("terminal"));
+        content.set_visible_child(terminal);
+        root.set_child(Some(&content));
 
         let label = gtk::Label::new(None);
         label.add_css_class("zentty-pane-label");
@@ -229,6 +240,8 @@ impl PaneFrame {
 
         Self {
             root,
+            content,
+            terminal: terminal.clone(),
             pane_id: pane_id.to_owned(),
             label,
             right_button,
@@ -236,6 +249,7 @@ impl PaneFrame {
             right_action,
             drag_zone,
             drag_source: RefCell::new(None),
+            restore_failure: RefCell::new(None),
         }
     }
 
@@ -300,7 +314,90 @@ impl PaneFrame {
     }
 
     pub(crate) fn detach_terminal(&self) {
+        self.content.remove(&self.terminal);
         self.root.set_child(gtk::Widget::NONE);
+    }
+
+    pub(crate) fn show_restore_failure(
+        &self,
+        on_retry: impl Fn() + 'static,
+        on_open_shell: impl Fn() + 'static,
+        on_remove: impl Fn() + 'static,
+    ) {
+        self.clear_restore_failure();
+        let panel = gtk::Box::new(gtk::Orientation::Vertical, 10);
+        panel.add_css_class("zentty-restore-failure");
+        panel.set_halign(gtk::Align::Center);
+        panel.set_valign(gtk::Align::Center);
+        panel.set_width_request(420);
+
+        let title = gtk::Label::new(Some("Codex session failed to resume"));
+        title.add_css_class("title-3");
+        title.set_wrap(true);
+        title.set_xalign(0.0);
+        panel.append(&title);
+
+        let summary = gtk::Label::new(Some(
+            "The worklane and pane were preserved. Choose how to recover this pane.",
+        ));
+        summary.set_wrap(true);
+        summary.set_xalign(0.0);
+        panel.append(&summary);
+
+        let details = gtk::Label::new(Some(
+            "The terminal child exited during automatic session restoration. Its exit status is not available from the current Ghostty callback.",
+        ));
+        details.add_css_class("dim-label");
+        details.set_wrap(true);
+        details.set_xalign(0.0);
+        details.set_visible(false);
+        panel.append(&details);
+
+        let buttons = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        buttons.set_halign(gtk::Align::End);
+        let retry = gtk::Button::with_label("Retry");
+        retry.set_widget_name(&format!("pane-restore-retry-{}", self.pane_id));
+        retry.add_css_class("suggested-action");
+        retry.connect_clicked(move |_| on_retry());
+        buttons.append(&retry);
+        let open_shell = gtk::Button::with_label("Open Shell Instead");
+        open_shell.set_widget_name(&format!("pane-restore-open-shell-{}", self.pane_id));
+        open_shell.connect_clicked(move |_| on_open_shell());
+        buttons.append(&open_shell);
+        let detail_button = gtk::Button::with_label("Details");
+        detail_button.set_widget_name(&format!("pane-restore-details-{}", self.pane_id));
+        let detail_label = details.clone();
+        detail_button.connect_clicked(move |button| {
+            let visible = !detail_label.is_visible();
+            detail_label.set_visible(visible);
+            button.set_label(if visible { "Hide Details" } else { "Details" });
+        });
+        buttons.append(&detail_button);
+        let remove = gtk::Button::with_label("Remove Pane");
+        remove.set_widget_name(&format!("pane-restore-remove-{}", self.pane_id));
+        remove.add_css_class("destructive-action");
+        remove.connect_clicked(move |_| on_remove());
+        buttons.append(&remove);
+        panel.append(&buttons);
+
+        self.content.add_named(&panel, Some("restore-failure"));
+        self.content.set_visible_child(&panel);
+        self.restore_failure.replace(Some(panel));
+        eprintln!(
+            "zentty-linux: restore-failure pane={} state=shown",
+            self.pane_id
+        );
+    }
+
+    pub(crate) fn clear_restore_failure(&self) {
+        if let Some(panel) = self.restore_failure.borrow_mut().take() {
+            self.content.set_visible_child(&self.terminal);
+            self.content.remove(&panel);
+            eprintln!(
+                "zentty-linux: restore-failure pane={} state=cleared",
+                self.pane_id
+            );
+        }
     }
 }
 
@@ -371,6 +468,14 @@ pub(crate) fn install_styles() {
          }\n\
          .zentty-pane-control:hover { background: alpha(white, 0.12); }\n\
          .zentty-pane-control:active { background: alpha(white, 0.20); }\n\
+         .zentty-restore-failure {\n\
+             padding: 20px;\n\
+             border-radius: 12px;\n\
+             color: #eef0f4;\n\
+             background: alpha(#1c2028, 0.97);\n\
+             border: 1px solid alpha(#f56565, 0.72);\n\
+             box-shadow: 0 12px 32px alpha(black, 0.42);\n\
+         }\n\
          .zentty-pane-frame .search-overlay {\n\
              padding: 8px 10px;\n\
              margin: 14px;\n\
@@ -413,7 +518,7 @@ pub(crate) fn install_styles() {
 
 #[cfg(test)]
 mod tests {
-    use super::{PaneControlAction, PanePresentation};
+    use super::{PaneControlAction, PanePresentation, pane_labels_visible};
     use crate::source_ui;
     use zentty_core::WorklaneColor;
 
@@ -472,5 +577,12 @@ mod tests {
         assert!(CONFIG_SOURCE.contains("inactiveOpacity: 0.7"));
         assert!(PANE_SOURCE.contains("if isFocused, let worklaneColor"));
         assert!(PANE_SOURCE.contains("theme.paneBorderFocused"));
+    }
+
+    #[test]
+    fn pane_labels_never_cover_a_single_terminal() {
+        assert!(!pane_labels_visible(true, 1));
+        assert!(!pane_labels_visible(false, 2));
+        assert!(pane_labels_visible(true, 2));
     }
 }
