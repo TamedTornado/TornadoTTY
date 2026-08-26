@@ -536,11 +536,18 @@ impl PaneRuntimeCoordinator {
                     let now = unix_time_ms();
                     let agent_changed =
                         shell.state.reconcile_terminal_title(&title_id, &title, now);
-                    shell.schedule_codex_transcript_enrichment(&title_id);
-                    super::project_context_runtime::mark_pane_for_process_refresh(
-                        &mut shell, &title_id,
-                    );
-                    if shell.state.set_pane_title(&title_id, &title) || agent_changed {
+                    if agent_changed {
+                        shell.schedule_codex_transcript_enrichment(&title_id);
+                    }
+                    let display_title = zentty_core::stable_codex_terminal_title(&title)
+                        .unwrap_or_else(|| title.clone());
+                    let title_changed = shell.state.set_pane_title(&title_id, &display_title);
+                    if title_changed {
+                        super::project_context_runtime::mark_pane_for_process_refresh(
+                            &mut shell, &title_id,
+                        );
+                    }
+                    if title_changed || agent_changed {
                         shell.refresh_sidebar_metadata();
                     }
                 }

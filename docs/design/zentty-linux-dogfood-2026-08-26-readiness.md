@@ -155,3 +155,28 @@ pre-existing journey steps, not passes and not evidence for this repair. The
 new orchestration is backend-neutral, but this dogfood fix claims real GTK and
 Ghostty coverage on controlled X11 plus the operator's GNOME retest, not a
 green controlled-Wayland receipt. No full qualification was run or claimed.
+
+## GH-101: spinner-driven UI starvation and stale Codex attention
+
+The next live dogfood session exposed a related cluster rather than four
+independent GTK failures. A running Codex pane retained **Needs input** while
+its title visibly reported `Working`. Every Braille spinner frame in that title
+was stored as a distinct pane title, which triggered project-context work,
+sidebar reconstruction, fleet snapshot replacement, and Agent Status popover
+replacement. The resulting main-loop churn closed the popover, delayed
+worklane reorder feedback and attention delivery, and prevented ordinary hover
+tooltips from settling reliably.
+
+Codex spinner frames now normalize to one stable UI title (`Working · Bro`).
+Only a semantic title change requests project-context/sidebar work, and Codex
+transcript enrichment is scheduled only when canonical agent state changes. A
+fresh explicit input request still wins over an already-in-flight stale
+`Working` title, but a persistently animated `Working` title clears that state
+after a one-second grace period rather than leaving a false alert forever.
+
+Focused evidence consists of two passing core regressions for stable spinner
+identity and bounded attention reconciliation, `cargo check -p zentty-linux`,
+shell syntax/static analysis for the extended existing multi-window actor, and
+an added real-product assertion that an open Agent Status popover survives
+three complete controlled spinner cycles. No full qualification is part of
+this dogfood deployment.

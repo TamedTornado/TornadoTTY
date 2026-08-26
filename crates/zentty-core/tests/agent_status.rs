@@ -1,8 +1,42 @@
 use zentty_core::{
     AgentEvent, AgentInteractionKind, AgentPhase, AgentProgress, AgentSignalConfidence,
     AgentSignalOrigin, AgentStatusStore, AgentTarget, AuthenticatedAgentEvent, PaneAgentStatus,
-    PaneTokenRegistry, TerminalProgressState,
+    PaneTokenRegistry, TerminalProgressState, stable_codex_terminal_title,
 };
+
+#[test]
+fn codex_spinner_titles_have_one_stable_ui_identity() {
+    assert_eq!(
+        stable_codex_terminal_title("Working ⠋ Bro").as_deref(),
+        Some("Working · Bro")
+    );
+    assert_eq!(
+        stable_codex_terminal_title("Working ⠸ Bro").as_deref(),
+        Some("Working · Bro")
+    );
+    assert_eq!(stable_codex_terminal_title("ordinary shell title"), None);
+}
+
+#[test]
+fn persistent_working_title_clears_stale_explicit_attention_after_grace() {
+    let mut store = AgentStatusStore::default();
+    store.apply(
+        event_for(
+            "pane-a",
+            br#"{"version":1,"event":"agent.needs-input","agent":{"name":"Codex"},"session":{"id":"session-a"},"state":{"text":"Approve?","interaction":{"kind":"approval"}}}"#,
+        ),
+        1_000,
+    );
+    assert!(!store.apply_codex_title("pane-a", "Working ⠋ Bro", 1_999));
+    assert_eq!(
+        store.status_for_pane("pane-a").unwrap().phase,
+        AgentPhase::NeedsInput
+    );
+    assert!(store.apply_codex_title("pane-a", "Working ⠙ Bro", 2_000));
+    let status = store.status_for_pane("pane-a").unwrap();
+    assert_eq!(status.phase, AgentPhase::Running);
+    assert_eq!(status.interaction, AgentInteractionKind::None);
+}
 
 fn target() -> AgentTarget {
     AgentTarget::new("window-a", "worklane-a", "pane-a")

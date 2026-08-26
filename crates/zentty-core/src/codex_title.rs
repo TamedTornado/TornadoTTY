@@ -77,6 +77,30 @@ pub fn classify_codex_terminal_title(value: &str) -> Option<CodexTitleSignal> {
     })
 }
 
+/// Returns a stable title for the UI while preserving the source title's
+/// wording. Codex animates its running title with Braille spinner frames; those
+/// frames are process activity, not distinct pane identities or UI content.
+#[must_use]
+pub fn stable_codex_terminal_title(value: &str) -> Option<String> {
+    classify_codex_terminal_title(value)?;
+    let mut stable = String::with_capacity(value.len());
+    let mut replaced_spinner = false;
+    for character in value.chars() {
+        if matches!(
+            character,
+            '⠋' | '⠙' | '⠹' | '⠸' | '⠼' | '⠴' | '⠦' | '⠧' | '⠇' | '⠏'
+        ) {
+            if !replaced_spinner {
+                stable.push('·');
+                replaced_spinner = true;
+            }
+        } else {
+            stable.push(character);
+        }
+    }
+    Some(stable)
+}
+
 fn split_trailing_task_progress(value: &str) -> Option<(&str, AgentProgress)> {
     let (title, counts) = value.rsplit_once(" | Tasks ")?;
     let title = trimmed(title)?;

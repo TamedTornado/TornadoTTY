@@ -131,6 +131,14 @@ while IFS= read -r value; do
         agent-running)
             printf '%s' '{"version":1,"event":"agent.running","agent":{"name":"Codex"},"session":{"id":"moved-live-pane"}}' | "$ZENTTY_CLI_BIN" ipc agent-event
             ;;
+        codex-spinner)
+            (
+                for glyph in ⠋ ⠙ ⠹ ⠸ ⠼ ⠴ ⠦ ⠧ ⠇ ⠏ ⠋ ⠙ ⠹ ⠸ ⠼ ⠴ ⠦ ⠧ ⠇ ⠏ ⠋ ⠙ ⠹ ⠸ ⠼ ⠴ ⠦ ⠧ ⠇ ⠏; do
+                    printf '\033]2;Working %s Bro\a' "$glyph"
+                    sleep 0.1
+                done
+            ) &
+            ;;
         agent-progress)
             printf '%s' '{"version":1,"event":"task.progress","session":{"id":"moved-live-pane"},"progress":{"done":2,"total":5}}' | "$ZENTTY_CLI_BIN" ipc agent-event
             ;;
@@ -1438,6 +1446,11 @@ zentty_product_key "${backend}" Return
 zentty_product_wait_for_log_count "${log}" \
     'zentty-linux: fleet-refresh windows=2 agents=2 waiting=1 stopped=0 compacting=0 active=1 idle=0 progress=0' "$((4 + fleet_running_offset))" \
     "new activity did not resolve stopped state" || fail "fleet stopped recovery missing"
+zentty_product_type "${backend}" "codex-spinner"
+zentty_product_key "${backend}" Return
+zentty_product_wait_for_log "${log}" 'zentty-linux: title-pane=pane-2 value=Working ⠋ Bro' \
+    "controlled Codex spinner did not begin" || fail "fleet spinner fixture missing"
+fleet_closed_before="$(grep -Fc 'zentty-linux: chrome-popover=agent-fleet state=closed' "${log}" || true)"
 execute_palette_action "agent activity across every Zentty window" "Agent Status"
 zentty_product_wait_for_log "${log}" 'zentty-linux: chrome-popover=agent-fleet state=open' \
     "keyboard-accessible fleet control did not open" || fail "fleet popover missing"
@@ -1446,6 +1459,12 @@ zentty_product_wait_for_log "${log}" 'zentty-linux: chrome-popover=agent-fleet s
 zentty_product_wait_for_log "${log}" \
     'zentty-linux: fleet-row-focus window=window-1 worklane=worklane-1 pane=pane-1' \
     "fleet did not focus its highest-priority real row" || fail "fleet priority focus missing"
+zentty_product_wait_for_log_count "${log}" \
+    'zentty-linux: title-pane=pane-2 value=Working ⠏ Bro' 3 \
+    "controlled Codex spinner did not complete under the open fleet" ||
+    fail "fleet spinner completion missing"
+[[ "$(grep -Fc 'zentty-linux: chrome-popover=agent-fleet state=closed' "${log}" || true)" == "${fleet_closed_before}" ]] ||
+    fail "spinner-only titles replaced and closed the open Agent Status popover"
 # The same typed fleet target is projected into Zentty's real command palette,
 # keeping exact cross-window routing keyboard accessible without compositor-
 # specific coordinates. The opened popover and priority-focus receipt above
