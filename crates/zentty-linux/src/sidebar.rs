@@ -1764,7 +1764,7 @@ fn make_context_menu(
     menu.append(&rename);
 
     let close = menu_button(source_ui::CLOSE_WORKLANE, "edit-delete-symbolic");
-    close.set_sensitive(worklane_count > 1);
+    close.set_widget_name(&widget_name("worklane-close", &summary.worklane_id));
     close.set_action_name(Some("workspace.close-worklane"));
     close.set_action_target_value(Some(&summary.worklane_id.to_variant()));
     let close_popover = popover.clone();
@@ -1942,8 +1942,8 @@ fn remove_all_children(container: &gtk::Box) {
 mod tests {
     use super::{
         WorklaneDestinationGroup, WorklaneDropEdge, WorklaneSelectionState, find_named_widget,
-        local_destination_groups, make_worklane_card, pane_accessible_label, pane_action_specs,
-        reveal_range, selection_state, worklane_destinations,
+        local_destination_groups, make_context_menu, make_worklane_card, pane_accessible_label,
+        pane_action_specs, reveal_range, selection_state, worklane_destinations,
     };
     use crate::{
         pane_controls::{PaneControlAction, PaneFrame},
@@ -2145,6 +2145,34 @@ mod tests {
             Some(&drag_context),
         );
         assert_sidebar_accessibility(&card, &summary);
+        let menu_window = gtk::Window::new();
+        let actions = gtk::gio::SimpleActionGroup::new();
+        actions.add_action(&gtk::gio::SimpleAction::new(
+            "close-worklane",
+            Some(gtk::glib::VariantTy::STRING),
+        ));
+        menu_window.insert_action_group("workspace", Some(&actions));
+        let final_worklane_menu = make_context_menu(&menu_window, &summary, 0, 1);
+        let menu_anchor = gtk::MenuButton::new();
+        menu_anchor.set_popover(Some(&final_worklane_menu));
+        menu_window.set_child(Some(&menu_anchor));
+        menu_window.present();
+        while gtk::glib::MainContext::default().pending() {
+            gtk::glib::MainContext::default().iteration(false);
+        }
+        let close = find_named_widget(
+            final_worklane_menu.upcast_ref(),
+            "zentty-worklane-close-lane-a",
+        )
+        .expect("the final worklane must retain its close action")
+        .downcast::<gtk::Button>()
+        .expect("the worklane close action must remain a button");
+        assert!(close.is_sensitive());
+        assert_eq!(
+            close.action_name().as_deref(),
+            Some("workspace.close-worklane")
+        );
+        menu_window.close();
         assert_pane_control_accessibility();
         assert_divider_accessibility();
     }

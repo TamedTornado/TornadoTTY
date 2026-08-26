@@ -922,15 +922,50 @@ zentty_product_wait_for_log "${log}" \
 assert_confirmation_focus pane-window-2
 type_and_expect_title "worklane-close-survivor" "pane-window-2"
 
+# Dogfood regression GH-100: the final worklane used to present and accept the
+# confirmation, then silently refuse the close because WorkspaceState preserves
+# a non-empty invariant. Exercise the user-facing action with three real Ghostty
+# surfaces. Product orchestration must establish a fresh default-shell worklane
+# before tearing down the requested final worklane.
+execute_palette_action \
+    "Split the focused pane into a visible right column" "Split Right"
+zentty_product_wait_for_log "${log}" 'zentty-linux: terminal-ready-pane=pane-window-2-2' \
+    "final-worklane fixture did not create its second live pane" ||
+    fail "final-worklane second pane missing"
+execute_palette_action "Split the focused pane vertically" "New Pane Below"
+zentty_product_wait_for_log "${log}" 'zentty-linux: terminal-ready-pane=pane-window-2-3' \
+    "final-worklane fixture did not create its third live pane" ||
+    fail "final-worklane third pane missing"
+accepted_before="$(grep -Fc 'zentty-linux: confirmation accepted=true' "${log}" || true)"
+execute_palette_action "Close Worklane" "Close Worklane"
+zentty_product_wait_for_log_count "${log}" \
+    'zentty-linux: confirmation shown title="Close this worklane?"' 3 \
+    "final Close Worklane did not present confirmation" ||
+    fail "final-worklane confirmation missing"
+reply_to_confirmation Return
+zentty_product_wait_for_log_count "${log}" 'zentty-linux: confirmation accepted=true' "$((accepted_before + 1))" \
+    "Return did not accept final Close Worklane" ||
+    fail "final-worklane confirmation acceptance missing"
+zentty_product_wait_for_log "${log}" \
+    'zentty-linux: action=replace-final-worklane old=worklane-window-2 new=worklane-window-2-2 pane=pane-window-2-4' \
+    "final worklane did not establish its replacement before teardown" ||
+    fail "final-worklane replacement missing"
+zentty_product_wait_for_log "${log}" \
+    'zentty-linux: action=close-worklane id=worklane-window-2 panes=3' \
+    "accepted final Close Worklane did not remove all three exact panes" ||
+    fail "confirmed final-worklane close failed"
+assert_confirmation_focus pane-window-2-4
+type_and_expect_title "final-worklane-replaced" "pane-window-2-4"
+
 close_active_window
 zentty_product_wait_for_log "${log}" 'zentty-linux: confirmation shown title="Close this window?"' \
     "Close Window did not present its source confirmation" || fail "window confirmation missing"
 reply_to_confirmation Escape
 zentty_product_wait_for_log "${log}" 'zentty-linux: confirmation accepted=false' \
     "Escape did not cancel Close Window" || fail "window confirmation cancellation missing"
-assert_confirmation_focus pane-window-2
-target_second_window
-type_and_expect_title "window-close-cancelled" "pane-window-2"
+assert_confirmation_focus pane-window-2-4
+target_second_window pane-window-2-4
+type_and_expect_title "window-close-cancelled" "pane-window-2-4"
 accepted_before="$(grep -Fc 'zentty-linux: confirmation accepted=true' "${log}" || true)"
 close_active_window
 zentty_product_wait_for_log_count "${log}" 'zentty-linux: confirmation shown title="Close this window?"' 2 \

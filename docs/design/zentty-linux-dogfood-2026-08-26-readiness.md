@@ -97,3 +97,61 @@ The supported immediate workflow is intentionally simple:
 This accepts that crashes may restart supported agent sessions rather than
 preserve their original PTYs. It does not describe command replay or topology
 restoration as live session persistence.
+
+## GH-100: final worklane close silently did nothing
+
+### Discovery
+
+The first operator dogfood launch restored an old test workspace whose final
+worklane contained three panes. The worklane menu offered **Close Worklane**
+and the confirmation accepted the destructive request, but the worklane and
+all three panes remained. A confirmation followed by no visible result is a
+product bug, not an acceptable expression of an internal invariant.
+
+### Cause and decision
+
+`WorkspaceState::close_worklane` deliberately rejects removal of its final
+worklane because the state model is non-empty. Multi-worklane integration
+coverage exercised only the case where another existing worklane survived, so
+`ApplicationShell::perform_close_worklane` passed the final-worklane request to
+that rejecting transition and silently returned. The sidebar additionally
+disabled its final-worklane close button even though other action routes could
+still present the confirmation.
+
+The state invariant remains correct. Product orchestration now creates a fresh
+single-pane default-shell worklane and its real Ghostty surface *before*
+removing the requested final worklane. If replacement creation fails, the
+original worklane, panes, and processes remain untouched and the normal action
+error path reports the failure. After replacement succeeds, teardown removes
+all live surfaces belonging to the old worklane and focuses the new shell. The
+sidebar close action remains enabled for a single worklane.
+
+### Evidence
+
+- The controlled GTK widget test roots a one-worklane context menu under its
+  real `workspace` action group and proves **Close Worklane** is enabled and
+  routed to `workspace.close-worklane`.
+- The focused nested-X11 lifecycle journey uses the real command palette,
+  confirmation dialog, three live Ghostty PTYs, and physical keyboard input.
+  It proves cancellation preserves the original shell, acceptance creates the
+  replacement first, removes exactly the old worklane's three surfaces, focuses
+  the replacement pane, routes new terminal input to it, and subsequently
+  preserves window-close lifecycle behavior.
+- `cargo fmt --check`, the focused workspace-state regression, and
+  `cargo check -p zentty-linux` pass.
+
+The first integration replay exposed one stale test assumption: its physical
+X11 window probe still searched for the old final pane after the replacement
+had correctly removed it. The product replacement assertions had already
+passed. The probe now targets the replacement pane, and the complete focused
+journey passes.
+
+The controlled Wayland lifecycle was also attempted twice with Debug and once
+with ReleaseSafe. It did not reach the new final-worklane section: the Debug
+runs failed while restoring focus to the still-existing temporary worklane
+after the earlier cancellation step, and ReleaseSafe failed an even earlier
+physical-input route to `pane-1`. Those are environmental/harness failures in
+pre-existing journey steps, not passes and not evidence for this repair. The
+new orchestration is backend-neutral, but this dogfood fix claims real GTK and
+Ghostty coverage on controlled X11 plus the operator's GNOME retest, not a
+green controlled-Wayland receipt. No full qualification was run or claimed.

@@ -3802,6 +3802,30 @@ impl ApplicationShell {
     }
 
     fn perform_close_worklane(shell: &Rc<RefCell<Self>>, worklane_id: &str) {
+        let is_final_worklane = {
+            let shell = shell.borrow();
+            shell.state.worklanes().len() == 1 && shell.state.worklanes()[0].id == worklane_id
+        };
+        if is_final_worklane {
+            // WorkspaceState deliberately cannot become empty. Establish the
+            // replacement surface first so a launch failure leaves the user's
+            // original worklane and all of its live processes untouched.
+            if let Err(error) = Self::create_worklane(shell) {
+                Self::report_action_error(shell, ACTION_CLOSE_WORKLANE, &error);
+                return;
+            }
+            let (replacement_worklane_id, replacement_pane_id) = {
+                let shell = shell.borrow();
+                (
+                    shell.state.active_worklane_id().to_owned(),
+                    shell.state.focused_pane_id().unwrap_or_default().to_owned(),
+                )
+            };
+            eprintln!(
+                "zentty-linux: action=replace-final-worklane old={worklane_id} \
+                 new={replacement_worklane_id} pane={replacement_pane_id}"
+            );
+        }
         let pane_ids = {
             let shell = shell.borrow();
             shell
