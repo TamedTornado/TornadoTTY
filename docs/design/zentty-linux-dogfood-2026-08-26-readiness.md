@@ -531,3 +531,11 @@ token-before-action ordering, exact target selection, and subsequent physical
 input in the routed PTY. That journey still cannot mint a compositor-authentic
 GNOME token; operator dogfood on the real GNOME session remains required before
 GH-110 can close. No full qualification was run or claimed.
+
+The clean audited Debian package for commit `79442eb938bc` was installed over
+the previous dogfood build. After a normal quit and GNOME-launcher relaunch,
+the operator clicked a real agent attention notification. The first click
+foregrounded Zentty and delivered the operator directly to the notifying Codex
+session; no second notification was required for navigation. This supplies the
+real GNOME compositor acceptance that the controlled fixture cannot mint and
+closes GH-110's remaining uncertainty.
