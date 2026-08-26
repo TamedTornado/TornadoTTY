@@ -4,7 +4,7 @@
   "ghostty_revision_source": "linux/ghostty.lock",
   "components": [
     {"name":"ghostty","license":"MIT","source":"LICENSE","notice":"ghostty-LICENSE"},
-    {"name":"wuffs","license":"Apache-2.0 OR MIT","source":"zig-pkg/N-V-__8AAAzZywE3s51XfsLbP9eyEw57ae9swYB9aGB6fCMs/LICENSE","notice":"wuffs-LICENSE"},
+    {"name":"wuffs","license":"Apache-2.0 OR MIT","source":"zig-pkg/N-V-__8AAP5JWgCGP_AD0teWpa4krRvE9VPZzvviGdbmN4jI/LICENSE","notice":"wuffs-LICENSE"},
     {"name":"zlib","license":"Zlib","source":"zig-pkg/N-V-__8AAB0eQwD-0MdOEBmz7intriBReIsIDNlukNVoNu6o/LICENSE","notice":"zlib-LICENSE"},
     {"name":"glslang","license":"BSD-3-Clause","source":"zig-pkg/N-V-__8AABzkUgISeKGgXAzgtutgJsZc0-kkeqBBscJgMkvy/LICENSE.txt","notice":"glslang-LICENSE.txt"},
     {"name":"wuffs-test-pixels","license":"CC0-1.0","source":"zig-pkg/N-V-__8AADYiAAB_80AWnH1AxXC0tql9thT-R-DYO1gBqTLc/LICENSE","notice":"wuffs-test-pixels-LICENSE"},

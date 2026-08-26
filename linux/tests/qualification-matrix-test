@@ -190,6 +190,11 @@ jq '(.cells[] | select(.id == "release-x11-default-single")).resources = ["deskt
 expect_validation_failure \
     'cells with malformed, unknown, or duplicate resources: release-x11-default-single'
 
+jq '(.cells[] | select(.id == "development-servers-docker-x11")) |= del(.resources)' \
+    "${source_matrix}" >"${temp_dir}/matrix.json"
+expect_validation_failure \
+    'resource-mutating cells lack their named resource: development-servers-docker-x11'
+
 jq '(.cells[] | select(.id == "ghostty-api-audit-inventory")).depends_on = ["missing-cell"]' \
     "${source_matrix}" >"${temp_dir}/matrix.json"
 expect_validation_failure \

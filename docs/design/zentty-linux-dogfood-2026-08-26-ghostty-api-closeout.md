@@ -234,3 +234,46 @@ epoll, and io_uring) passed.
 The next operation is one clean Zentty commit followed by the exact pinned full
 matrix. This sequencing ensures clean-checkout packaging and qualification use
 the reviewed candidate rather than the prior commit.
+
+## First exact-pin matrix receipt and repairs
+
+The first complete current-pin matrix ran for 890,420 ms with 21 workers. It
+did not pass: 197 implemented cells passed, four failed, and two downstream
+summary cells were correctly blocked by those failures. The declared matrix
+still contained 201 PASS, two XFAIL, and two NOT_IMPLEMENTED cells; declared
+status totals are not execution results.
+
+The four failures were investigated rather than reclassified:
+
+1. The clean-checkout package build exposed a real upstream dependency update.
+   Current Ghostty's Wuffs package is
+   `N-V-__8AAP5JWgCGP_AD0teWpa4krRvE9VPZzvviGdbmN4jI`; the packaging notice
+   manifest still named the historical package hash. The license text is
+   byte-identical (`f8ac2c75...`) and the manifest now names the dependency
+   actually selected by the pinned source.
+2. The two X11 development-server cells ran concurrently while publishing and
+   comparing the same reviewed `server-chrome-x11` visual receipt. Both saw a
+   transient frame without the settled title and failed correctly. Each real
+   journey passed when rerun alone, including the Docker variant. A named
+   `development-server-visual` scheduler resource now serializes only those two
+   colliding cells; a matrix negative test rejects removal of the lock. This is
+   harness isolation, not a relaxed visual baseline.
+3. Ghostty's inherited `valgrind.supp` changed from 233 to 234 rules on the
+   current official base. The added upstream rule is narrowly scoped to Zig
+   stdlib's documented unused DEFLATE Huffman entries (Ghostty `c5f4f00ed`).
+   The effective-set manifest now pins its exact current hash and count. No
+   Zentty suppression was added or broadened.
+4. Governance then rejected larger Fontconfig/Pango cache observations from
+   the current build. The paired unsuppressed interaction/X11 receipt was
+   inspected. It retained the same external realloc/FcFontRenderPrepare/
+   `pango_layout_get_size` root and the same root-gated deep child ancestries.
+   Reviewed scenario ceilings were extended only to the observed values: seven
+   metrics roots/27,626 bytes, 106 calloc children/3,392 bytes, 22 string
+   descendants/4,991 bytes, and four layout roots/251,679 bytes. Suppression
+   patterns were unchanged. Governance and its stale/increase/out-of-scenario/
+   untracked-rule negative suite pass with the paired raw receipts preserved.
+
+These findings came from the matrix doing its job. None was converted to a
+PASS through an environmental skip, baseline replacement, status change, or
+weakened product requirement. Debug Valgrind remains describable only as
+**PASS with reviewed suppressions**; ReleaseSafe Valgrind remains XFAIL.

@@ -133,7 +133,7 @@ jq -e '
       "Debug":"build-debug","ReleaseSafe":"build-release"
     }) and
     (.execution_graph.resources == [
-      "abi-mismatch-fixture","compiler-load","consolidated-session-journey","fcitx5-gtk-source","ghostty-source","system-sleep-inhibitor"
+      "abi-mismatch-fixture","compiler-load","consolidated-session-journey","development-server-visual","fcitx5-gtk-source","ghostty-source","system-sleep-inhibitor"
     ])
 ' "${matrix}" >/dev/null || fail "matrix root, axes, or claims are not closed-world"
 
@@ -262,6 +262,8 @@ unsafe_resource_cells="$(jq -r '.cells[] | select(
        ((.resources // []) | index("ghostty-source") == null)
      elif ((.command // "") | contains("linux/scripts/build-abi-mismatch-fixture")) then
        ((.resources // []) | index("abi-mismatch-fixture") == null)
+     elif (.id == "development-servers-x11" or .id == "development-servers-docker-x11") then
+       ((.resources // []) | index("development-server-visual") == null)
      else false end)
 ) | .id' "${matrix}")"
 [[ -z "${unsafe_resource_cells}" ]] ||
