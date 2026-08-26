@@ -412,3 +412,34 @@ relax pixel comparison.
 The focused normal and real Docker-backed X11 journeys pass against the exact
 reviewed baseline with that projection boundary. The complete matrix remains
 required to prove the repair under the concurrency that exposed it.
+
+## Sixth matrix receipt, canonical clean visual, and package cache isolation
+
+The sixth complete matrix ran 878,590 ms. The new projection boundary worked:
+the preserved frame contains the exact `Development servers` title and icon.
+The remaining 705 changed pixels were all chrome metadata, not terminal
+rendering. The historical baseline had been recorded from a dirty developer
+worktree and therefore encoded the branch's blue dirty marker; the authoritative
+matrix starts from a clean committed tree. The baseline now uses the clean
+matrix frame. Pixel tolerance remains zero, and the visual checker still
+rejects any changed pixel. This is replacement of a noncanonical fixture with
+the qualification state it claims to represent, not acceptance of a rendering
+regression.
+
+That run also reproduced the intermittent 80-byte Ghostty library difference
+first found during the source-identity audit. In both cases the only code-size
+difference was `terminal.formatter.PageFormatter.formatWithState`; every other
+package payload entry matched. The earlier absolute-source repair was necessary
+but not sufficient. The primary package build still admitted compiled entries
+from the repository-wide Zig global cache while the disconnected builder began
+with only the immutable package cache. A focused rerun happened to match, which
+confirms the variance is intermittent rather than evidence that the comparison
+was wrong.
+
+Package builds now create both fresh global and local Zig caches beneath their
+revision-owned temporary root. Only the prepared immutable `p` package store is
+linked into the fresh global cache. The primary and disconnected builders
+therefore receive the same package inputs without sharing compiler outputs with
+Debug, regression, or a previous build. The package-builder contract requires
+both owned cache paths. Exact byte comparison remains unchanged and must pass
+in the final matrix; no differing library is accepted or normalized.

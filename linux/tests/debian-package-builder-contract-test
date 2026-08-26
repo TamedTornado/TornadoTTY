@@ -13,6 +13,7 @@ source "${repo_root}/build/linux-ci-tools/environment.sh"
 source_fixture="${temporary}/source"
 zentty_create_working_tree_fixture \
     "${repo_root}" "${source_fixture}" 'package builder test source fixture'
+mkdir -p "${source_fixture}/build/linux-deps/zig-global-cache/p"
 
 # The contract intentionally matches the literal variable expansion retained
 # in build-deb rather than expanding the test process's work_root.
@@ -20,6 +21,11 @@ zentty_create_working_tree_fixture \
 grep -Fq '"ZENTTY_ZIG_LOCAL_CACHE_DIR=${package_zig_cache_root}/zig-local-cache"' \
     "${source_fixture}/linux/scripts/build-deb" || {
         echo "debian-package-builder-contract-test: package-owned Zig cache contract missing" >&2
+        exit 1
+    }
+grep -Fq '"ZENTTY_ZIG_GLOBAL_CACHE_DIR=${package_zig_cache_root}/zig-global-cache"' \
+    "${source_fixture}/linux/scripts/build-deb" || {
+        echo "debian-package-builder-contract-test: package-owned Zig global cache contract missing" >&2
         exit 1
     }
 
