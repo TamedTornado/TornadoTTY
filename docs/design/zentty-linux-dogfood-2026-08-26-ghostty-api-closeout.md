@@ -303,3 +303,24 @@ The isolated rerun at Zentty `6e31a8f7a1ab60212896566ef439f26fe38b4890`
 passed: all four release outputs were byte-identical while the developer
 checkout remained masked. This confirms the source-identity repair rather than
 accepting a differing binary or weakening the comparison.
+
+## Second matrix receipt and title synchronization
+
+The second complete matrix finished in 864,930 ms. Packaging reproducibility
+and suppression governance passed, proving both prior repairs. Two product
+cells still failed, and the support suite caught one stale negative fixture.
+
+Both X11 development-server captures still stabilized before the OSC 2 title
+had propagated from the real PTY into window chrome. The resource lock removed
+receipt collision, but it could not prove asynchronous product state. The
+journey now waits for the product's existing
+`zentty-linux: title=Development servers` event before compositor capture. No
+sleep, pixel tolerance, or baseline changed. The normal and Docker-backed real
+journeys both pass independently with the title synchronization in place.
+
+The public-PR policy correctly has no known gaps now that the async ABI cell is
+PASS, but its negative test still tried to prove that an empty gap list was
+invalid and changed an already-PASS cell to PASS as its "stale XFAIL" case.
+The repaired negatives add a fictitious gap and convert a selected PASS cell to
+XFAIL; both are rejected. This changes only a checker self-test and does not
+make public CI a release authority.

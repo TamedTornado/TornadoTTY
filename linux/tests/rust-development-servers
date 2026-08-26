@@ -320,6 +320,10 @@ if [[ "${backend}" == x11 ]]; then
         'zentty-linux: project-icon-projected owner=window-chrome fallback=folder-symbolic decoded=true' \
         'development-server chrome did not settle its project-icon fallback' ||
         fail "development-server project icon was not settled"
+    zentty_product_wait_for_log "${log}" \
+        'zentty-linux: title=Development servers' \
+        'development-server terminal title did not reach the window chrome' ||
+        fail "development-server terminal title was not settled"
     xdotool mousemove --sync 2000 1500
     zentty_visual_capture_stable "${image}" import -silent -window "${window_id}" ||
         fail "development-server X11 compositor frame did not settle"

@@ -41,7 +41,8 @@ expect_policy_rejected duplicate-cell \
     '.selected_cells += [.selected_cells[0]]'
 expect_policy_rejected false-full-claim \
     '.claims.full_linux_qualification_passed = true'
-expect_policy_rejected hidden-gap '.known_gaps = []'
+expect_policy_rejected hidden-gap \
+    '.known_gaps = [{"id":"release-valgrind-x11","expected_status":"XFAIL"}]'
 expect_policy_rejected missing-support-test '.support_tests |= map(select(. != "linux/ci/preflight-test"))'
 expect_policy_rejected reordered-prerequisite \
     '.selected_cells |= ([.[1], .[0]] + .[2:])'
@@ -53,7 +54,7 @@ expect_matrix_rejected scaling-contract-drift \
     '(.cells[] | select(.id == "fractional-scale-wayland")).status = "PASS" | (.cells[] | select(.id == "fractional-scale-wayland")).command = "true" | (.cells[] | select(.id == "fractional-scale-wayland")).environment_profile = "nested-wayland-input-v1"'
 expect_matrix_rejected xwayland-scaling-contract-drift \
     '(.cells[] | select(.id == "scale-xwayland")).command = "true" | (.cells[] | select(.id == "scale-xwayland")).environment_profile = "nested-x11-v1"'
-expect_matrix_rejected stale-xfail \
-    '(.cells[] | select(.id == "ghostty-async-backend-abi-representation")).status = "PASS"'
+expect_matrix_rejected selected-pass-to-xfail \
+    '(.cells[] | select(.id == "physical-key-x11")).status = "XFAIL" | (.cells[] | select(.id == "physical-key-x11")).defect = "stale fixture"'
 
-echo "validate-pr-subset-test: PASS negatives=missing+unknown+duplicate+claim+gap+support+order+coverage+status+scaling-contracts+stale-xfail"
+echo "validate-pr-subset-test: PASS negatives=missing+unknown+duplicate+claim+gap+support+order+coverage+status+scaling-contracts+selected-xfail"
