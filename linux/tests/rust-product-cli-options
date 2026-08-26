@@ -1,0 +1,69 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+product="$(readlink -f "${ZENTTY_LINUX_BINARY:-${repo_root}/build/linux/bin/zentty-linux}")"
+bundle_root="$(cd "$(dirname "${product}")/.." 2>/dev/null && pwd)" || bundle_root=""
+metadata="${bundle_root}/build-metadata"
+
+fail() {
+    echo "rust-product-cli-options: error: $*" >&2
+    exit 1
+}
+
+for dependency in cmp env grep head mktemp readlink sed; do
+    command -v "${dependency}" >/dev/null || fail "${dependency} is required"
+done
+[[ -x "${product}" ]] || fail "staged product is not executable: ${product}"
+[[ -f "${metadata}" ]] || fail "staged product build metadata is missing: ${metadata}"
+
+stdout="$(mktemp)"
+stderr="$(mktemp)"
+cleanup() {
+    rm -f -- "${stdout}" "${stderr}" "${stdout}.expected" "${stderr}.expected"
+}
+trap cleanup EXIT
+
+run_without_desktop() {
+    env -u DISPLAY -u WAYLAND_DISPLAY -u DBUS_SESSION_BUS_ADDRESS \
+        -u XDG_RUNTIME_DIR -u GDK_BACKEND "$@"
+}
+
+run_without_desktop "${product}" --help >"${stdout}" 2>"${stderr}" ||
+    fail "--help did not exit successfully"
+[[ ! -s "${stderr}" ]] || fail "--help wrote to stderr"
+grep -Fxq 'Usage: zentty-linux [OPTIONS]' "${stdout}" || fail "--help omitted usage"
+for option in --command --state-directory --no-session-restore --async-backend --help --version; do
+    grep -Fq -- "${option}" "${stdout}" || fail "--help omitted ${option}"
+done
+
+version="$(sed -n 's/^version = "\([^"]*\)"/\1/p' "${repo_root}/crates/zentty-linux/Cargo.toml" | head -1)"
+profile="$(sed -n 's/^product_profile=//p' "${metadata}")"
+tree="$(sed -n 's/^zentty_tree=//p' "${metadata}")"
+revision="$(sed -n 's/^zentty_revision=//p' "${metadata}")"
+[[ "${version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || fail "crate version is malformed"
+[[ -n "${profile}" && -n "${tree}" ]] || fail "build identity is incomplete"
+[[ "${revision}" =~ ^[0-9a-f]{40}$ ]] || fail "build revision is malformed"
+cat >"${stderr}.expected" <<EOF
+Zentty ${version}
+Build: ${profile} (${tree})
+Commit: ${revision:0:12}
+EOF
+run_without_desktop "${product}" --version >"${stdout}" 2>"${stderr}" ||
+    fail "--version did not exit successfully"
+[[ ! -s "${stderr}" ]] || fail "--version wrote to stderr"
+cmp -s "${stdout}" "${stderr}.expected" || fail "--version did not match staged build identity"
+
+set +e
+run_without_desktop "${product}" --definitely-unknown >"${stdout}" 2>"${stderr}"
+status=$?
+set -e
+[[ "${status}" -ne 0 ]] || fail "unknown option exited successfully"
+[[ ! -s "${stdout}" ]] || fail "unknown option wrote to stdout"
+cat >"${stdout}.expected" <<'EOF'
+zentty-linux: unknown argument: --definitely-unknown
+Try 'zentty-linux --help' for usage.
+EOF
+cmp -s "${stderr}" "${stdout}.expected" || fail "unknown option diagnostic is not actionable"
+
+echo "rust-product-cli-options: PASS staged public binary, no desktop session"

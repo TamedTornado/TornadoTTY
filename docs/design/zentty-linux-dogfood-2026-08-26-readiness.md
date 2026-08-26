@@ -461,3 +461,40 @@ The package run passed 317 tests before its existing real-`/proc` listener test
 received sandbox `EPERM`; that exact test passed outside the sandbox, while two
 display-only accessibility tests remained intentionally ignored. No full
 qualification was run or claimed for this focused dogfood repair.
+
+## GH-105: public product help and version commands
+
+The deployed product rejected `--help` as an unknown option even though its
+launch parser already owned four public options. The same parser now returns
+explicit Run, Help, or Version startup actions. Help and version return before
+configuration, Ghostty runtime, or GTK initialization. Unknown options remain
+errors and now point to `zentty-linux --help`. Version output reuses the About
+view's compiled version, build profile/tree state, and validated commit rather
+than introducing a second provenance source.
+
+The first staged output inspection caught that Rust's escaped multiline string
+had removed intended option indentation. The help constant was changed to an
+explicit concatenation. An attempted exact byte comparison for the entire help
+page was rejected during review as brittle and not useful; the artifact actor
+instead asserts successful display-free execution, clean stderr, usage, and
+the presence of every supported option. Version output remains exact because
+its values are the artifact's security and provenance identity, not visual
+presentation. Unknown-option stdout, stderr, and nonzero status are also exact.
+
+The display-free actor runs the actual staged ReleaseSafe binary with display,
+session-bus, runtime-directory, and GDK backend variables removed. It is
+registered as the `product-cli-options` cell in the authoritative matrix and
+required by the existing orchestration contract; `--help` and `--version` were
+also added to that contract's reviewed public-option allowlist. The actor,
+formatting, shellcheck, and the focused CLI unit test passed. A mistakenly broad
+Rust filter ran 322 binary tests: 319 passed, two display-only tests were
+ignored, and the existing real-`/proc` test received the already documented
+sandbox `EPERM`; the three new CLI tests passed within that run.
+
+Running `test-orchestration-contract` accepted the new registrations and then
+reported its pre-existing `staged-shell-integration` inline-agent finding. A
+similarly named command was then invoked under the mistaken assumption that it
+only validated matrix schema; `linux/tests/qualification-matrix` actually
+starts qualification. It stopped after 13 seconds with existing
+`prepare-ghostty` FAIL and suppression-governance PASS. That run is not a GH-105
+result, was not rerun, and no local, release, or full qualification is claimed.

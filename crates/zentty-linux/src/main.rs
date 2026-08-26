@@ -76,6 +76,25 @@ struct Options {
     restore_enabled: bool,
 }
 
+#[derive(Debug)]
+enum StartupAction {
+    Run(Options),
+    Help,
+    Version,
+}
+
+const HELP_TEXT: &str = concat!(
+    "Usage: zentty-linux [OPTIONS]\n",
+    "\n",
+    "Options:\n",
+    "      --command <COMMAND>          Start each new pane with COMMAND\n",
+    "      --state-directory <PATH>     Use PATH for workspace persistence\n",
+    "      --no-session-restore         Start without restoring the saved workspace\n",
+    "      --async-backend <BACKEND>    Select default, epoll, or io_uring\n",
+    "  -h, --help                       Print help\n",
+    "  -V, --version                    Print version and build identity",
+);
+
 impl Default for Options {
     fn default() -> Self {
         Self {
@@ -96,11 +115,14 @@ fn required_argument(
         .ok_or_else(|| format!("{name} requires a value"))
 }
 
-fn parse_options() -> Result<Options, String> {
-    let mut arguments = std::env::args().skip(1);
+fn parse_options_from(
+    mut arguments: impl Iterator<Item = String>,
+) -> Result<StartupAction, String> {
     let mut options = Options::default();
     while let Some(argument) = arguments.next() {
         match argument.as_str() {
+            "-h" | "--help" => return Ok(StartupAction::Help),
+            "-V" | "--version" => return Ok(StartupAction::Version),
             "--command" => {
                 options.command = Some(required_argument(&mut arguments, "--command")?);
             }
@@ -129,10 +151,26 @@ fn parse_options() -> Result<Options, String> {
                     }
                 };
             }
-            _ => return Err(format!("unknown argument: {argument}")),
+            _ => {
+                return Err(format!(
+                    "unknown argument: {argument}\nTry 'zentty-linux --help' for usage."
+                ));
+            }
         }
     }
-    Ok(options)
+    Ok(StartupAction::Run(options))
+}
+
+fn parse_options() -> Result<StartupAction, String> {
+    parse_options_from(std::env::args().skip(1))
+}
+
+fn version_text() -> String {
+    let metadata = about_catalog::AboutMetadata::compiled();
+    format!(
+        "Zentty {}\nBuild: {}\nCommit: {}",
+        metadata.version, metadata.build, metadata.commit
+    )
 }
 
 fn run_lifecycle_cycle(
@@ -230,7 +268,17 @@ fn install_live_snapshot_source(
 }
 
 fn run() -> Result<(), String> {
-    let options = parse_options()?;
+    let options = match parse_options()? {
+        StartupAction::Run(options) => options,
+        StartupAction::Help => {
+            println!("{HELP_TEXT}");
+            return Ok(());
+        }
+        StartupAction::Version => {
+            println!("{}", version_text());
+            return Ok(());
+        }
+    };
     let config = ConfigStore::load_default()?;
     if let Some(warning) = config.warning.as_deref() {
         eprintln!("zentty-linux: {warning}");
@@ -340,7 +388,14 @@ fn main() -> ExitCode {
 
 #[cfg(test)]
 mod tests {
-    use super::{appearance_needs_startup_projection, required_argument};
+    use super::{
+        HELP_TEXT, StartupAction, appearance_needs_startup_projection, parse_options_from,
+        required_argument, version_text,
+    };
+
+    fn parse(arguments: &[&str]) -> Result<StartupAction, String> {
+        parse_options_from(arguments.iter().map(|argument| (*argument).to_owned()))
+    }
 
     #[test]
     fn required_arguments_reject_missing_values() {
@@ -348,6 +403,27 @@ mod tests {
         assert_eq!(
             required_argument(&mut missing, "--command"),
             Err("--command requires a value".to_owned())
+        );
+    }
+
+    #[test]
+    fn help_and_version_are_early_exit_actions() {
+        assert!(matches!(parse(&["--help"]), Ok(StartupAction::Help)));
+        assert!(matches!(parse(&["-h"]), Ok(StartupAction::Help)));
+        assert!(matches!(parse(&["--version"]), Ok(StartupAction::Version)));
+        assert!(matches!(parse(&["-V"]), Ok(StartupAction::Version)));
+        assert!(HELP_TEXT.contains("--async-backend <BACKEND>"));
+        let version = version_text();
+        assert!(version.starts_with(&format!("Zentty {}\n", env!("CARGO_PKG_VERSION"))));
+        assert!(version.contains("\nBuild: "));
+        assert!(version.contains("\nCommit: "));
+    }
+
+    #[test]
+    fn unknown_options_point_to_public_help() {
+        assert_eq!(
+            parse(&["--unknown"]).unwrap_err(),
+            "unknown argument: --unknown\nTry 'zentty-linux --help' for usage."
         );
     }
 

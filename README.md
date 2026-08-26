@@ -89,6 +89,18 @@ workspace can be launched with:
 linux/scripts/run-local --state-directory /tmp/zentty-state --no-session-restore
 ```
 
+The staged and installed Linux binaries expose their launch options and exact
+build identity without starting GTK or Ghostty:
+
+```bash
+build/linux/bin/zentty-linux --help
+build/linux/bin/zentty-linux --version
+```
+
+`--version` reports the application version, build profile/tree state, and the
+Zentty commit compiled into that artifact. Direct Cargo builds report unknown
+provenance rather than inventing a release identity.
+
 Current Linux pane navigation uses the duration of the **Tab key itself**:
 
 - Tap `Ctrl+Tab` / `Ctrl+Shift+Tab`: select the next/previous pane as soon as

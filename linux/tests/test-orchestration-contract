@@ -63,8 +63,10 @@ grep -Eo '"--[a-z0-9-]+"' "${linux_main}" | tr -d '"' | sort -u >"${actual_optio
 cat >"${expected_options}" <<'OPTIONS'
 --async-backend
 --command
+--help
 --no-session-restore
 --state-directory
+--version
 OPTIONS
 if ! diff="$(comm -3 "${expected_options}" "${actual_options}")"; then
     echo "test-orchestration-contract: product CLI differs from the reviewed non-test allowlist:" >&2
@@ -87,6 +89,8 @@ require "the real multi-window product journey is missing or not executable" \
     test -x "${multi_window_harness}"
 require "the real staged CLI contract journey is missing or not executable" \
     test -x "${repo_root}/linux/tests/rust-cli-contract"
+require "the public product option journey is missing or not executable" \
+    test -x "${repo_root}/linux/tests/rust-product-cli-options"
 require "the Cargo publication-age audit is missing or not executable" test -x "${cargo_age_audit}"
 require "the Cargo age policy is not a seven-day empty-exception floor" \
     jq -e '.minimum_age_seconds == 604800 and .minimum_age == "7 days" and
@@ -249,6 +253,16 @@ require "source CLI compatibility is not pinned to both controlled compositor jo
             .environment_profile == "nested-x11-v1") and
         any($cells[]; .display == "wayland" and
             .environment_profile == "nested-wayland-input-v1")
+    ' "${matrix}"
+
+require "public product options are not pinned to the staged display-free binary" \
+    jq -e '
+        .cells[] | select(.id == "product-cli-options") |
+        .capability == "product_cli_options" and .status == "PASS" and
+        .display == "none" and .optimize == "ReleaseSafe" and
+        .depends_on == ["build-release"] and
+        .environment_profile == "isolated-none-v1" and
+        .command == "ZENTTY_LINUX_BINARY=build/linux-profiles/release-safe/bin/zentty-linux linux/tests/rust-product-cli-options"
     ' "${matrix}"
 
 # Installed-product qualification must remain one paired extension of the
