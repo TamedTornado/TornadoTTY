@@ -324,3 +324,29 @@ invalid and changed an already-PASS cell to PASS as its "stale XFAIL" case.
 The repaired negatives add a fictitious gap and convert a selected PASS cell to
 XFAIL; both are rejected. This changes only a checker self-test and does not
 make public CI a release authority.
+
+## Third matrix receipt and concurrent receipt ownership
+
+The third complete matrix ran 959,640 ms. The synchronized development-server
+cells and all support tests passed. Its root failure was a new concurrency bug:
+ReleaseSafe and other real builders wrote the same Cargo publication-age JSON
+receipt. One validator read the file while another writer was replacing it and
+rejected the malformed claim. Build-local now places that receipt beneath its
+own `ZENTTY_BUILD_OUTPUT_DIR`; the focused policy test requires build-owned
+receipt paths, and the exact ReleaseSafe build cell passes. The standalone
+security audit retains its canonical receipt. No dependency-age rule changed.
+
+Because ReleaseSafe failed, the primary package producer was correctly blocked;
+the clean builder spent its bounded wait looking for an artifact that could not
+exist and then failed. This was dependency propagation, not a second package
+reproducibility regression.
+
+The same run's newly captured paired raw Valgrind evidence also exercised
+different sizes of the already reviewed Fontconfig metrics graph. Governance
+rejected them before review. The unsuppressed stacks retain the exact external
+Fontconfig allocation and `pango_context_get_metrics` consumer, with deep child
+rules still root-gated. Scenario bounds now include the observed current-pin
+interaction/Wayland values (three roots/17,713 bytes, one deep node graph/8,480
+bytes, and 13 string contexts/5,251 bytes) and the single/Wayland four-child/
+128-byte floor. No suppression pattern changed. Governance now passes against
+the preserved raw and post-suppression receipts.

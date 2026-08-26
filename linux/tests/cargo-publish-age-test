@@ -164,5 +164,11 @@ jq -e '.schema_version == 1 and .exceptions == []' "${source_exceptions}" >/dev/
     echo "cargo-publish-age-test: committed exception manifest is not empty" >&2
     exit 1
 }
+# shellcheck disable=SC2016
+grep -Fq 'ZENTTY_CARGO_AGE_RECEIPT="${output_dir}/security/cargo-publish-age.json"' \
+    "${repo_root}/linux/scripts/build-local" || {
+    echo "cargo-publish-age-test: concurrent builds do not own distinct receipts" >&2
+    exit 1
+}
 
-echo 'cargo-publish-age-test: PASS old+too-new+missing-time+malformed-time+authorized-exception+untracked-exception+expired-exception+stale-exception+false-claim+native-cargo-policy+locked-matrix'
+echo 'cargo-publish-age-test: PASS old+too-new+missing-time+malformed-time+authorized-exception+untracked-exception+expired-exception+stale-exception+false-claim+native-cargo-policy+locked-matrix+concurrent-receipts'
