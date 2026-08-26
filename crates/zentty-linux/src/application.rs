@@ -1334,13 +1334,26 @@ impl ApplicationCoordinator {
                 ),
             }
         }
-        for target in self.desktop_notifications.drain_activations() {
-            let activated = self
-                .shells
-                .get(&target.window_id)
-                .is_some_and(|shell| shell.borrow_mut().activate_attention_target(&target, None));
+        for activation in self.desktop_notifications.drain_activations() {
+            let target = &activation.target;
+            let window_activation = crate::application_shell::WindowActivation {
+                event_time: None,
+                startup_id: activation.activation_token.clone(),
+            };
+            let activated = self.shells.get(&target.window_id).is_some_and(|shell| {
+                shell
+                    .borrow_mut()
+                    .activate_attention_target(target, Some(&window_activation))
+            });
             eprintln!(
-                "zentty-linux: desktop-attention-activate window={} worklane={} pane={} result={}",
+                "zentty-linux: desktop-attention-activate service-id={} action={} credential={} window={} worklane={} pane={} result={}",
+                activation.service_id,
+                activation.action,
+                if activation.activation_token.is_some() {
+                    "token"
+                } else {
+                    "none"
+                },
                 target.window_id,
                 target.worklane_id,
                 target.pane_id,
@@ -1349,7 +1362,7 @@ impl ApplicationCoordinator {
             if !activated {
                 self.attention_inbox
                     .borrow_mut()
-                    .resolve_target(&target, current_time_ms());
+                    .resolve_target(target, current_time_ms());
             }
         }
         if attention_changed {

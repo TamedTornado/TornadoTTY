@@ -498,3 +498,36 @@ only validated matrix schema; `linux/tests/qualification-matrix` actually
 starts qualification. It stopped after 13 seconds with existing
 `prepare-ghostty` FAIL and suppression-governance PASS. That run is not a GH-105
 result, was not rerun, and no local, release, or full qualification is claimed.
+
+## GH-110: notification click did not foreground the notifying pane
+
+The operator clicked a **Codex needs input** desktop notification but did not
+arrive in the notifying pane. A later **Zentty is ready** notification then
+provided a second click that reached the application. The product already
+stored the exact window/worklane/pane target and handled freedesktop
+`ActionInvoked`, but it called `activate_attention_target` without a window
+activation credential. That selected the pane internally and then issued an
+uncredentialed `GtkWindow.present()`, which GNOME/Wayland is entitled to deny.
+
+The official desktop-notification 1.3 protocol defines an `ActivationToken`
+signal immediately before `ActionInvoked`; its payload is either an X11 startup
+ID or Wayland XDG activation token. Zentty ignored this signal. The notification
+service now correlates a bounded token and target by service notification ID,
+consumes both on the first supported action, and supplies the token to the
+existing `WindowActivation`/`GtkWindow.set_startup_id` path before presenting.
+Stale IDs, invalid tokens, unsupported actions, and close events cannot route.
+Logs now record service ID, signal/action kind, target lookup, credential
+availability, and exact target result without exposing the token capability.
+
+Review of the prior integration evidence found that X11 asserted only the
+internal `result=focused` receipt and then manually raised/focused the window
+with `xdotool`; it did not prove the product could foreground itself. The
+controlled notification daemon now advertises protocol 1.3 and emits the real
+`ActivationToken` signal before `ActionInvoked`. Focused unit coverage passed
+for exact single-use correlation and stale/closed/invalid inputs. The existing
+isolated X11 attention journey passed with two native windows, two real Ghostty
+PTYs, authenticated agent events, a private freedesktop notification service,
+token-before-action ordering, exact target selection, and subsequent physical
+input in the routed PTY. That journey still cannot mint a compositor-authentic
+GNOME token; operator dogfood on the real GNOME session remains required before
+GH-110 can close. No full qualification was run or claimed.

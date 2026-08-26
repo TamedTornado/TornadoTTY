@@ -123,7 +123,10 @@ gdbus call --session --dest org.freedesktop.Notifications \
     --object-path /org/freedesktop/Notifications \
     --method be.zenjoy.Zentty.TestNotificationService.ActivateLatest >/dev/null
 zentty_product_wait_for_log "${log}" \
-    'desktop-attention-activate window=window-1 worklane=worklane-1 pane=pane-1 result=focused' \
+    'desktop-attention-signal service-id=1 kind=activation-token result=stored' \
+    "desktop action did not deliver its compositor activation token" || fail "desktop activation token missing"
+zentty_product_wait_for_log "${log}" \
+    'desktop-attention-activate service-id=1 action=default credential=token window=window-1 worklane=worklane-1 pane=pane-1 result=focused' \
     "desktop action did not route across windows to the exact pane" || fail "desktop action routing failed"
 if [[ "${backend}" == x11 ]]; then
     [[ "${window_one_id}" =~ ^[1-9][0-9]*$ ]] || fail "first X11 window identity was not retained"

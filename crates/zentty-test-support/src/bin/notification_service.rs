@@ -35,6 +35,7 @@ const SERVICE_XML: &str = r#"
     </method>
     <signal name="NotificationClosed"><arg name="id" type="u"/><arg name="reason" type="u"/></signal>
     <signal name="ActionInvoked"><arg name="id" type="u"/><arg name="action_key" type="s"/></signal>
+    <signal name="ActivationToken"><arg name="id" type="u"/><arg name="activation_token" type="s"/></signal>
   </interface>
   <interface name="be.zenjoy.Zentty.TestNotificationService">
     <method name="ActivateLatest"/>
@@ -150,7 +151,7 @@ fn register_service(
                         .return_value(Some(&(vec!["actions", "body", "sound"],).to_variant()));
                 }
                 "GetServerInformation" => invocation.return_value(Some(
-                    &("Zentty Test Notifications", "Zentty", "1", "1.2").to_variant(),
+                    &("Zentty Test Notifications", "Zentty", "1", "1.3").to_variant(),
                 )),
                 _ => invocation.return_dbus_error(
                     "org.freedesktop.DBus.Error.UnknownMethod",
@@ -176,6 +177,14 @@ fn register_service(
                         );
                         return;
                     };
+                    let token = format!("zentty-notification-{id}_TIME4242");
+                    let _ = connection.emit_signal(
+                        None,
+                        SERVICE_PATH,
+                        SERVICE_INTERFACE,
+                        "ActivationToken",
+                        Some(&(id, token.as_str()).to_variant()),
+                    );
                     let _ = connection.emit_signal(
                         None,
                         SERVICE_PATH,
@@ -183,7 +192,10 @@ fn register_service(
                         "ActionInvoked",
                         Some(&(id, "default").to_variant()),
                     );
-                    record(&receipt_for_test, &json!({"event":"activated","id":id}));
+                    record(
+                        &receipt_for_test,
+                        &json!({"event":"activated","id":id,"activationToken":true}),
+                    );
                     invocation.return_value(None);
                 }
                 "CloseLatest" => {
