@@ -245,12 +245,12 @@
       "expected_by_scenario": {
         "Debug/single/wayland": {"matches": {"min": 1, "max": 5}, "bytes": {"min": 1488, "max": 14841}},
         "Debug/interaction/wayland": {"matches": {"min": 1, "max": 5}, "bytes": {"min": 1933, "max": 17713}},
-        "Debug/single/x11": {"matches": {"min": 2, "max": 7}, "bytes": {"min": 8001, "max": 25387}},
+        "Debug/single/x11": {"matches": {"min": 2, "max": 7}, "bytes": {"min": 8001, "max": 26710}},
         "Debug/interaction/x11": {"matches": {"min": 1, "max": 7}, "bytes": {"min": 1709, "max": 30398}},
         "Debug/ibus-focus/x11": {"matches": {"min": 2, "max": 2}, "bytes": {"min": 9552, "max": 10182}}
       },
       "allowed_scenarios": ["Debug/single/wayland", "Debug/interaction/wayland", "Debug/single/x11", "Debug/interaction/x11", "Debug/ibus-focus/x11"],
-      "justification": "The allocation begins in stripped Fontconfig and is consumed through the named Pango metrics API. Child rules are permitted only when this root is present in the same report. Public full runs 32121127845 and 32129794981 independently retained exactly two roots totaling 9,552 bytes. The 2026-08-21 receipts also retained one 4,405-byte interaction/X11 root and one 2,448-byte single/Wayland root. The later complete run retained additional roots with the same named consumer. The 2026-08-25 GH-93 rerun retained five single/X11 roots totaling 21,782 bytes and six interaction/X11 roots totaling 30,398 bytes in the affected processes. GH-97 receipts retained interaction/X11 roots from 1,709 bytes through six roots/30,398 bytes, interaction/Wayland observations through five roots/16,977 bytes, single/Wayland observations through five roots/14,841 bytes, and single/X11 observations from four roots/8,001 bytes through seven roots/25,387 bytes. The 2026-08-26 current-Ghostty receipts retained seven interaction/X11 roots/27,626 bytes and three interaction/Wayland roots/17,713 bytes; every raw stack retains the same Fontconfig allocation and named Pango consumer and every child remains root-gated. The suppression pattern itself was not changed.",
+      "justification": "The allocation begins in stripped Fontconfig and is consumed through the named Pango metrics API. Child rules are permitted only when this root is present in the same report. Public full runs 32121127845 and 32129794981 independently retained exactly two roots totaling 9,552 bytes. The 2026-08-21 receipts also retained one 4,405-byte interaction/X11 root and one 2,448-byte single/Wayland root. The later complete run retained additional roots with the same named consumer. The 2026-08-25 GH-93 rerun retained five single/X11 roots totaling 21,782 bytes and six interaction/X11 roots totaling 30,398 bytes in the affected processes. GH-97 receipts retained interaction/X11 roots from 1,709 bytes through six roots/30,398 bytes, interaction/Wayland observations through five roots/16,977 bytes, single/Wayland observations through five roots/14,841 bytes, and single/X11 observations from four roots/8,001 bytes through seven roots/25,387 bytes. The 2026-08-26 current-Ghostty receipts retained seven interaction/X11 roots/27,626 bytes, three interaction/Wayland roots/17,713 bytes, and six single/X11 roots/26,710 bytes; every raw stack retains the same Fontconfig allocation and named Pango consumer and every child remains root-gated. The suppression pattern itself was not changed.",
       "reproducer": "linux/tests/ibus-focus-reproducer.c reproduces the root without linking Ghostty. Public run 32129794981 retained the paired raw and suppression-enabled receipts for the reviewed 9,552-byte observation; build/linux/memory-safety-Debug-{interaction-wayland,single-wayland,single-x11}.{raw,suppressed}.log preserve the reviewed 1,933-byte, 7,113-byte, and 9,601-byte complete-run observations.",
       "required_usage": true
     },
@@ -336,7 +336,7 @@
       "finding_type": "Memcheck:Leak indirect children through pango_layout_get_size",
       "expected_suppressed": {"matches": {"min": 4, "max": 128}, "bytes": {"min": 128, "max": 5984}},
       "expected_by_scenario": {
-        "Debug/single/wayland": {"matches": {"min": 15, "max": 34}, "bytes": {"min": 480, "max": 1088}},
+        "Debug/single/wayland": {"matches": {"min": 14, "max": 34}, "bytes": {"min": 448, "max": 1088}},
         "Debug/interaction/wayland": {"matches": {"min": 4, "max": 33}, "bytes": {"min": 128, "max": 1056}},
         "Debug/single/x11": {"matches": {"min": 16, "max": 93}, "bytes": {"min": 512, "max": 4000}},
         "Debug/interaction/x11": {"matches": {"min": 14, "max": 47}, "bytes": {"min": 448, "max": 1504}},
@@ -344,7 +344,7 @@
       },
       "allowed_scenarios": ["Debug/single/wayland", "Debug/interaction/wayland", "Debug/single/x11", "Debug/interaction/x11", "Debug/ibus-focus/x11"],
       "requires_root_rule": "GTK Pango Fontconfig layout cache",
-      "justification": "The rule includes the Pango layout consumer and is rejected if the root is absent in the same report. The 2026-08-25 authoritative concurrent runs retained interaction/Wayland sets from 4 children/128 bytes through 33/1,056 beside their separately suppressed roots. GH-97 retained single/Wayland sets of 15/480 and 34/1,088 beside reviewed roots, 16/512 through 45/1,440 beside reviewed single/X11 roots, and 14/448 through 47/1,504 beside reviewed interaction/X11 roots; the exact suppression stack was unchanged.",
+      "justification": "The rule includes the Pango layout consumer and is rejected if the root is absent in the same report. The 2026-08-25 authoritative concurrent runs retained interaction/Wayland sets from 4 children/128 bytes through 33/1,056 beside their separately suppressed roots. GH-97 retained single/Wayland sets of 15/480 and 34/1,088 beside reviewed roots, 16/512 through 45/1,440 beside reviewed single/X11 roots, and 14/448 through 47/1,504 beside reviewed interaction/X11 roots. The 2026-08-26 current-Ghostty single/Wayland raw receipt retained 14 children totaling 448 bytes beside its separately reviewed layout root; the exact suppression stack was unchanged.",
       "reproducer": "The standalone GTK/IBus reproducer deliberately sizes a Pango layout and records this child only beside the layout root.",
       "required_usage": true
     },

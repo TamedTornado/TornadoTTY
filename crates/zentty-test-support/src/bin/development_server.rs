@@ -5,7 +5,10 @@ use std::net::{TcpListener, TcpStream};
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
-const LIFETIME: Duration = Duration::from_secs(90);
+// This is only a dead-fixture ceiling. The owning product journey terminates
+// the process as soon as its assertions finish. Keep enough headroom for the
+// same real journey to run under the qualification matrix's concurrent load.
+const LIFETIME: Duration = Duration::from_secs(300);
 
 fn main() -> Result<(), String> {
     let receipt = receipt_argument()?;

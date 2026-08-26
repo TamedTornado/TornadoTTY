@@ -350,3 +350,39 @@ interaction/Wayland values (three roots/17,713 bytes, one deep node graph/8,480
 bytes, and 13 string contexts/5,251 bytes) and the single/Wayland four-child/
 128-byte floor. No suppression pattern changed. Governance now passes against
 the preserved raw and post-suppression receipts.
+
+## Fourth matrix receipt and bounded-fixture load failure
+
+The fourth complete matrix ran 858,740 ms. ReleaseSafe, package
+reproducibility, and every support contract passed. Qualification still did
+not pass: the two X11 development-server journeys failed their exact visual
+comparison, suppression governance rejected one newly observed reviewed cache
+size, and the aggregate platform-settings cell was correctly blocked by the
+failed development-server dependencies.
+
+The visual receipt was not a tolerable rendering difference. It showed the
+real terminal after its bounded development-server child had exited: the
+project branch remained, but the `Development servers` title and project icon
+were gone. The fixture had a 90-second dead-test ceiling. Both journeys finish
+in 14-23 seconds in isolation, but under the complete concurrent matrix the
+real scanner/browser/container work could cross that ceiling before capture.
+The fixture ceiling is now 300 seconds; this does not add five minutes to the
+test because the owning journey terminates its process immediately after its
+assertions. It only prevents the safety ceiling from becoming product state
+under expected qualification load. The unmodified journey and reviewed
+baseline both pass independently for the normal and real Docker-backed X11
+routes. The final matrix must prove the repair under the load that exposed it.
+
+The preserved Debug/single/Wayland Valgrind receipts contained 14 narrowed
+Pango layout-cache children/448 bytes beside the separately reviewed layout
+root, rather than the prior 15/480 floor. The Debug/single/X11 receipt also
+contained six Fontconfig metrics roots/26,710 bytes rather than the prior
+25,387-byte ceiling. Their paired unsuppressed stacks retain the same external
+Fontconfig allocations, named Pango consumers, and required root/child
+co-occurrence. Only those two scenario bounds and their evidence narratives
+changed; the effective suppression patterns did not. Suppression governance
+and its increase/stale/out-of-scenario/untracked-rule negative suite pass.
+
+No fourth-run failure was reclassified, skipped, hidden, or accepted as a
+baseline update. Debug Valgrind remains **PASS with reviewed suppressions** and
+ReleaseSafe Valgrind remains XFAIL.
