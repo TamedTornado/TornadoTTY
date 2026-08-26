@@ -272,3 +272,31 @@ that redundant overlay label; multi-pane labels remain available for
 disambiguation. The deployed binary also rejects `--help` as an unknown
 argument. That CLI defect is tracked separately rather than being folded into
 the restore repair.
+
+## GH-106: terminal mouse pointer lost contrast over the shell
+
+### Discovery and diagnosis
+
+While using the installed GNOME dogfood build, the operator reported that the
+mouse pointer became nearly invisible over the shell. Neither the primary nor
+the compatibility Ghostty configuration enabled `mouse-hide-while-typing` or
+specified another mouse policy. Local Ghostty source inspection established
+that terminal surfaces intentionally initialize their mouse shape to `text`
+and translate that shape to GTK's cursor-theme-provided `text` pointer. The
+active GNOME cursor theme's thin I-beam did not retain sufficient contrast over
+the selected terminal background.
+
+### Rejected repair and remaining limitation
+
+A focused host-side experiment replaced only Ghostty's `text` cursor with
+GTK's ordinary `default` arrow while preserving all other semantic shapes.
+Automated policy tests and lint passed, but operator dogfood immediately found
+that the arrow made terminal text selection feel wrong because it removed the
+text-position affordance. The experiment therefore failed interaction QA and
+was reverted before commit.
+
+Zentty again preserves Ghostty's native text cursor without modification. The
+low-contrast pointer remains a known GNOME cursor-theme interaction rather than
+shipping a product workaround that harms selection. A future repair must keep
+text-position precision while improving contrast; no full qualification was
+run or claimed for the rejected experiment.
