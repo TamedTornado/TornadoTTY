@@ -324,6 +324,13 @@ if [[ "${backend}" == x11 ]]; then
         'zentty-linux: title=Development servers' \
         'development-server terminal title did not reach the window chrome' ||
         fail "development-server terminal title was not settled"
+    for _ in $(seq 1 200); do
+        latest_context="$(sed -n 's/^zentty-linux: window-chrome-context=//p' "${log}" | tail -1)"
+        [[ "${latest_context}" == 'Development servers' ]] && break
+        sleep 0.05
+    done
+    [[ "${latest_context}" == 'Development servers' ]] ||
+        fail "development-server title event was not projected into current window chrome"
     xdotool mousemove --sync 2000 1500
     zentty_visual_capture_stable "${image}" import -silent -window "${window_id}" ||
         fail "development-server X11 compositor frame did not settle"

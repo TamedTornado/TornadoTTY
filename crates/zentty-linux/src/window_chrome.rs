@@ -57,6 +57,7 @@ const CHROME_CONTROLS: [ChromeControlSpec; 6] = [
 pub(crate) struct WindowChrome {
     root: gtk::CenterBox,
     context: gtk::Label,
+    rendered_context: RefCell<String>,
     project_icon: gtk::Picture,
     project: gtk::Box,
     branch: gtk::Button,
@@ -199,6 +200,7 @@ impl WindowChrome {
         Self {
             root,
             context,
+            rendered_context: RefCell::new(String::new()),
             project_icon,
             project,
             branch,
@@ -405,6 +407,10 @@ impl WindowChrome {
         self.context.set_text(&text);
         self.context
             .update_property(&[gtk::accessible::Property::Label(text.as_str())]);
+        if self.rendered_context.borrow().as_str() != text {
+            eprintln!("zentty-linux: window-chrome-context={text}");
+            self.rendered_context.replace(text.clone());
+        }
         let focused_pane = summaries
             .iter()
             .find(|summary| summary.is_active)

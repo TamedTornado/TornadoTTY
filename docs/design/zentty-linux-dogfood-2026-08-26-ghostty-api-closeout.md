@@ -386,3 +386,29 @@ and its increase/stale/out-of-scenario/untracked-rule negative suite pass.
 No fourth-run failure was reclassified, skipped, hidden, or accepted as a
 baseline update. Debug Valgrind remains **PASS with reviewed suppressions** and
 ReleaseSafe Valgrind remains XFAIL.
+
+## Fifth matrix receipt and corrected visual diagnosis
+
+The fifth complete matrix ran 862,170 ms. All support contracts, suppression
+governance, ReleaseSafe, packaging, and 199 other implemented matrix cells
+passed. Only the same two X11 development-server visuals failed, so the
+platform-settings aggregate was correctly blocked. Both failures occurred in
+10-12 seconds, disproving the fourth-run hypothesis that the fixture's
+90-second ceiling caused the missing chrome. The temporary ceiling increase
+was reverted; retaining an unrelated timeout change would have been test
+harness drift.
+
+The actual synchronization boundary is two-stage. Ghostty invokes the title
+callback and Zentty logs `title=Development servers`, then the GTK main loop
+queues an idle callback that reconciles pane state and renders window chrome.
+The existing wait proved only the first stage. Under complete matrix load the
+stable-frame capture could run before the idle projection, producing an exact
+but premature frame with an empty center context. Window chrome now emits a
+change-only receipt after synchronously setting the actual GTK label. The real
+journey requires the *latest* projected context to equal `Development servers`
+before capture; it does not accept a historical event, alter the baseline, or
+relax pixel comparison.
+
+The focused normal and real Docker-backed X11 journeys pass against the exact
+reviewed baseline with that projection boundary. The complete matrix remains
+required to prove the repair under the concurrency that exposed it.
