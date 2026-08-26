@@ -29,7 +29,8 @@ toolchain_bin="$(dirname "${rustc}")"
 prepared_cargo_home="${host_home}/.cargo"
 
 mkdir -p -- "${masked_checkout}" "${isolated_zig_cache}/p" \
-    "${isolated_cargo_home}/registry" "${isolated_cargo_home}/git"
+    "${isolated_cargo_home}/registry" "${isolated_cargo_home}/git" \
+    "${masked_checkout}/build/linux-deps/ghostty"
 [[ -d "${prepared_zig_packages}" ]] || {
     echo "debian-package-clean-checkout: prepared Zig package cache is missing" >&2
     exit 1
@@ -56,15 +57,20 @@ git -C "${isolated_ghostty}" checkout --quiet --detach \
 zig="${ZIG:-${repo_root}/../.tools/zig-x86_64-linux-0.16.0/zig}"
 blueprint="${BLUEPRINT_COMPILER_DIR:-${repo_root}/../.tools/blueprint-compiler-0.16.0/bin}"
 
+# Zig code generation is sensitive to the absolute source identity even when
+# debug paths are remapped. Compile the detached Ghostty clone at the same
+# canonical path used by the primary package build; the submount is a writable
+# temporary clone, not the developer checkout hidden underneath.
 bwrap \
     --ro-bind / / \
     --unshare-net \
     --dev-bind /dev /dev \
     --tmpfs /tmp \
     --bind "${temporary}" /mnt \
+    --ro-bind "${masked_checkout}" "${repo_root}" \
+    --bind "${isolated_ghostty}" "${repo_root}/build/linux-deps/ghostty" \
     --ro-bind "${prepared_zig_packages}" /mnt/zig-global-cache/p \
     --ro-bind "${prepared_cargo_home}/registry" /mnt/cargo-home/registry \
-    --ro-bind "${masked_checkout}" "${repo_root}" \
     --chdir /mnt/source \
     -- \
     env \
@@ -75,7 +81,7 @@ bwrap \
         TMPDIR=/tmp \
         ZIG="${zig}" \
         BLUEPRINT_COMPILER_DIR="${blueprint}" \
-        GHOSTTY_SOURCE_DIR=/mnt/ghostty \
+        GHOSTTY_SOURCE_DIR="${repo_root}/build/linux-deps/ghostty" \
         ZENTTY_ZIG_GLOBAL_CACHE_DIR=/mnt/zig-global-cache \
         ZENTTY_GHOSTTY_PREPARED=true \
         ZENTTY_PACKAGE_OUTPUT_DIR=/mnt/source/build/isolated-package \

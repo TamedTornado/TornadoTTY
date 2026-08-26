@@ -277,3 +277,24 @@ These findings came from the matrix doing its job. None was converted to a
 PASS through an environmental skip, baseline replacement, status change, or
 weakened product requirement. Debug Valgrind remains describable only as
 **PASS with reviewed suppressions**; ReleaseSafe Valgrind remains XFAIL.
+
+## Clean-build reproducibility follow-up
+
+After committing those repairs, the package notice collection passed in both
+the primary build and the disconnected clean clone. Byte comparison then found
+a second, independent failure: only `libghostty-gtk-embed.so` differed. The
+payload manifests, ELF section comparison, and normalized symbol-size diff
+localized the difference to register allocation in
+`terminal.formatter.PageFormatter.formatWithState`; one build was 80 bytes
+larger. There were no leaked developer/tmp paths and all other 1,295 payload
+entries were identical.
+
+Both builds already used fresh revision-owned Zig caches and `-Dcpu=baseline`.
+The remaining input difference was the absolute Ghostty source identity: the
+primary package compiled the managed checkout at
+`build/linux-deps/ghostty`, while the disconnected builder compiled an exact
+clone at `/mnt/ghostty`. The clean builder now mounts its disposable clone at
+the same canonical absolute path after masking the developer checkout. A
+contract test requires both the canonical submount and `GHOSTTY_SOURCE_DIR`;
+it does not compare or copy from the hidden developer checkout. The real
+byte-for-byte test must pass before this repair is accepted.

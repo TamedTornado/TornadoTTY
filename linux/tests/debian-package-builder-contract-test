@@ -23,6 +23,17 @@ grep -Fq '"ZENTTY_ZIG_LOCAL_CACHE_DIR=${package_zig_cache_root}/zig-local-cache"
         exit 1
     }
 
+# Both package builders must compile Ghostty at the same absolute source
+# identity. Otherwise Zig may make a different deterministic register-allocation
+# choice even though debug paths and input bytes are identical.
+if ! grep -Fq -- '--bind "${isolated_ghostty}" "${repo_root}/build/linux-deps/ghostty"' \
+        "${source_fixture}/linux/tests/debian-package-clean-checkout" ||
+    ! grep -Fq 'GHOSTTY_SOURCE_DIR="${repo_root}/build/linux-deps/ghostty"' \
+        "${source_fixture}/linux/tests/debian-package-clean-checkout"; then
+    echo "debian-package-builder-contract-test: canonical Ghostty source identity missing" >&2
+    exit 1
+fi
+
 expect_failure() {
     local name="$1" expected="$2"
     shift 2
