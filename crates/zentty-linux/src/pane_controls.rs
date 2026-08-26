@@ -124,12 +124,33 @@ impl PaneFrame {
         root.add_overlay(&label);
 
         let controls = gtk::Box::new(gtk::Orientation::Horizontal, 2);
+        controls.set_widget_name(&format!("pane-controls-{pane_id}"));
         controls.add_css_class("zentty-pane-controls");
         controls.set_halign(gtk::Align::End);
         controls.set_valign(gtk::Align::Start);
         controls.set_margin_top(8);
         controls.set_margin_end(8);
         controls.set_opacity(0.0);
+        controls.set_can_target(false);
+
+        let drag_zone = gtk::Label::new(Some("•••"));
+        drag_zone.set_widget_name(&format!("pane-drag-zone-{pane_id}"));
+        drag_zone.add_css_class("zentty-pane-drag-zone");
+        drag_zone.set_tooltip_text(Some("Drag pane"));
+        drag_zone.set_accessible_role(gtk::AccessibleRole::Button);
+        drag_zone.update_property(&[
+            gtk::accessible::Property::Label("Drag pane"),
+            gtk::accessible::Property::Description(
+                "Draggable pane. Drop on a pane edge, column boundary, or worklane.",
+            ),
+        ]);
+        let drag_motion = gtk::EventControllerMotion::new();
+        let drag_pane_id = pane_id.to_owned();
+        drag_motion.connect_enter(move |_, _, _| {
+            eprintln!("zentty-linux: pane-drag-zone pane={drag_pane_id} pointer=entered");
+        });
+        drag_zone.add_controller(drag_motion);
+        controls.append(&drag_zone);
 
         let on_action: Rc<dyn Fn(PaneControlAction)> = Rc::new(on_action);
         let right_action = Rc::new(Cell::new(PaneControlAction::SplitRight));
@@ -156,30 +177,6 @@ impl PaneFrame {
             button.connect_clicked(move |_| on_action(action));
             controls.append(&button);
         }
-        let drag_zone = gtk::Label::new(Some("•••"));
-        drag_zone.set_widget_name(&format!("pane-drag-zone-{pane_id}"));
-        drag_zone.add_css_class("zentty-pane-drag-zone");
-        drag_zone.set_halign(gtk::Align::Fill);
-        drag_zone.set_valign(gtk::Align::Start);
-        drag_zone.set_height_request(15);
-        drag_zone.set_hexpand(true);
-        drag_zone.set_tooltip_text(Some("Drag pane"));
-        drag_zone.update_property(&[
-            gtk::accessible::Property::Label("Drag pane"),
-            gtk::accessible::Property::Description(
-                "Draggable pane. Drop on a pane edge, column boundary, or worklane.",
-            ),
-        ]);
-        let drag_motion = gtk::EventControllerMotion::new();
-        let drag_pane_id = pane_id.to_owned();
-        drag_motion.connect_enter(move |_, _, _| {
-            eprintln!("zentty-linux: pane-drag-zone pane={drag_pane_id} pointer=entered");
-        });
-        drag_zone.add_controller(drag_motion);
-        root.add_overlay(&drag_zone);
-        // The full-width drag strip and the controls share the pane's top
-        // edge. Keep the buttons above the strip so their complete hit targets
-        // remain clickable rather than only the portion below the drag label.
         root.add_overlay(&controls);
 
         let revealed = Rc::new(Cell::new(false));
@@ -421,6 +418,7 @@ fn set_revealed(controls: &gtk::Box, revealed: &Cell<bool>, pane_id: &str, value
         return;
     }
     controls.set_opacity(if value { 1.0 } else { 0.0 });
+    controls.set_can_target(value);
     eprintln!(
         "zentty-linux: pane-controls pane={pane_id} state={}",
         if value { "shown" } else { "hidden" }

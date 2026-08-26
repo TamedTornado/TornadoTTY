@@ -296,7 +296,11 @@ text-position affordance. The experiment therefore failed interaction QA and
 was reverted before commit.
 
 Zentty again preserves Ghostty's native text cursor without modification. The
-low-contrast pointer remains a known GNOME cursor-theme interaction rather than
-shipping a product workaround that harms selection. A future repair must keep
-text-position precision while improving contrast; no full qualification was
-run or claimed for the rejected experiment.
+operator then localized the apparent contrast problem to the first terminal
+row: the pointer became an I-beam only after crossing below it. Inspection
+found a transparent, full-width 15-pixel pane-drag overlay intercepting input
+above Ghostty. The drag affordance now lives inside the visible contextual
+control cluster, and that cluster is non-targetable while hidden. Terminal
+content—including its first row—therefore retains Ghostty pointer and selection
+ownership except beneath controls that are actually visible. No full
+qualification is run or claimed for this focused dogfood repair.

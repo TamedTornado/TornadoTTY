@@ -251,7 +251,7 @@ pub(crate) fn terminal_source(
         let paintable = gtk::WidgetPaintable::new(Some(&preview));
         source.set_icon(Some(&paintable), 20, 18);
         eprintln!(
-            "zentty-linux: pane-drag=begin window={} worklane={} pane={} source=terminal-strip visual=full-card",
+            "zentty-linux: pane-drag=begin window={} worklane={} pane={} source=pane-controls visual=full-card",
             begin_payload.source_window_id,
             begin_payload.source_worklane_id,
             begin_payload.pane_id
@@ -260,7 +260,7 @@ pub(crate) fn terminal_source(
     let end_pane = payload.pane_id.clone();
     source.connect_drag_end(move |_, _, _| {
         end_active_payload(&end_pane);
-        eprintln!("zentty-linux: pane-drag=end pane={end_pane} source=terminal-strip");
+        eprintln!("zentty-linux: pane-drag=end pane={end_pane} source=pane-controls");
     });
     drag_zone.add_controller(source.clone());
     source
@@ -595,7 +595,7 @@ pub(crate) fn install_styles() {
          .pane-drag-title { color: #ffffff; font-weight: 700; }\n\
          .pane-drag-context { color: #b4bdc9; font-size: 11px; }\n\
          .pane-drag-agent { color: #8fc0ff; font-size: 11px; font-weight: 600; }\n\
-         .zentty-pane-drag-zone { min-height: 15px; background: transparent; }\n\
+         .zentty-pane-drag-zone { min-width: 26px; min-height: 26px; border-radius: 5px; background: transparent; }\n\
          .zentty-pane-drag-zone:hover { background: alpha(white, 0.055); }",
     );
     if let Some(display) = gtk::gdk::Display::default() {

@@ -2283,9 +2283,46 @@ mod tests {
 
     fn assert_pane_control_accessibility() {
         let terminal = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        terminal.set_widget_name("terminal-hit-target-pane-a");
         let frame = PaneFrame::new("pane-a", terminal.upcast_ref(), |_| {}, |_| {});
         let drag_zone = find_named_widget(frame.widget().upcast_ref(), "pane-drag-zone-pane-a")
             .expect("pane drag zone must expose an accessible identity");
+        let controls = drag_zone
+            .parent()
+            .expect("pane drag control must have a parent");
+        assert_eq!(controls.widget_name(), "pane-controls-pane-a");
+        assert!(
+            !controls.can_target(),
+            "hidden pane controls must not intercept terminal pointer input"
+        );
+        let window = gtk::Window::new();
+        window.set_default_size(600, 400);
+        window.set_child(Some(frame.widget()));
+        window.present();
+        while gtk::glib::MainContext::default().pending() {
+            gtk::glib::MainContext::default().iteration(false);
+        }
+        let picked = frame
+            .widget()
+            .pick(120.0, 10.0, gtk::PickFlags::DEFAULT)
+            .expect("the first terminal row must remain pointer-targetable");
+        let mut owner = Some(picked);
+        let mut terminal_owns_pick = false;
+        while let Some(widget) = owner {
+            if widget.widget_name() == "terminal-hit-target-pane-a" {
+                terminal_owns_pick = true;
+                break;
+            }
+            owner = widget.parent();
+        }
+        assert!(
+            terminal_owns_pick,
+            "the first terminal row must be owned by terminal content, not an overlay"
+        );
+        assert!(gtk::test_accessible_has_role(
+            &drag_zone,
+            gtk::AccessibleRole::Button
+        ));
         assert!(gtk::test_accessible_has_property(
             &drag_zone,
             gtk::AccessibleProperty::Label
@@ -2331,6 +2368,7 @@ mod tests {
             )
             .is_none()
         );
+        window.close();
     }
 
     fn assert_divider_accessibility() {
