@@ -443,3 +443,31 @@ therefore receive the same package inputs without sharing compiler outputs with
 Debug, regression, or a previous build. The package-builder contract requires
 both owned cache paths. Exact byte comparison remains unchanged and must pass
 in the final matrix; no differing library is accepted or normalized.
+
+## Seventh matrix receipt and detached-package cache plumbing
+
+The seventh complete matrix ran 1,016,360 ms. Both normal and real
+Docker-backed X11 development-server journeys passed under full load, proving
+the current-chrome synchronization and clean baseline. The package cache
+isolation itself exposed a missing input contract before comparison: the
+detached lifecycle source correctly had no ignored `build/` tree, but its
+launcher did not forward the host's prepared Zig package store. The primary
+package therefore failed immediately with `prepared Zig package cache is
+missing`; the disconnected comparison then exhausted its bounded wait for a
+primary artifact that could not exist. This is one prerequisite failure and
+its dependency consequence, not a new byte mismatch.
+
+The lifecycle launcher now explicitly forwards the reviewed prepared global
+cache. `build-deb` links only that cache's immutable `p` directory into its
+fresh revision-owned global cache, so detached sources obtain dependencies
+without inheriting compiled outputs. The package-builder contract rejects
+removal of this forwarding edge.
+
+Fresh Valgrind evidence in the same run also lowered the already narrowed
+single/X11 Pango layout graph to one 2,388-byte root with 15 children/480
+bytes. The paired receipt retains the same external Fontconfig allocation,
+`FcFontRenderPrepare`/`pango_layout_get_size` consumer ancestry, and mandatory
+root-child co-occurrence. Only the single/X11 minima and evidence narratives
+changed; no suppression pattern changed. Governance and its complete negative
+suite pass. Debug remains **PASS with reviewed suppressions**; ReleaseSafe
+remains XFAIL.

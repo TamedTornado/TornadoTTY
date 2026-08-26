@@ -28,6 +28,11 @@ grep -Fq '"ZENTTY_ZIG_GLOBAL_CACHE_DIR=${package_zig_cache_root}/zig-global-cach
         echo "debian-package-builder-contract-test: package-owned Zig global cache contract missing" >&2
         exit 1
     }
+grep -Fq 'ZENTTY_ZIG_GLOBAL_CACHE_DIR="${repo_root}/build/linux-deps/zig-global-cache"' \
+    "${source_fixture}/linux/tests/debian-package-lifecycle-build" || {
+        echo "debian-package-builder-contract-test: lifecycle builder does not forward the prepared Zig package store" >&2
+        exit 1
+    }
 
 # Both package builders must compile Ghostty at the same absolute source
 # identity. Otherwise Zig may make a different deterministic register-allocation

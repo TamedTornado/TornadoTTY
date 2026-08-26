@@ -34,6 +34,7 @@ ln -s -- "${repo_root}/target" "${source_fixture}/target"
     ZIG="${ZIG:-${repo_root}/../.tools/zig-x86_64-linux-0.16.0/zig}" \
         BLUEPRINT_COMPILER_DIR="${BLUEPRINT_COMPILER_DIR:-${repo_root}/../.tools/blueprint-compiler-0.16.0/bin}" \
         GHOSTTY_SOURCE_DIR="${repo_root}/build/linux-deps/ghostty" \
+        ZENTTY_ZIG_GLOBAL_CACHE_DIR="${repo_root}/build/linux-deps/zig-global-cache" \
         ZENTTY_GHOSTTY_PREPARED=true \
         ZENTTY_PACKAGE_OUTPUT_DIR="${output_root}" \
         linux/scripts/build-deb
