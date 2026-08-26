@@ -154,12 +154,12 @@
       "swift_tests": ["ZenttyLogicTests/PaneDropResolverTests.swift", "ZenttyLogicTests/PaneDragHitTestingTests.swift", "ZenttyLogicTests/SidebarWorklaneReorderModelTests.swift"],
       "classification": "REQUIRED_LATER",
       "origin": "PORT_PARITY",
-      "user_impact": "Initial Linux users can use named move actions, but lose direct spatial manipulation until this is ported.",
+      "user_impact": "Direct spatial manipulation is available alongside named move actions, including live cross-window transfer.",
       "linux_owner_issue": 7,
-      "implementation_status": "PARTIAL",
-      "focused_tests": ["crates/zentty-tmux-compat/tests/source_fixtures.rs", "crates/zentty-tmux-compat/tests/protocol_contract.rs", "crates/zentty-agent-ipc/tests/tmux_transport.rs", "crates/zentty-agent-ipc/tests/tmux_cli.rs", "crates/zentty-linux/src/tmux_compat.rs"],
-      "product_scenarios": ["linux/tests/rust-tmux-compat-product"],
-      "test_plan": "Port deterministic drop resolution before using real GTK pointer sequences against actual pane and sidebar widgets.",
+      "implementation_status": "IMPLEMENTED",
+      "focused_tests": ["crates/zentty-core/tests/workspace_state.rs", "crates/zentty-linux/src/pane_drag_drop.rs", "crates/zentty-linux/src/pane_drag_view.rs"],
+      "product_scenarios": ["linux/tests/rust-multi-window", "linux/tests/rust-source-ux-x11"],
+      "test_plan": "Controlled X11 and Wayland use real pointer-driven GTK drag/drop against actual pane and sidebar widgets, including source hit testing, rendered insertion feedback, same-window moves, cross-worklane moves, and cross-window live Ghostty surface/PTY transfer without process recreation.",
       "alternative_or_blocker": null
     },
     {
@@ -172,10 +172,10 @@
       "origin": "PORT_PARITY",
       "user_impact": "Long coding and agent transcripts are impractical to navigate without terminal search.",
       "linux_owner_issue": 7,
-      "implementation_status": "PARTIAL",
+      "implementation_status": "IMPLEMENTED",
       "focused_tests": ["crates/zentty-linux/src/application_shell.rs", "crates/zentty-ghostty-sys/src/lib.rs"],
       "product_scenarios": ["linux/tests/rust-pane-search"],
-      "test_plan": "Qualify the installed product and reviewed light/dark/fractional-scale visuals. Physical X11 covers search, navigation, selection-to-find, typed-query hide-with-remembered-highlights, selection-query close-and-clear, live-query/corner retention, and PTY focus; controlled Wayland covers the same real Ghostty core and named routes but its headless Weston lacks virtual-keyboard injection.",
+      "test_plan": "Physical X11 covers search, navigation, selection-to-find, typed-query hide-with-remembered-highlights, selection-query close-and-clear, live-query/corner retention, and PTY focus. Controlled Wayland covers the real Ghostty core and named routes; the later source-UX visual closeout adds reviewed light/dark/scaled search HUD evidence without converting unavailable headless-Weston virtual-keyboard injection into a pass.",
       "alternative_or_blocker": null
     },
     {
@@ -213,17 +213,17 @@
     {
       "id": "terminal.ghostty-fidelity-resources",
       "category": "terminal_foundation",
-      "behavior": "Preserve Ghostty rendering, VT and terminal ownership while shipping Zentty's compatible Ghostty defaults, terminfo, themes, resource lookup, configuration reload, and performance diagnostics without a second emulator or PTY owner.",
-      "source": ["Zentty/Terminal/LibghosttyAdapter.swift", "Zentty/Terminal/LibghosttyRuntime.swift", "Zentty/Terminal/LibghosttySurface.swift", "Zentty/Terminal/TerminalDiagnostics.swift", "Zentty/Terminal/TerminalFrameMeter.swift"],
+      "behavior": "Preserve Ghostty rendering, VT and terminal ownership while shipping Zentty's compatible Ghostty defaults, terminfo, themes, resource lookup, and configuration reload without a second emulator or PTY owner.",
+      "source": ["Zentty/Terminal/LibghosttyAdapter.swift", "Zentty/Terminal/LibghosttyRuntime.swift", "Zentty/Terminal/LibghosttySurface.swift"],
       "swift_tests": ["ZenttyLogicTests/LibghosttyAdapterTests.swift", "ZenttyLogicTests/LibghosttyRuntimeTests.swift", "ZenttyLogicTests/VendoredGhosttyResourcesTests.swift", "ZenttyIntegrationTests/BundledGhosttyThemeResourcesTests.swift"],
       "classification": "REQUIRED_INITIAL_RELEASE",
       "origin": "PORT_PARITY",
       "user_impact": "Every higher-level Zentty workflow depends on ordinary terminal applications rendering and behaving exactly as real Ghostty terminals rather than a partial replacement.",
       "linux_owner_issue": 8,
-      "implementation_status": "PARTIAL",
-      "focused_tests": [],
+      "implementation_status": "IMPLEMENTED",
+      "focused_tests": ["crates/zentty-ghostty/src/lib.rs", "crates/zentty-linux/src/config_store.rs", "linux/tests/ghostty-regression", "linux/tests/staged-bundle"],
       "product_scenarios": ["linux/tests/rust-product-smoke"],
-      "test_plan": "Run real terminal conformance and representative interactive TUIs in staged Ghostty surfaces and PTYs, validate packaged terminfo/themes/config lookup, and retain focused ABI/input/lifecycle tests and mutations beneath those product scenarios.",
+      "test_plan": "Run real Ghostty surfaces and PTYs, validate packaged terminfo/themes/config lookup and live configuration reload, and retain focused ABI/input/lifecycle tests beneath those product scenarios. The optional performance overlay is separately classified as diagnostics.task-terminal-performance and is not folded into this terminal-foundation claim.",
       "alternative_or_blocker": null
     },
     {
@@ -284,14 +284,14 @@
       "origin": "PORT_PARITY",
       "user_impact": "Source workflows reorganize live long-running agents and shells across windows; replacement sessions would destroy the state being organized.",
       "linux_owner_issue": 16,
-      "implementation_status": "PARTIAL",
+      "implementation_status": "IMPLEMENTED",
       "focused_tests": [
         "crates/zentty-core/tests/workspace_state.rs"
       ],
       "product_scenarios": [
         "linux/tests/rust-multi-window"
       ],
-      "test_plan": "New-window and existing-foreign-worklane transfers pass controlled Wayland/X11 proof of unchanged PTY PID sets, one Ghostty surface construction, post-move physical input, canonical agent/tmux routing, source-window cleanup, aggregate persistence, and clean/crash relaunch where applicable. Keep this entry PARTIAL only for source cross-window drag/drop, which remains owned by GH-16 and must pass an equivalent real-system journey before parity is claimed.",
+      "test_plan": "New-window, existing-foreign-worklane, and real cross-window drag/drop transfers pass controlled Wayland/X11 proof of unchanged PTY PID sets, one Ghostty surface construction, post-move physical input, canonical agent/tmux routing, source-window cleanup, aggregate persistence, and clean/crash relaunch where applicable.",
       "alternative_or_blocker": null
     },
     {
@@ -440,17 +440,17 @@
     {
       "id": "utilities.task-manager",
       "category": "project_utilities",
-      "behavior": "Show per-pane root/foreground process identity, CPU history, memory and network usage in a themed accessible diagnostics window with bounded Linux sampling and correct process-tree ownership.",
+      "behavior": "Show per-pane root/foreground process identity, CPU history, and memory usage in a themed accessible diagnostics window with bounded Linux sampling and correct process-tree ownership.",
       "source": ["Zentty/TaskManager/TaskManagerModels.swift", "Zentty/TaskManager/TaskManagerProcessSampler.swift", "Zentty/TaskManager/TaskManagerWindowController.swift"],
       "swift_tests": ["ZenttyLogicTests/TaskManagerPresentationTests.swift", "ZenttyLogicTests/TaskManagerProcessSamplerTests.swift", "ZenttyLogicTests/TaskManagerRootPIDTests.swift"],
       "classification": "REQUIRED_LATER",
       "origin": "PORT_PARITY",
       "user_impact": "The Task Manager lets users identify expensive or stuck work by pane without leaving Zentty or guessing from process titles.",
       "linux_owner_issue": 65,
-      "implementation_status": "PARTIAL",
+      "implementation_status": "IMPLEMENTED",
       "focused_tests": ["crates/zentty-linux/src/task_manager/model.rs", "crates/zentty-linux/src/task_manager/proc_sampler.rs"],
       "product_scenarios": ["linux/tests/rust-task-manager"],
-      "test_plan": "Keep the controlled X11/Wayland real-PTY journey for CPU, memory, search, expansion, clipboard, focus, close, PID churn, multiwindow behavior, and absence of a dead Network column when no telemetry backend is active. Under deferred issue #65, add cgroup/container and trustworthy per-pane network accounting evidence before promotion. Evaluate cgroup-attached eBPF with real TCP/UDP traffic from two pane trees plus unrelated and containerized processes; prove attribution, lifecycle, privilege, namespace, overhead, and no double counting. Never substitute aggregate interface counters or socket-queue bytes for pane throughput, and never treat an unavailable environment as a pass.",
+      "test_plan": "Keep the controlled X11/Wayland real-PTY journey for CPU, memory, search, expansion, clipboard, focus, close, PID churn, multiwindow behavior, and deliberate absence of a dead Network column. Deferred issue #65 separately owns any future cgroup/container and trustworthy per-pane network accounting; it is not part of this implemented Task Manager claim.",
       "alternative_or_blocker": null
     },
     {
@@ -667,10 +667,10 @@
       "origin": "PORT_PARITY",
       "user_impact": "Agent hooks must not be silently installed, while approved integrations must work consistently across new and restored panes.",
       "linux_owner_issue": 7,
-      "implementation_status": "PARTIAL",
+      "implementation_status": "IMPLEMENTED",
       "focused_tests": ["crates/zentty-core/tests/agent_consent.rs", "crates/zentty-core/tests/agent_launch.rs", "crates/zentty-agent-ipc/tests/launch_cli.rs"],
       "product_scenarios": ["linux/tests/rust-agent-ipc", "linux/tests/installed-codex-integration", "linux/tests/rust-session-restore", "linux/tests/staged-bundle"],
-      "test_plan": "Use real agent binaries or deterministic local stand-ins, real shell wrappers and files, and control only the external model response.",
+      "test_plan": "Use real installed agent binaries where qualification owns them, staged managed wrappers/hooks and private files for every supported launcher, real shell/PTY/socket/consent paths, and control only the external model response.",
       "alternative_or_blocker": null
     },
     {
@@ -683,10 +683,10 @@
       "origin": "PORT_PARITY",
       "user_impact": "Without the real event path, Zentty is merely a terminal multiplexer and cannot surface coding-agent progress or questions.",
       "linux_owner_issue": 7,
-      "implementation_status": "PARTIAL",
+      "implementation_status": "IMPLEMENTED",
       "focused_tests": ["crates/zentty-core/tests/agent_status.rs", "crates/zentty-core/tests/pane_token_registry.rs", "crates/zentty-agent-ipc/tests/helper_cli.rs", "crates/zentty-agent-ipc/tests/unix_transport.rs"],
       "product_scenarios": ["linux/tests/rust-agent-ipc", "linux/tests/installed-codex-integration", "linux/tests/rust-session-restore"],
-      "test_plan": "Run a real terminal child, wrapper or hook, Unix socket, protocol adapter, reducer, and sidebar; control only the external agent response.",
+      "test_plan": "Run real terminal children, staged wrappers/hooks, authenticated Unix sockets, every implemented protocol adapter, the canonical reducer, persisted restore drafts, and sidebar/attention projection; control only the external agent response.",
       "alternative_or_blocker": null
     },
     {
@@ -715,10 +715,10 @@
       "origin": "PORT_PARITY",
       "user_impact": "Claude Code users otherwise lose hook-driven completion and attention state.",
       "linux_owner_issue": 7,
-      "implementation_status": "PARTIAL",
+      "implementation_status": "IMPLEMENTED",
       "focused_tests": ["crates/zentty-core/tests/agent_adapters.rs", "crates/zentty-core/tests/agent_launch.rs", "crates/zentty-agent-ipc/tests/launch_cli.rs"],
       "product_scenarios": ["linux/tests/rust-agent-ipc", "linux/tests/installed-claude-agent-team"],
-      "test_plan": "Exercise the real Claude hook command, session store, Unix IPC, PTY, and sidebar with only the remote model response controlled.",
+      "test_plan": "Exercise the real installed Claude hook command and team lifecycle, session store, Unix IPC, Ghostty PTYs, sidebar, stop-race reconciliation, tmux-compat routing, and validated resume with only the remote model response controlled.",
       "alternative_or_blocker": null
     },
     {
@@ -771,10 +771,10 @@
       "origin": "PORT_PARITY",
       "user_impact": "OpenCode requires terminal/theme coordination in addition to generic agent status.",
       "linux_owner_issue": 7,
-      "implementation_status": "PARTIAL",
+      "implementation_status": "IMPLEMENTED",
       "focused_tests": ["crates/zentty-core/tests/agent_launch.rs", "crates/zentty-agent-ipc/tests/launch_cli.rs"],
       "product_scenarios": ["linux/tests/rust-agent-ipc"],
-      "test_plan": "Keep managed launch, private configuration overlay, session bootstrap, resume, and the staged real-pane journey green; add source-faithful live theme synchronization before marking the complete inventory behavior implemented.",
+      "test_plan": "Keep managed launch, private configuration overlay, authenticated prelaunch/session bootstrap, validated resume, staged real-pane status, settings-controlled terminal-theme synchronization, live theme publication, verified process signaling, and hostile-overlay rejection green.",
       "alternative_or_blocker": null
     },
     {

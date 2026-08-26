@@ -60,8 +60,8 @@ jq -e '
     .result == "PASS" and
     .entry_count == 60 and
     .classifications.REQUIRED_INITIAL_RELEASE == 34 and
-    .implementation_statuses.IMPLEMENTED == 38 and
-    .implementation_statuses.PARTIAL == 11 and
+    .implementation_statuses.IMPLEMENTED == 47 and
+    .implementation_statuses.PARTIAL == 2 and
     .implementation_statuses.NOT_IMPLEMENTED == 11 and
     .evidence.app_commands == 70 and
     .evidence.pane_commands == 33 and
@@ -72,6 +72,34 @@ jq -e '
 ' "${temp_dir}/summary.json" >/dev/null || {
     cat "${temp_dir}/summary.json" >&2
     echo "feature-inventory-test: machine summary is incomplete or incorrect" >&2
+    exit 1
+}
+jq -e '
+    . as $inventory |
+    [
+        "pane.drag-drop",
+        "pane.search",
+        "terminal.ghostty-fidelity-resources",
+        "workspace.multiwindow-live-handoff",
+        "utilities.task-manager",
+        "agents.shared-consent-bootstrap",
+        "agents.shared-ipc-status-attention",
+        "agent.claude-code",
+        "agent.opencode"
+    ] as $reconciled |
+    all($reconciled[]; . as $id |
+        ([$inventory.entries[] | select(.id == $id and .implementation_status == "IMPLEMENTED")] | length) == 1) and
+    (.entries[] | select(.id == "terminal.ghostty-fidelity-resources") |
+        (.behavior | contains("performance diagnostics") | not) and
+        (.test_plan | contains("diagnostics.task-terminal-performance"))) and
+    (.entries[] | select(.id == "utilities.task-manager") |
+        (.behavior | contains("network usage") | not) and
+        .linux_owner_issue == 65 and
+        (.test_plan | contains("issue #65"))) and
+    (.entries[] | select(.id == "commands.palette-routing") |
+        .implementation_status == "PARTIAL")
+' "${source_inventory}" >/dev/null || {
+    echo "feature-inventory-test: readiness reconciliation evidence regressed" >&2
     exit 1
 }
 jq -e '
