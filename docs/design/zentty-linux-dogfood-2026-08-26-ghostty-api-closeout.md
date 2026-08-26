@@ -471,3 +471,13 @@ root-child co-occurrence. Only the single/X11 minima and evidence narratives
 changed; no suppression pattern changed. Governance and its complete negative
 suite pass. Debug remains **PASS with reviewed suppressions**; ReleaseSafe
 remains XFAIL.
+
+A manual concurrent package replay was invoked before refreshing the qualified
+source fixture and outside the matrix's exported Cargo/Rustup cache contract.
+It therefore checked out the prior `7cfd4a4a` source, completed the fresh-cache
+Ghostty compilation, then failed the Cargo publication-age audit because the
+private HOME had no unique sparse-index cache; its peer correctly timed out
+waiting for that failed primary. This replay validates that prepared Zig
+packages now reach the detached builder, but it is not a qualification receipt.
+The matrix owns source-fixture refresh and exports the pinned Cargo/Rustup/index
+inputs before entering the same isolated-session wrapper.
