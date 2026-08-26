@@ -481,3 +481,30 @@ waiting for that failed primary. This replay validates that prepared Zig
 packages now reach the detached builder, but it is not a qualification receipt.
 The matrix owns source-fixture refresh and exports the pinned Cargo/Rustup/index
 inputs before entering the same isolated-session wrapper.
+
+## Eighth matrix receipt: all presently executable cells pass
+
+The complete matrix at Zentty `4843cb44dc299dc4cc5b45d9d295c9fc34343701`
+finished in 885,840 ms. Results were 201 PASS, zero FAIL, zero BLOCKED, two
+tracked XFAIL, and two declared NOT_IMPLEMENTED. Every support contract and
+every presently executable product/dependency cell passed, including:
+
+- the 507,210 ms complete current-Ghostty regression;
+- normal and real Docker-backed X11 development-server visuals at exact
+  zero-pixel tolerance;
+- the real lifecycle package build plus 533,260 ms disconnected byte-for-byte
+  rebuild;
+- all Debug Valgrind cells **PASS with reviewed suppressions**, paired raw and
+  post-suppression totals, and suppression governance;
+- all six ReleaseSafe API/backend combinations and the focused 13-operation
+  Rust/Ghostty product boundary.
+
+The machine claim is `implemented_local_suite_passed=true` and
+`product_boundary_qualification_passed=true`. It correctly does **not** claim
+release or full Linux qualification: ReleaseSafe Valgrind remains the two
+tracked XFAIL cells, and the task-manager cgroup/network-accounting cells remain
+the two declared NOT_IMPLEMENTED cells. No exhaustive-QA claim is made.
+
+This documentation-only receipt must itself be committed and the exact final
+tip rerun before push, so the closeout does not rely on qualification of a
+different Git identity.
