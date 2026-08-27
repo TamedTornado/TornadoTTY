@@ -76,10 +76,10 @@
       "origin": "PORT_PARITY",
       "user_impact": "Users cannot distinguish concurrent tasks reliably without durable names and color cues.",
       "linux_owner_issue": 120,
-      "implementation_status": "PARTIAL",
-      "focused_tests": ["crates/zentty-core/tests/workspace_state.rs"],
-      "product_scenarios": ["linux/tests/rust-source-ux-x11", "linux/tests/rust-session-restore", "linux/tests/rust-worklane-accessibility"],
-      "test_plan": "Keep the existing real GTK modal Save, Cancel, empty-title, color treatment, persisted recipe, and accessibility journeys green. Add focused catalog coverage and a real menu journey proving that Move Pane destinations use current custom worklane titles, update immediately after rename, disambiguate duplicate titles, and retain stable destination identity.",
+      "implementation_status": "IMPLEMENTED",
+      "focused_tests": ["crates/zentty-core/tests/workspace_state.rs", "crates/zentty-linux/src/sidebar.rs"],
+      "product_scenarios": ["linux/tests/rust-source-ux-x11", "linux/tests/rust-session-restore", "linux/tests/rust-worklane-accessibility", "linux/tests/rust-sidebar-management-x11"],
+      "test_plan": "Keep the existing real GTK modal Save, Cancel, empty-title, color treatment, persisted recipe, and accessibility journeys green. Focused destination-catalog tests prove trimmed custom titles for single- and multi-pane worklanes, blank and untitled pane-label fallbacks, duplicate pane-title counts, color preservation, ordering, and stable destination identity. The controlled X11 journey establishes a title through the authenticated public CLI, reads it back as JSON, locates the rendered title with a real pointer, activates that exact row, and proves the live Ghostty PTY transferred to the named worklane.",
       "alternative_or_blocker": null
     },
     {

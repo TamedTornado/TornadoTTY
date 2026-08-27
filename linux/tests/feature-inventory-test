@@ -60,8 +60,8 @@ jq -e '
     .result == "PASS" and
     .entry_count == 63 and
     .classifications.REQUIRED_INITIAL_RELEASE == 37 and
-    .implementation_statuses.IMPLEMENTED == 45 and
-    .implementation_statuses.PARTIAL == 6 and
+    .implementation_statuses.IMPLEMENTED == 46 and
+    .implementation_statuses.PARTIAL == 5 and
     .implementation_statuses.NOT_IMPLEMENTED == 12 and
     .evidence.app_commands == 70 and
     .evidence.pane_commands == 33 and
@@ -85,7 +85,8 @@ jq -e '
         "agents.shared-consent-bootstrap",
         "agents.shared-ipc-status-attention",
         "agent.claude-code",
-        "agent.opencode"
+        "agent.opencode",
+        "worklane.titles-colors"
     ] as $reconciled |
     all($reconciled[]; . as $id |
         ([$inventory.entries[] | select(.id == $id and .implementation_status == "IMPLEMENTED")] | length) == 1) and

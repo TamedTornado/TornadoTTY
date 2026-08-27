@@ -21,6 +21,7 @@ struct PaneActionSpec {
 struct WorklaneDestination {
     window_id: String,
     worklane_id: String,
+    worklane_title: Option<String>,
     label: String,
     color: Option<zentty_core::WorklaneColor>,
 }
@@ -48,14 +49,24 @@ fn worklane_destinations(
                 .filter_map(|summary| {
                     let primary = summary.pane_rows.first()?;
                     let additional = summary.pane_rows.len() - 1;
-                    Some(WorklaneDestination {
-                        window_id: group.window_id.clone(),
-                        worklane_id: summary.worklane_id.clone(),
-                        label: if additional == 0 {
+                    let worklane_title = summary
+                        .top_label
+                        .as_deref()
+                        .map(str::trim)
+                        .filter(|title| !title.is_empty())
+                        .map(str::to_owned);
+                    let label = worklane_title.clone().unwrap_or_else(|| {
+                        if additional == 0 {
                             primary.primary_text.clone()
                         } else {
                             format!("{}  +{} more", primary.primary_text, additional)
-                        },
+                        }
+                    });
+                    Some(WorklaneDestination {
+                        window_id: group.window_id.clone(),
+                        worklane_id: summary.worklane_id.clone(),
+                        worklane_title,
+                        label,
                         color: summary.color,
                     })
                 })
@@ -1651,24 +1662,7 @@ fn make_move_to_worklane_content(
             let pane_id = pane_id.to_owned();
             let target_window_id = destination.window_id.clone();
             let target_worklane_id = destination.worklane_id.clone();
-            let pointer_receipt = gtk::EventControllerMotion::new();
-            let pointer_window = target_window_id.clone();
-            let pointer_target = target_worklane_id.clone();
-            pointer_receipt.connect_enter(move |_, _, _| {
-                eprintln!(
-                    "zentty-linux: pane-context-pointer action=move-pane-to-worklane window={pointer_window} target={pointer_target}"
-                );
-            });
-            button.add_controller(pointer_receipt);
-            let focus_window = target_window_id.clone();
-            let focus_target = target_worklane_id.clone();
-            button.connect_has_focus_notify(move |button| {
-                if button.has_focus() {
-                    eprintln!(
-                        "zentty-linux: pane-context-focus action=move-pane-to-worklane window={focus_window} target={focus_target}"
-                    );
-                }
-            });
+            install_destination_receipts(&button, destination);
             let destination_popover = parent_popover.clone();
             let current_window_id = current_window_id.to_owned();
             button.connect_clicked(move |_| {
@@ -1731,6 +1725,35 @@ fn make_move_to_worklane_content(
         menu.append(&button);
     }
     menu
+}
+
+fn install_destination_receipts(button: &gtk::Button, destination: &WorklaneDestination) {
+    let pointer_receipt = gtk::EventControllerMotion::new();
+    let pointer_window = destination.window_id.clone();
+    let pointer_target = destination.worklane_id.clone();
+    let pointer_label = destination.label.clone();
+    pointer_receipt.connect_enter(move |_, _, _| {
+        eprintln!(
+            "zentty-linux: pane-context-pointer action=move-pane-to-worklane window={pointer_window} target={pointer_target}"
+        );
+        eprintln!(
+            "zentty-linux: pane-context-destination-label window={pointer_window} target={pointer_target} label={pointer_label:?}"
+        );
+    });
+    button.add_controller(pointer_receipt);
+    let focus_window = destination.window_id.clone();
+    let focus_target = destination.worklane_id.clone();
+    let focus_label = destination.label.clone();
+    button.connect_has_focus_notify(move |button| {
+        if button.has_focus() {
+            eprintln!(
+                "zentty-linux: pane-context-focus action=move-pane-to-worklane window={focus_window} target={focus_target}"
+            );
+            eprintln!(
+                "zentty-linux: pane-context-destination-focus-label window={focus_window} target={focus_target} label={focus_label:?}"
+            );
+        }
+    });
 }
 
 fn make_context_menu(
@@ -1983,6 +2006,17 @@ mod tests {
         }
     }
 
+    fn named_lane(
+        id: &str,
+        title: Option<&str>,
+        panes: &[&str],
+        color: Option<WorklaneColor>,
+    ) -> SidebarWorklaneSummary {
+        let mut summary = lane(id, panes, color);
+        summary.top_label = title.map(str::to_owned);
+        summary
+    }
+
     #[test]
     fn move_destination_catalog_matches_source_order_labels_and_exclusion() {
         let summaries = [
@@ -2027,6 +2061,54 @@ mod tests {
         );
         assert_eq!(destinations[0][0].label, "server");
         assert_eq!(destinations[0][1].label, "agent  +1 more");
+    }
+
+    #[test]
+    fn named_move_destinations_prefer_trimmed_worklane_titles() {
+        let summaries = [
+            lane("source", &["source"], None),
+            named_lane("single", Some("  Release  "), &["shell"], None),
+            named_lane(
+                "multi",
+                Some("Platform"),
+                &["agent", "logs", "shell"],
+                Some(WorklaneColor::Green),
+            ),
+        ];
+        let destinations = worklane_destinations(
+            &local_destination_groups("window-1", &summaries),
+            "window-1",
+            "source",
+        );
+        assert_eq!(destinations[0][0].label, "Release");
+        assert_eq!(
+            destinations[0][0].worklane_title.as_deref(),
+            Some("Release")
+        );
+        assert_eq!(destinations[0][1].label, "Platform");
+        assert_eq!(
+            destinations[0][1].worklane_title.as_deref(),
+            Some("Platform")
+        );
+        assert_eq!(destinations[0][1].color, Some(WorklaneColor::Green));
+    }
+
+    #[test]
+    fn blank_and_untitled_destinations_keep_pane_fallbacks() {
+        let summaries = [
+            lane("source", &["source"], None),
+            named_lane("blank", Some("  \t "), &["server", "server"], None),
+            named_lane("untitled", None, &["agent", "agent", "agent"], None),
+        ];
+        let destinations = worklane_destinations(
+            &local_destination_groups("window-1", &summaries),
+            "window-1",
+            "source",
+        );
+        assert_eq!(destinations[0][0].label, "server  +1 more");
+        assert_eq!(destinations[0][0].worklane_title, None);
+        assert_eq!(destinations[0][1].label, "agent  +2 more");
+        assert_eq!(destinations[0][1].worklane_title, None);
     }
 
     #[test]

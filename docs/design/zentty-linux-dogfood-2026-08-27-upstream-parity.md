@@ -247,3 +247,36 @@ with real GTK Settings, confirmation, normalized XDG persistence, restart,
 physical Ctrl+Shift+O input, Zentty action routing, and a new real Ghostty
 surface/PTY. The installed dogfood application was not replaced or restarted;
 operator review remains part of a later explicit batch QA stop.
+
+## GH-120 named Move Pane destinations
+
+Upstream commit `4b70b32f` changed Move Pane destination rows to prefer the
+worklane's stable custom title over a mutable pane title. The Linux destination
+catalog now carries a trimmed optional worklane title and renders it for both
+single- and multi-pane destinations. Blank or absent titles retain the existing
+pane-label fallback and `+N more` count; ordering, color, identity, exclusion of
+the source worklane, and activation routing are unchanged.
+
+The focused test was written first and failed with `shell` where `Release` was
+expected. New cases cover trimmed titles, single and multiple panes, blank and
+untitled worklanes, duplicate pane titles, fallback counts, and color retention.
+Clippy then rejected the enlarged GTK menu builder, so pointer/focus receipts
+were extracted into one focused helper rather than suppressing the lint or
+creating another menu implementation.
+
+The real journey exposed two test-design defects. First, unauthenticated
+instance discovery correctly refused a mutating rename; the setup now obtains
+the product-issued pane capability from the staged CLI and performs the rename
+inside that pane-scoped environment. Second, waiting for a guessed diagnostic
+log line was brittle even though the topology had changed. The journey now
+reads the public `list worklanes --json` result through the same capability and
+requires `worklane-2` to report `Backend Services` before exercising the UI.
+
+Focused Rust tests, changed-file rustfmt, package Clippy with warnings denied,
+and ShellCheck with sourced helpers pass. The existing controlled nested-X11
+sidebar-management journey passes with nine real Ghostty PTYs: it reads the
+rendered `Backend Services` destination using a real pointer, activates that
+exact row, and proves the live source PTY moved to the stable destination ID.
+Feature inventory after reconciliation: 63 entries, 46 IMPLEMENTED, 5 PARTIAL,
+and 12 NOT_IMPLEMENTED. The installed dogfood application was not replaced or
+restarted; this feature remains queued for the next explicit batch QA stop.
