@@ -392,7 +392,10 @@ totals="$(jq -c '
     reduce .entries[] as $entry ({}; .[$entry.classification] += 1)
 ' "${inventory}")"
 implementation_totals="$(jq -c '
-    reduce .entries[] as $entry ({}; .[$entry.implementation_status] += 1)
+    reduce .entries[] as $entry (
+        {IMPLEMENTED: 0, PARTIAL: 0, NOT_IMPLEMENTED: 0};
+        .[$entry.implementation_status] += 1
+    )
 ' "${inventory}")"
 category_totals="$(jq -c '
     reduce .entries[] as $entry ({}; .[$entry.category] += 1)

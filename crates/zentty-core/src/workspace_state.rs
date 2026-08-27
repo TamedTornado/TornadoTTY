@@ -2940,8 +2940,7 @@ impl WorkspaceState {
     /// are no-ops.
     pub fn reconcile_terminal_title(&mut self, pane_id: &str, title: &str, now: u64) -> bool {
         self.agent_statuses
-            .clear_codex_after_shell_return(pane_id, title)
-            || self.agent_statuses.apply_codex_title(pane_id, title, now)
+            .apply_terminal_title(pane_id, title, now)
     }
 
     /// Reconciles one real Ghostty OSC 9;4 progress report into the canonical

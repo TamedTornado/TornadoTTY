@@ -1013,6 +1013,153 @@ fn codex_osc_progress_resumes_idle_without_overriding_attention_or_interrupts() 
 }
 
 #[test]
+fn copilot_osc_progress_promotes_only_existing_idle_without_erasing_identity_or_attention() {
+    let mut store = AgentStatusStore::default();
+    store.apply(
+        event_for(
+            "pane-a",
+            br#"{"version":1,"event":"agent.idle","agent":{"name":"Copilot","pid":4545},"session":{"id":"copilot-progress"},"context":{"workingDirectory":"/tmp"}}"#,
+        ),
+        1_000,
+    );
+    let before = store.status_for_pane("pane-a").unwrap().clone();
+
+    assert!(store.apply_terminal_progress("pane-a", TerminalProgressState::Indeterminate, 1_100,));
+    let running = store.status_for_pane("pane-a").unwrap();
+    assert_eq!(running.phase, AgentPhase::Running);
+    assert_eq!(running.session_id, before.session_id);
+    assert_eq!(running.tracked_pid, before.tracked_pid);
+    assert_eq!(running.working_directory, before.working_directory);
+    assert_eq!(running.signal_origin, before.signal_origin);
+    assert_eq!(running.signal_confidence, before.signal_confidence);
+
+    store.apply(
+        event_for(
+            "pane-a",
+            br#"{"version":1,"event":"agent.needs-input","agent":{"name":"Copilot"},"session":{"id":"copilot-progress"},"state":{"text":"Approve?","interaction":{"kind":"approval"}}}"#,
+        ),
+        1_200,
+    );
+    assert!(!store.apply_terminal_progress("pane-a", TerminalProgressState::Set, 1_300));
+    let attention = store.status_for_pane("pane-a").unwrap();
+    assert_eq!(attention.phase, AgentPhase::NeedsInput);
+    assert_eq!(attention.interaction, AgentInteractionKind::Approval);
+    assert_eq!(attention.text.as_deref(), Some("Approve?"));
+
+    let mut absent = AgentStatusStore::default();
+    assert!(
+        !absent.apply_terminal_progress("pane-a", TerminalProgressState::Indeterminate, 2_000,)
+    );
+    assert!(absent.status_for_pane("pane-a").is_none());
+}
+
+#[test]
+fn copilot_question_titles_are_tokenized_tool_scoped_and_override_stale_phases() {
+    for title in [
+        "Asking user",
+        " awaiting approval ",
+        "WAITING...",
+        "Requesting input",
+        "Prompting for choice",
+        "Confirming change",
+        "Needing guidance",
+        "Copilot has a QUESTION!",
+    ] {
+        let mut store = AgentStatusStore::default();
+        store.apply(
+            event_for(
+                "pane-a",
+                br#"{"version":1,"event":"agent.failed","agent":{"name":"Copilot"},"session":{"id":"copilot-title"},"state":{"text":"stale failure"}}"#,
+            ),
+            1_000,
+        );
+        assert!(
+            store.apply_terminal_title("pane-a", title, 1_100),
+            "{title}"
+        );
+        let status = store.status_for_pane("pane-a").unwrap();
+        assert_eq!(status.phase, AgentPhase::NeedsInput, "{title}");
+        assert_eq!(
+            status.interaction,
+            AgentInteractionKind::Question,
+            "{title}"
+        );
+        assert_eq!(status.text, None, "{title}");
+    }
+
+    for title in [
+        "Analyzing codebase",
+        "questionnaire results",
+        "requestingness",
+        "No questions here",
+    ] {
+        let mut store = AgentStatusStore::default();
+        store.apply(
+            event_for(
+                "pane-a",
+                br#"{"version":1,"event":"agent.idle","agent":{"name":"Copilot"},"session":{"id":"copilot-negative"}}"#,
+            ),
+            2_000,
+        );
+        assert!(
+            !store.apply_terminal_title("pane-a", title, 2_100),
+            "{title}"
+        );
+        assert_eq!(
+            store.status_for_pane("pane-a").unwrap().phase,
+            AgentPhase::Idle,
+            "{title}"
+        );
+    }
+
+    let mut shell = AgentStatusStore::default();
+    shell.apply(
+        event_for(
+            "pane-a",
+            br#"{"version":1,"event":"agent.idle","agent":{"name":"Shell"},"session":{"id":"shell"}}"#,
+        ),
+        3_000,
+    );
+    assert!(!shell.apply_terminal_title("pane-a", "Asking the oracle", 3_100));
+    assert_eq!(
+        shell.status_for_pane("pane-a").unwrap().phase,
+        AgentPhase::Idle
+    );
+
+    let mut absent = AgentStatusStore::default();
+    assert!(!absent.apply_terminal_title("pane-a", "Asking user", 4_000));
+    assert!(absent.status_for_pane("pane-a").is_none());
+}
+
+#[test]
+fn copilot_question_title_beats_osc_and_preserves_durable_identity() {
+    let mut store = AgentStatusStore::default();
+    store.apply(
+        event_for(
+            "pane-a",
+            br#"{"version":1,"event":"agent.idle","agent":{"name":"Copilot","pid":4545},"session":{"id":"copilot-precedence"},"context":{"workingDirectory":"/tmp"}}"#,
+        ),
+        1_000,
+    );
+    assert!(store.apply_terminal_progress("pane-a", TerminalProgressState::Set, 1_100));
+    assert!(store.apply_terminal_title("pane-a", "Asking question", 1_200));
+    let attention = store.status_for_pane("pane-a").unwrap().clone();
+    assert_eq!(attention.phase, AgentPhase::NeedsInput);
+    assert_eq!(attention.interaction, AgentInteractionKind::Question);
+    assert_eq!(attention.session_id, "copilot-precedence");
+    assert_eq!(attention.tracked_pid, Some(4545));
+    assert_eq!(attention.working_directory.as_deref(), Some("/tmp"));
+
+    assert!(!store.apply_terminal_title("pane-a", "Asking question", 1_250));
+    assert_eq!(store.status_for_pane("pane-a").unwrap(), &attention);
+
+    assert!(!store.apply_terminal_progress("pane-a", TerminalProgressState::Pause, 1_300));
+    assert_eq!(store.status_for_pane("pane-a").unwrap(), &attention);
+    assert!(!store.apply_terminal_progress("pane-a", TerminalProgressState::Remove, 1_400));
+    assert_eq!(store.status_for_pane("pane-a").unwrap(), &attention);
+}
+
+#[test]
 fn sessionless_codex_completion_reconciles_the_existing_pane_session() {
     let mut store = AgentStatusStore::default();
     store.apply(

@@ -77,8 +77,8 @@ cleanup() {
 trap cleanup EXIT
 
 case "${scenario}" in
-    full | installed-gemini) ;;
-    *) fail "ZENTTY_AGENT_IPC_SCENARIO must be full or installed-gemini" ;;
+    full | installed-gemini | copilot-presentation) ;;
+    *) fail "ZENTTY_AGENT_IPC_SCENARIO must be full, installed-gemini, or copilot-presentation" ;;
 esac
 
 case "${backend}" in
@@ -158,6 +158,7 @@ fake_bin="$(mktemp -d)"
 ln -s "${actor}" "${fake_bin}/codex"
 ln -s "${actor}" "${fake_bin}/claude"
 ln -s "${actor}" "${fake_bin}/gemini"
+ln -s "${actor}" "${fake_bin}/plain-title"
 for binary in copilot opencode pi omp small-harness cursor-agent droid kimi grok agy hermes vibe; do
     ln -s "${actor}" "${fake_bin}/${binary}"
 done
@@ -504,6 +505,73 @@ run_codex_osc_progress() {
     private_home=""
 }
 
+run_copilot_presentation() {
+    log="$(mktemp)"
+    state_directory="$(mktemp -d)"
+    private_home="$(mktemp -d)"
+    PATH="${fake_bin}:${PATH}" GDK_SCALE=1 GDK_DPI_SCALE=1 \
+        HOME="${private_home}" \
+        ZENTTY_CONTROLLED_AGENT_PROFILE=copilot-presentation \
+        "${product}" \
+        --command copilot \
+        --state-directory "${state_directory}" \
+        --no-session-restore >"${log}" 2>&1 &
+    product_pid=$!
+
+    zentty_product_wait_for_log "${log}" \
+        'kind=agent.idle session=copilot-presentation-e2e' \
+        "Copilot presentation profile did not establish authenticated idle state"
+    zentty_product_wait_for_log "${log}" \
+        'zentty-linux: terminal-progress pane=pane-1 state=indeterminate progress=none' \
+        "real Copilot OSC 9;4 progress did not cross the Ghostty embedding boundary"
+    zentty_product_wait_for_log "${log}" \
+        'sidebar-agent-status pane=pane-1 phase=Running interaction=None attention=false' \
+        "Copilot OSC activity did not promote canonical idle state to running"
+    zentty_product_wait_for_log "${log}" \
+        'zentty-linux: title-pane=pane-1 value=Asking user question' \
+        "real Copilot question title did not cross the Ghostty embedding boundary"
+    zentty_product_wait_for_log "${log}" \
+        'sidebar-agent-status pane=pane-1 phase=NeedsInput interaction=Question attention=true' \
+        "Copilot question title did not establish canonical question attention"
+    for _ in {1..200}; do
+        [[ "$(grep -Fc 'zentty-linux: terminal-progress pane=pane-1 state=indeterminate progress=none' "${log}" || true)" -ge 2 ]] && break
+        sleep 0.05
+    done
+    [[ "$(grep -Fc 'zentty-linux: terminal-progress pane=pane-1 state=indeterminate progress=none' "${log}" || true)" -ge 2 ]] ||
+        fail "Copilot did not emit OSC activity after title-derived attention"
+    [[ "$(grep -F 'sidebar-agent-status pane=pane-1 phase=' "${log}" | tail -1)" == *'phase=NeedsInput interaction=Question attention=true'* ]] ||
+        fail "late Copilot OSC activity overrode title-derived question attention"
+
+    wait_for_product "Copilot presentation product run" 200
+    rm -f -- "${log}"
+    rm -rf -- "${state_directory}" "${private_home}"
+    log=""
+    state_directory=""
+    private_home=""
+
+    log="$(mktemp)"
+    state_directory="$(mktemp -d)"
+    PATH="${fake_bin}:${PATH}" GDK_SCALE=1 GDK_DPI_SCALE=1 \
+        ZENTTY_CONTROLLED_AGENT_PROFILE=copilot-title-negative \
+        "${product}" \
+        --command plain-title \
+        --state-directory "${state_directory}" \
+        --no-session-restore >"${log}" 2>&1 &
+    product_pid=$!
+
+    zentty_product_wait_for_log "${log}" \
+        'zentty-linux: title-pane=pane-1 value=Asking the oracle' \
+        "non-Copilot negative title did not cross the real Ghostty boundary"
+    wait_for_product "non-Copilot title control" 200
+    if grep -Fq 'sidebar-agent-status pane=pane-1 phase=NeedsInput' "${log}"; then
+        fail "question-like title created attention without Copilot identity"
+    fi
+    rm -f -- "${log}"
+    rm -rf -- "${state_directory}"
+    log=""
+    state_directory=""
+}
+
 run_gemini_terminal_notifications() {
     log="$(mktemp)"
     state_directory="$(mktemp -d)"
@@ -558,6 +626,7 @@ run_adapter \
     'zentty-linux: sidebar-agent-status pane=pane-1 phase=NeedsInput interaction=GenericInput attention=true'
 run_codex_title_transcript_enrichment
 run_codex_osc_progress
+run_copilot_presentation
 run_agent_status_lifecycle
 case "${ZENTTY_RUN_CODEX_LIFECYCLE:-false}" in
     true)
@@ -651,6 +720,10 @@ run_adapter \
     vibe-adapter \
     'zentty-linux: sidebar-agent-status pane=pane-1 phase=NeedsInput interaction=Question attention=true' \
     'Choose the Vibe path?'
+fi
+
+if [[ "${scenario}" == copilot-presentation ]]; then
+    run_copilot_presentation
 fi
 
 if [[ "${ZENTTY_REQUIRE_REAL_GEMINI:-false}" == true ]]; then
@@ -808,6 +881,8 @@ fi
 
 if [[ "${scenario}" == full ]]; then
     adapters="codex+codex-notify+claude+copilot+opencode+pi+omp+small-harness+gemini+cursor+droid+kimi+grok+agy+hermes+vibe"
+elif [[ "${scenario}" == copilot-presentation ]]; then
+    adapters="copilot-presentation"
 else
     adapters="not-run-in-installed-gemini-scenario"
 fi

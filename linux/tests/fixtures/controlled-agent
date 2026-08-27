@@ -270,6 +270,26 @@ case "${profile}" in
             '{"session_id":"123e4567-e89b-12d3-a456-426614174000","toolName":"AskUserQuestion","toolArgs":"{\"question\":\"Choose the Copilot path?\"}"}' |
             "${helper}" ipc agent-event --adapter=copilot pre-tool-use
         ;;
+    copilot-presentation)
+        require_helper
+        [[ -f "${COPILOT_HOME:-}/config.json" ]] ||
+            fail "Copilot config overlay is missing"
+        grep -Fq -- '--adapter=copilot' "${COPILOT_HOME}/config.json" ||
+            fail "Copilot hook command is missing"
+        printf '%s' \
+            '{"session_id":"copilot-presentation-e2e","cwd":"/tmp"}' |
+            "${helper}" ipc agent-event --adapter=copilot session-start
+        printf '\033]9;4;3\007'
+        sleep 0.2
+        printf '\033]2;Asking user question\007'
+        sleep 0.2
+        printf '\033]9;4;3\007'
+        sleep 0.2
+        ;;
+    copilot-title-negative)
+        printf '\033]2;Asking the oracle\007\033]9;4;3\007'
+        sleep 0.2
+        ;;
     managed-prelaunch)
         sleep 0.3
         ;;

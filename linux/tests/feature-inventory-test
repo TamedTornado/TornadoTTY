@@ -60,8 +60,8 @@ jq -e '
     .result == "PASS" and
     .entry_count == 63 and
     .classifications.REQUIRED_INITIAL_RELEASE == 37 and
-    .implementation_statuses.IMPLEMENTED == 51 and
-    .implementation_statuses.PARTIAL == 1 and
+    .implementation_statuses.IMPLEMENTED == 52 and
+    .implementation_statuses.PARTIAL == 0 and
     .implementation_statuses.NOT_IMPLEMENTED == 11 and
     .evidence.app_commands == 70 and
     .evidence.pane_commands == 33 and
@@ -102,7 +102,12 @@ jq -e '
     (.entries[] | select(.id == "commands.palette-routing") |
         .implementation_status == "IMPLEMENTED" and
         (.focused_tests | index("crates/zentty-linux/src/application_shell/action_router.rs")) != null and
-        (.test_plan | contains("live-disabled action cannot execute")))
+        (.test_plan | contains("live-disabled action cannot execute"))) and
+    (.entries[] | select(.id == "agent.copilot") |
+        .linux_owner_issue == 126 and
+        .implementation_status == "IMPLEMENTED" and
+        (.focused_tests | index("crates/zentty-core/tests/agent_status.rs")) != null and
+        (.test_plan | contains("non-Copilot real-pane negative control")))
 ' "${source_inventory}" >/dev/null || {
     echo "feature-inventory-test: readiness reconciliation evidence regressed" >&2
     exit 1

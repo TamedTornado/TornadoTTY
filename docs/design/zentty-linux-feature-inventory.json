@@ -857,12 +857,12 @@
       "swift_tests": ["ZenttyLogicTests/AgentStatusSupportTests.swift"],
       "classification": "REQUIRED_LATER",
       "origin": "PORT_PARITY",
-      "user_impact": "Copilot remains usable, but its explicit progress and needs-input presentation is deferred.",
-      "linux_owner_issue": 7,
-      "implementation_status": "PARTIAL",
-      "focused_tests": ["crates/zentty-core/tests/agent_adapters.rs", "crates/zentty-core/tests/agent_launch.rs", "crates/zentty-agent-ipc/tests/launch_cli.rs"],
+      "user_impact": "Copilot activity and questions remain visible even when hook state lags the terminal's real OSC progress and title signals.",
+      "linux_owner_issue": 126,
+      "implementation_status": "IMPLEMENTED",
+      "focused_tests": ["crates/zentty-core/tests/agent_status.rs", "crates/zentty-core/tests/agent_adapters.rs", "crates/zentty-core/tests/agent_launch.rs", "crates/zentty-agent-ipc/tests/launch_cli.rs"],
       "product_scenarios": ["linux/tests/rust-agent-ipc"],
-      "test_plan": "Keep the private hook overlay, source event adapter, resume command, and staged real-pane journey green; add the source OSC progress and title-needs-input presentation reducers before marking the complete inventory behavior implemented.",
+      "test_plan": "Canonical-store tests cover tool-scoped title tokenization, OSC promotion, attention precedence, no session invention, and durable identity preservation. The existing rust-agent-ipc actor runs the managed Copilot wrapper and authenticated session hook in a real staged Ghostty PTY, then drives real OSC 9;4 and title callbacks through Running and NeedsInput/Question, proves late OSC cannot override attention, and uses a non-Copilot real-pane negative control.",
       "alternative_or_blocker": null
     },
     {

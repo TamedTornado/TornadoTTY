@@ -251,8 +251,9 @@ impl AgentStatusStore {
 
     /// Reconciles Ghostty's OSC 9;4 activity report without treating its
     /// optional percentage as task completion. Explicit attention remains
-    /// authoritative. An interrupted pane has no Codex status to promote, so
-    /// an unauthenticated progress report cannot recreate its session.
+    /// authoritative. A pane without an existing Codex or Copilot status has
+    /// no session to promote, so an unauthenticated progress report cannot
+    /// create one.
     pub fn apply_terminal_progress(
         &mut self,
         pane_id: &str,
@@ -265,7 +266,10 @@ impl AgentStatusStore {
         let Some(status) = self.panes.get_mut(pane_id).and_then(|sessions| {
             sessions
                 .values_mut()
-                .filter(|status| status.agent_name.eq_ignore_ascii_case("codex"))
+                .filter(|status| {
+                    status.agent_name.eq_ignore_ascii_case("codex")
+                        || is_copilot_agent_name(&status.agent_name)
+                })
                 .max_by_key(|status| (status_priority(status), status.updated_at))
         }) else {
             return false;
@@ -280,17 +284,66 @@ impl AgentStatusStore {
             status.text = None;
             status.updated_at = now;
         }
+        let is_codex = status.agent_name.eq_ignore_ascii_case("codex");
         let lifecycle = self
             .session_bookkeeping
             .entry(SessionKey::new(pane_id, &status.session_id))
             .or_default();
-        lifecycle.codex_title_ownership = CodexTitleOwnership::Explicit;
-        lifecycle.codex_idle_suppression_until = None;
+        if is_codex {
+            lifecycle.codex_title_ownership = CodexTitleOwnership::Explicit;
+            lifecycle.codex_idle_suppression_until = None;
+        }
         lifecycle.observed_running = true;
         let candidate_cancelled = lifecycle.completion_candidate_deadline.take().is_some();
         lifecycle.idle_visible_until = None;
         lifecycle.unresolved_stop_visible_until = None;
         visible_changed || candidate_cancelled
+    }
+
+    /// Applies terminal-title presentation rules through the canonical agent
+    /// store. Copilot question titles can update only an existing recognized
+    /// Copilot session; title text alone never creates agent state.
+    pub fn apply_terminal_title(&mut self, pane_id: &str, title: &str, now: u64) -> bool {
+        if let Some(changed) = self.apply_copilot_question_title(pane_id, title, now) {
+            return changed;
+        }
+        self.clear_codex_after_shell_return(pane_id, title)
+            || self.apply_codex_title(pane_id, title, now)
+    }
+
+    fn apply_copilot_question_title(
+        &mut self,
+        pane_id: &str,
+        title: &str,
+        now: u64,
+    ) -> Option<bool> {
+        if !copilot_title_indicates_needs_input(title) {
+            return None;
+        }
+        let status = self.panes.get_mut(pane_id).and_then(|sessions| {
+            sessions
+                .values_mut()
+                .filter(|status| is_copilot_agent_name(&status.agent_name))
+                .max_by_key(|status| (status_priority(status), status.updated_at))
+        })?;
+        let changed = status.phase != AgentPhase::NeedsInput
+            || status.interaction != AgentInteractionKind::Question
+            || status.text.is_some();
+        if !changed {
+            return Some(false);
+        }
+        status.phase = AgentPhase::NeedsInput;
+        status.interaction = AgentInteractionKind::Question;
+        status.text = None;
+        status.updated_at = now;
+        let lifecycle = self
+            .session_bookkeeping
+            .entry(SessionKey::new(pane_id, &status.session_id))
+            .or_default();
+        lifecycle.completion_candidate_deadline = None;
+        lifecycle.idle_visible_until = None;
+        lifecycle.unresolved_stop_visible_until = None;
+        Some(true)
     }
 
     /// Reconciles the two Gemini desktop-notification phrases owned by the
@@ -1245,6 +1298,29 @@ fn is_known_shell_name(value: &str) -> bool {
         basename.as_str(),
         "zsh" | "bash" | "fish" | "sh" | "pwsh" | "nu"
     )
+}
+
+fn copilot_title_indicates_needs_input(title: &str) -> bool {
+    let normalized = title.trim().to_lowercase();
+    let first_word = normalized
+        .chars()
+        .take_while(|character| character.is_alphabetic())
+        .collect::<String>();
+    if matches!(
+        first_word.as_str(),
+        "asking" | "awaiting" | "waiting" | "requesting" | "prompting" | "confirming" | "needing"
+    ) {
+        return true;
+    }
+    normalized
+        .split(|character: char| !character.is_alphabetic())
+        .any(|word| word == "question")
+}
+
+fn is_copilot_agent_name(name: &str) -> bool {
+    name.eq_ignore_ascii_case("copilot")
+        || name.eq_ignore_ascii_case("github copilot")
+        || name.eq_ignore_ascii_case("github copilot cli")
 }
 
 fn update_status_identity(status: &mut PaneAgentStatus, event: &crate::AgentEvent) {
