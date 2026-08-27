@@ -162,3 +162,54 @@ it to accept a no-op.
 
 No operator QA or installed-product deployment was requested for this
 compatibility slice. The ordinary dogfood instance was not restarted.
+
+## GH-118 parent-level JSON for list subcommands
+
+### Source contract and first failure
+
+Upstream commit `089b1f2f` made `--json` inherited by the Swift `list` parent,
+so both `zentty list --json panes` and `zentty list panes --json` are public
+forms. The same ordering applies to `windows` and `worklanes`, and parent
+options must continue to compose with output versions and filters.
+
+The new source fixture was written before the parser repair. It failed with
+`unexpected argument "windows"` for `list --json windows`, proving that the
+Linux parser incorrectly assumed the resource was always the first token.
+
+### Repair and negative coverage
+
+`parse_list` now performs one state-aware scan. It removes exactly one known
+resource while preserving flags and their values in their original order for
+the existing discovery validator. Critically, a value such as `windows` after
+`--window-id` remains a value rather than being mistaken for the resource.
+There is no second parser or compatibility shim.
+
+The focused tests cover both orderings for all three resources, aliases,
+filters, and output version 1. Negative cases reject duplicate JSON and output
+version flags across positions, two resources, unknown resources, misplaced
+values, missing option values, and unsupported output versions. Environmental
+absence was not converted into a pass: the first package-wide sandbox run was
+denied while creating the existing private Unix sockets, and the first nested
+journey was rejected because the headless wrapper cannot provide its required
+physical-input environment. Both were rerun in the required controlled
+environment.
+
+### Receipts and dogfood policy
+
+- Focused parser test first failed, then passed.
+- `cargo test -p zentty-agent-ipc`: PASS, including private discovery sockets,
+  parser, transport, credential, schema, and product-command suites.
+- Focused `rustfmt`, package clippy with warnings denied, and `shellcheck -x`:
+  PASS.
+- `linux/tests/nested-wayland-input linux/tests/rust-cli-contract`: PASS with
+  staged ReleaseSafe Zentty, real Ghostty surfaces and PTYs, the real staged
+  CLI, authenticated socket routing, aliases, schemas, reviewed text output,
+  physical input, and fail-closed negative cases.
+- Feature inventory after reconciliation: 63 entries, 44 IMPLEMENTED,
+  7 PARTIAL, and 12 NOT_IMPLEMENTED.
+
+The installed dogfood product was not replaced or restarted. Operator QA is
+now deliberately periodic and batched: each issue still receives focused
+automated and real-product integration evidence, while visible deployments are
+held for an explicit QA stop so normal dogfooding work is not interrupted after
+every feature.

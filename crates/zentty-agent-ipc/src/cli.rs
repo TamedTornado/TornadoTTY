@@ -124,17 +124,41 @@ fn parse_notify(arguments: &[String]) -> Result<Option<CliProductCommand>, Produ
 }
 
 fn parse_list(arguments: &[String]) -> Result<Option<CliProductCommand>, ProductIpcError> {
-    let (subcommand, rest) = match arguments.first().map(String::as_str) {
-        Some("windows") => ("windows", &arguments[1..]),
-        Some("worklanes") => ("worklanes", &arguments[1..]),
-        Some("panes") => ("panes", &arguments[1..]),
-        Some(value) if !value.starts_with('-') => {
-            return invalid(format!("unknown list resource {value:?}"));
+    const VALUE_OPTIONS: &[&str] = &["--window-id", "--worklane-id", "--output-version"];
+    let mut resource = None;
+    let mut options = Vec::with_capacity(arguments.len());
+    let mut index = 0;
+    while index < arguments.len() {
+        let argument = arguments[index].as_str();
+        if VALUE_OPTIONS.contains(&argument) {
+            options.push(arguments[index].clone());
+            if let Some(value) = arguments.get(index + 1) {
+                options.push(value.clone());
+                index += 2;
+            } else {
+                index += 1;
+            }
+            continue;
         }
-        _ => ("overview", arguments),
-    };
-    validate_discovery_options(rest)?;
-    request(ProductIpcKind::Discover, subcommand, rest.to_vec())
+        if matches!(argument, "windows" | "worklanes" | "panes") {
+            if resource.replace(argument).is_some() {
+                return invalid("list accepts exactly one resource");
+            }
+        } else if argument.starts_with('-') {
+            options.push(arguments[index].clone());
+        } else if resource.is_some() {
+            return invalid(format!("unexpected list argument {argument:?}"));
+        } else {
+            return invalid(format!("unknown list resource {argument:?}"));
+        }
+        index += 1;
+    }
+    validate_discovery_options(&options)?;
+    request(
+        ProductIpcKind::Discover,
+        resource.unwrap_or("overview"),
+        options,
+    )
 }
 
 fn parse_window(arguments: &[String]) -> Result<Option<CliProductCommand>, ProductIpcError> {

@@ -16,6 +16,11 @@ fn source_discovery_commands_and_aliases_map_to_one_route() {
             vec!["--json"],
         ),
         (
+            values(&["list", "--json", "windows"]),
+            "windows",
+            vec!["--json"],
+        ),
+        (
             values(&["window", "list", "--json"]),
             "windows",
             vec!["--json"],
@@ -26,6 +31,19 @@ fn source_discovery_commands_and_aliases_map_to_one_route() {
             vec!["--window-id", "window-2"],
         ),
         (
+            values(&[
+                "list",
+                "--json",
+                "--output-version",
+                "1",
+                "worklanes",
+                "--window-id",
+                "window-2",
+            ]),
+            "worklanes",
+            vec!["--json", "--output-version", "1", "--window-id", "window-2"],
+        ),
+        (
             values(&["worklane", "list", "--window-id", "window-2"]),
             "worklanes",
             vec!["--window-id", "window-2"],
@@ -34,6 +52,16 @@ fn source_discovery_commands_and_aliases_map_to_one_route() {
             values(&["list", "panes", "--worklane-id", "lane-2"]),
             "panes",
             vec!["--worklane-id", "lane-2"],
+        ),
+        (
+            values(&["list", "--json", "panes", "--worklane-id", "lane-2"]),
+            "panes",
+            vec!["--json", "--worklane-id", "lane-2"],
+        ),
+        (
+            values(&["list", "--window-id", "windows", "panes"]),
+            "panes",
+            vec!["--window-id", "windows"],
         ),
         (
             values(&["pane", "list", "--worklane-id", "lane-2"]),
@@ -332,6 +360,11 @@ fn parser_rejects_ambiguous_and_invalid_source_invocations() {
         values(&["worklane", "color", "ultraviolet"]),
         values(&["layout", "masonry"]),
         values(&["list", "panes", "--json", "--json"]),
+        values(&["list", "--json", "panes", "--json"]),
+        values(&["list", "--json", "unknown-resource"]),
+        values(&["list", "--json", "panes", "misplaced-value"]),
+        values(&["list", "windows", "panes"]),
+        values(&["list", "--window-id", "--json", "panes"]),
         values(&[
             "list",
             "panes",
@@ -342,6 +375,15 @@ fn parser_rejects_ambiguous_and_invalid_source_invocations() {
         ]),
         values(&["select", "pane", "--pane-index", "1", "--pane-index", "2"]),
         values(&["list", "panes", "--output-version", "2"]),
+        values(&["list", "--output-version", "2", "panes"]),
+        values(&[
+            "list",
+            "--output-version",
+            "1",
+            "panes",
+            "--output-version",
+            "1",
+        ]),
         values(&[
             "pane",
             "close",

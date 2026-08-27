@@ -603,10 +603,10 @@
       "origin": "PORT_PARITY",
       "user_impact": "Scriptable pane-aware control and hooks are advertised product behavior and the transport used by agent integrations, notifications and teams.",
       "linux_owner_issue": 118,
-      "implementation_status": "PARTIAL",
+      "implementation_status": "IMPLEMENTED",
       "focused_tests": ["docs/design/zentty-cli-source-contract.json", "linux/tests/cli-source-contract", "crates/zentty-agent-ipc/tests/product_cli.rs", "crates/zentty-agent-ipc/tests/integration_cli.rs"],
       "product_scenarios": ["linux/tests/rust-cli-contract", "linux/tests/rust-tmux-compat-product", "linux/tests/rust-development-servers", "linux/tests/rust-notifications-settings"],
-      "test_plan": "Maintain exact source-command closure in the machine-readable CLI contract. Invoke the real staged CLI as a subprocess into a running product over the authenticated Unix socket on controlled X11 and Wayland, validate versioned JSON against schemas and text against reviewed goldens, exercise command families/aliases/selectors/errors against real PTYs and windows, and mutation-test parsing/auth/output dispatch. All 40 source command symbols remain represented, but GH-118 must accept and prove the current parent-level `zentty list --json panes` ordering before this returns to IMPLEMENTED. Downstream agent context persistence remains separately explicit in the GH-46 agent-event contract rather than being misclassified as a CLI gap.",
+      "test_plan": "Maintain exact source-command closure in the machine-readable CLI contract. Invoke the real staged CLI as a subprocess into a running product over the authenticated Unix socket on controlled X11 and Wayland, validate versioned JSON against schemas and text against reviewed goldens, exercise command families/aliases/selectors/errors against real PTYs and windows, and mutation-test parsing/auth/output dispatch. All 40 source command symbols remain represented. GH-118 proved equivalent parent- and child-positioned JSON/output-version options for windows, worklanes, and panes, including aliases, filters, duplicate flags, misplaced values, unknown resources, and unsupported versions against the real staged product. Downstream agent context persistence remains separately explicit in the GH-46 agent-event contract rather than being misclassified as a CLI gap.",
       "alternative_or_blocker": null
     },
     {

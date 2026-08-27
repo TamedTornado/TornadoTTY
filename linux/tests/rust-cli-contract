@@ -90,12 +90,15 @@ out="${ZENTTY_CLI_CONTRACT_RECEIPTS}"
 "${cli}" list --json --output-version 1 >"${out}/overview.json"
 "${cli}" list >"${out}/overview.txt"
 "${cli}" list windows --json --output-version 1 >"${out}/windows.json"
+"${cli}" list --json --output-version 1 windows >"${out}/windows-parent-json.json"
 "${cli}" list windows >"${out}/windows.txt"
 "${cli}" window list --json --output-version 1 >"${out}/window-alias.json"
 "${cli}" list worklanes --json --output-version 1 >"${out}/worklanes.json"
+"${cli}" list --json worklanes --output-version 1 >"${out}/worklanes-parent-json.json"
 "${cli}" list worklanes >"${out}/worklanes.txt"
 "${cli}" worklane list --json --output-version 1 >"${out}/worklane-alias.json"
 "${cli}" list panes --json --output-version 1 >"${out}/panes.json"
+"${cli}" list --json panes --output-version 1 >"${out}/panes-parent-json.json"
 "${cli}" list panes --json --include-control-token --output-version 1 >"${out}/panes-authenticated.json"
 ! grep -Fq -- "${ZENTTY_PANE_TOKEN}" "${out}/panes-authenticated.json"
 "${cli}" list panes >"${out}/panes.txt"
@@ -126,12 +129,19 @@ focused_after="$("${cli}" list panes --json | jq -r '.[] | select(.isFocused) | 
 [[ "${focused_after}" == "${focused_before}" ]]
 
 cmp -s "${out}/windows.json" "${out}/window-alias.json"
+cmp -s "${out}/windows.json" "${out}/windows-parent-json.json"
 cmp -s "${out}/worklanes.json" "${out}/worklane-alias.json"
+cmp -s "${out}/worklanes.json" "${out}/worklanes-parent-json.json"
 cmp -s "${out}/panes.json" "${out}/pane-alias.json"
+cmp -s "${out}/panes.json" "${out}/panes-parent-json.json"
 cmp -s "${out}/colors.txt" "${ZENTTY_REPO_ROOT}/docs/design/cli-goldens/colors-v1.txt"
 
 if "${cli}" list panes --json --json >"${out}/duplicate.stdout" 2>"${out}/duplicate.stderr"; then exit 1; fi
+if "${cli}" list --json panes --json >"${out}/parent-duplicate.stdout" 2>"${out}/parent-duplicate.stderr"; then exit 1; fi
+if "${cli}" list --json unknown-resource >"${out}/unknown-list.stdout" 2>"${out}/unknown-list.stderr"; then exit 1; fi
+if "${cli}" list --json panes misplaced-value >"${out}/misplaced-list.stdout" 2>"${out}/misplaced-list.stderr"; then exit 1; fi
 if "${cli}" list panes --output-version 2 >"${out}/version-2.stdout" 2>"${out}/version-2.stderr"; then exit 1; fi
+if "${cli}" list --output-version 2 panes >"${out}/parent-version-2.stdout" 2>"${out}/parent-version-2.stderr"; then exit 1; fi
 if "${cli}" select pane --pane-id stale-explicit-id >"${out}/stale.stdout" 2>"${out}/stale.stderr"; then exit 1; fi
 if "${cli}" select pane --pane-index 1 --pane-index 2 >"${out}/ambiguous.stdout" 2>"${out}/ambiguous.stderr"; then exit 1; fi
 
