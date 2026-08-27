@@ -23,7 +23,7 @@
 > [dedene](https://github.com/dedene/zentty) for macOS. This fork is not an
 > official Linux release from the upstream project.
 
-![Zentty Linux running pane search](assets/zentty-linux-search.png)
+![Zentty for Linux running Codex with worklanes and agent status](assets/zentty-linux-workspace.png)
 
 ## What works
 
