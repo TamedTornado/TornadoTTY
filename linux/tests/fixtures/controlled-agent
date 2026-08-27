@@ -435,6 +435,20 @@ case "${profile}" in
             fail "ZENTTY_CONTROLLED_AGENT_RECEIPT is required"
         printf 'resume:%s pid:%s\n' "${session_id}" "$$" >>"${ZENTTY_CONTROLLED_AGENT_RECEIPT}"
         printf 'cwd:%s value:%s\n' "${session_id}" "${PWD}" >>"${ZENTTY_CONTROLLED_AGENT_RECEIPT}"
+        if [[ -n "${ZENTTY_CONTROLLED_AGENT_FAIL_ONCE_MARKER:-}" &&
+            ! -e "${ZENTTY_CONTROLLED_AGENT_FAIL_ONCE_MARKER}" ]]; then
+            printf 'failed-once:%s pid:%s\n' "${session_id}" "$$" \
+                >>"${ZENTTY_CONTROLLED_AGENT_RECEIPT}"
+            : >"${ZENTTY_CONTROLLED_AGENT_FAIL_ONCE_MARKER}"
+            exit 42
+        fi
+        if [[ "${ZENTTY_CONTROLLED_AGENT_SKIP_AUTH:-false}" == true ]]; then
+            IFS= read -r interaction
+            printf 'interaction:%s value:%s\n' "${session_id}" "${interaction}" \
+                >>"${ZENTTY_CONTROLLED_AGENT_RECEIPT}"
+            sleep "${sleep_seconds}"
+            exit 0
+        fi
         printf '{"hook_event_name":"SessionStart","session_id":"%s"}' "${session_id}" |
             "${helper}" ipc agent-event --adapter=codex session-start
         if [[ "${ZENTTY_CONTROLLED_AGENT_COMPLETE_TASK_SESSION:-}" == "${session_id}" ]]; then

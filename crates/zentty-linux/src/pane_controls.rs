@@ -355,6 +355,12 @@ impl PaneFrame {
         let retry = gtk::Button::with_label("Retry");
         retry.set_widget_name(&format!("pane-restore-retry-{}", self.pane_id));
         retry.add_css_class("suggested-action");
+        let retry_pane = self.pane_id.clone();
+        retry.connect_has_focus_notify(move |button| {
+            if button.has_focus() {
+                eprintln!("zentty-linux: restore-failure pane={retry_pane} focus=retry");
+            }
+        });
         retry.connect_clicked(move |_| on_retry());
         buttons.append(&retry);
         let open_shell = gtk::Button::with_label("Open Shell Instead");
@@ -379,6 +385,7 @@ impl PaneFrame {
 
         self.content.add_named(&panel, Some("restore-failure"));
         self.content.set_visible_child(&panel);
+        retry.grab_focus();
         self.restore_failure.replace(Some(panel));
         eprintln!(
             "zentty-linux: restore-failure pane={} state=shown",

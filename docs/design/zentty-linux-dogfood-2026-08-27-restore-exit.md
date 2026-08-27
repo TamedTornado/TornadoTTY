@@ -1,6 +1,6 @@
 # Zentty Linux dogfood: completed restored-agent exit
 
-Date: 2026-08-27  
+Date: 2026-08-27
 Tracker: GH-114
 
 ## Discovery
@@ -85,3 +85,44 @@ with host-level socket access and passed; the environmental failure was not
 converted into a pass. Package installation and the operator's real Bro
 reproduction remain pending and will be appended. This is focused lifecycle
 evidence, not a claim of broad or full qualification.
+
+## Acceptance-criteria closeout
+
+Tracker reconciliation found that the original focused journey proved only
+authenticated completion and immediate failure. GH-114 also required real
+direct-interaction confirmation and a successful Retry transition, so the
+issue remained open rather than being closed from incomplete evidence.
+
+The established `rust-session-restore` actor now owns both missing scenarios.
+Its controlled Codex child can deliberately omit authentication and wait for
+physical PTY input, or fail exactly its first launch before behaving like the
+ordinary authenticated restore fixture. These are modes of the existing
+external-agent actor, not a new integration layer.
+
+The direct-interaction scenario sends `confirmed-by-user` through the nested
+X11 compositor, Ghostty, and the real PTY. The child receives the exact line;
+Zentty confirms the pending restore from that terminal submission, observes
+the child exit, and mounts a shell in the same pane without recovery UI:
+
+`PASS completed-agent-restore authenticated=false interaction=physical fallback=real-shell recovery=absent topology=preserved`.
+
+The Retry scenario first failed because its test called the generic terminal
+input-preparation helper after the recovery panel had correctly focused
+**Retry**. That helper intentionally returned focus to Ghostty, so Return did
+not activate the button. The actor now establishes compositor input before the
+launch-delayed child fails; the product's real recovery focus handoff then owns
+Return. A second assertion incorrectly expected a `state=cleared` receipt.
+Retry destroys and replaces the failed `PaneFrame`, including its recovery
+widget, so no surviving widget exists to clear. The corrected invariant is
+exactly one recovery presentation followed by a newly authenticated surface,
+normal completion, and same-pane shell fallback:
+
+`PASS retried-agent-restore first=failure retry=physical authenticated=true fallback=real-shell topology=preserved`.
+
+The recovery panel now explicitly focuses **Retry** and emits a focus receipt,
+improving keyboard accessibility while making the real activation boundary
+observable. The two journeys, 12 coordinator tests, ShellCheck, direct
+formatting, strict Linux Clippy, and the staged ReleaseSafe build pass. The
+first sandboxed Xvfb start failed because it could not bind
+`/tmp/.X11-unix`; the unchanged journey passed with approved host socket
+access. No full qualification or installed-product deployment was run.

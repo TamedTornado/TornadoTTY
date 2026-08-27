@@ -14,6 +14,8 @@ product_pid=""
 agent_start_delay=0
 agent_profile=codex-restore
 agent_sleep_seconds=30
+agent_fail_once_marker=""
+agent_skip_auth=false
 agent_start_receipt=""
 drag_source_pid=""
 drag_receipt=""
@@ -192,6 +194,8 @@ start_product() {
         ZENTTY_CONTROLLED_AGENT_START_DELAY_SECONDS="${agent_start_delay}" \
         ZENTTY_CONTROLLED_AGENT_START_RECEIPT="${agent_start_receipt}" \
         ZENTTY_CONTROLLED_AGENT_SLEEP_SECONDS="${agent_sleep_seconds}" \
+        ZENTTY_CONTROLLED_AGENT_FAIL_ONCE_MARKER="${agent_fail_once_marker}" \
+        ZENTTY_CONTROLLED_AGENT_SKIP_AUTH="${agent_skip_auth}" \
         GSK_RENDERER=cairo \
         LD_LIBRARY_PATH="${bundle_lib}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" \
         "${product}" --state-directory "${state_dir}" "${product_args[@]}" >"${log}" 2>&1 &
@@ -316,25 +320,27 @@ verify_remote_file_drop() {
     sleep 0.1
 }
 
-if [[ "${ZENTTY_COMPLETED_RESTORE_ONLY:-false}" == true ]]; then
-    agent_sleep_seconds=0.2
+focus_single_restored_agent() {
     jq '
         .workspace.windows[0].activeWorklaneID = "worklane-second-agent" |
         .restoreDraftWindows[0].paneDrafts |= map(select(.paneID == "pane-agent-two"))
     ' "${state_dir}/restore-snapshot.json" >"${state_dir}/restore-snapshot.focused"
     mv -- "${state_dir}/restore-snapshot.focused" "${state_dir}/restore-snapshot.json"
-    start_product
-    pane_id=pane-agent-two
-    zentty_product_wait_for_log "${log}" \
-        "zentty-linux: agent-restore-launch pane=${pane_id} result=authenticated" \
-        "completed restore for ${pane_id} never authenticated" ||
-        fail "completed restore authentication missing for ${pane_id}"
+}
+
+assert_completed_restore_shell() {
+    local pane_id="$1"
+    local prior_recovery="${2:-forbidden}"
     zentty_product_wait_for_log "${log}" \
         "zentty-linux: agent-restore-launch pane=${pane_id} result=completed fallback=shell" \
         "completed restore for ${pane_id} did not return to a shell" ||
         fail "completed restore shell fallback missing for ${pane_id}"
-    grep -Fq "zentty-linux: restore-failure pane=${pane_id} state=shown" "${log}" &&
+    if [[ "${prior_recovery}" == allowed ]]; then
+        [[ "$(grep -Fc "zentty-linux: restore-failure pane=${pane_id} state=shown" "${log}")" -eq 1 ]] ||
+            fail "retried restore did not retain exactly one initial recovery presentation"
+    elif grep -Fq "zentty-linux: restore-failure pane=${pane_id} state=shown" "${log}"; then
         fail "completed restore incorrectly presented recovery controls"
+    fi
     zentty_product_wait_for_log "${log}" \
         "zentty-linux: shell-signal pane=${pane_id} kind=pane-root-pid event=attach" \
         "replacement shell for ${pane_id} did not attach through the real PTY" ||
@@ -343,6 +349,78 @@ if [[ "${ZENTTY_COMPLETED_RESTORE_ONLY:-false}" == true ]]; then
         'zentty-linux: topology=worklane-main[title=Nimbu API,color=blue]:pane-agent,pane-shell,pane-ordinary-inactive|worklane-second-agent[title=Second agent,color=none]:pane-agent-two*|worklane-active[title=Active shell,color=none]:pane-shell-active' \
         "completed restore changed the durable workspace topology" ||
         fail "completed restore erased a pane or worklane"
+}
+
+if [[ "${ZENTTY_INTERACTED_RESTORE_ONLY:-false}" == true ]]; then
+    agent_skip_auth=true
+    agent_sleep_seconds=0.2
+    focus_single_restored_agent
+    start_product
+    pane_id=pane-agent-two
+    zentty_product_prepare_input "${backend}" "${log}" ||
+        fail "could not prepare interacted-restore input"
+    zentty_product_type "${backend}" confirmed-by-user
+    zentty_product_key "${backend}" Return
+    zentty_product_wait_for_log "${log}" \
+        "zentty-linux: agent-restore-launch pane=${pane_id} result=confirmed origin=terminal-interaction" \
+        "physical terminal submission did not confirm ${pane_id}" ||
+        fail "interacted restore confirmation missing for ${pane_id}"
+    zentty_product_wait_for_log "${agent_receipt}" \
+        'interaction:session-two value:confirmed-by-user' \
+        "controlled child did not receive physical terminal input" ||
+        fail "interacted restore PTY evidence missing for ${pane_id}"
+    assert_completed_restore_shell "${pane_id}"
+    zentty_product_close_window "${backend}"
+    wait_for_product_exit
+    printf 'rust-session-restore: PASS completed-agent-restore authenticated=false interaction=physical fallback=real-shell recovery=absent topology=preserved\n'
+    exit 0
+fi
+
+if [[ "${ZENTTY_RETRY_RESTORE_ONLY:-false}" == true ]]; then
+    agent_fail_once_marker="${state_dir}/restore-failed-once"
+    agent_start_delay=0.5
+    agent_sleep_seconds=0.2
+    focus_single_restored_agent
+    start_product
+    pane_id=pane-agent-two
+    zentty_product_prepare_input "${backend}" "${log}" ||
+        fail "could not prepare retry-restore input"
+    zentty_product_wait_for_log "${log}" \
+        "zentty-linux: restore-failure pane=${pane_id} state=shown" \
+        "first restore failure did not present recovery controls" ||
+        fail "retry restore recovery missing for ${pane_id}"
+    zentty_product_wait_for_log "${log}" \
+        "zentty-linux: restore-failure pane=${pane_id} focus=retry" \
+        "restore recovery did not focus Retry" ||
+        fail "retry restore keyboard focus missing for ${pane_id}"
+    zentty_product_key "${backend}" Return
+    zentty_product_wait_for_log "${log}" \
+        "zentty-linux: agent-restore-retry pane=${pane_id} result=started" \
+        "physical Retry activation did not relaunch ${pane_id}" ||
+        fail "retry restore activation missing for ${pane_id}"
+    zentty_product_wait_for_log "${log}" \
+        "zentty-linux: agent-restore-launch pane=${pane_id} result=authenticated" \
+        "retried restore for ${pane_id} never authenticated" ||
+        fail "retried restore authentication missing for ${pane_id}"
+    assert_completed_restore_shell "${pane_id}" allowed
+    [[ "$(grep -Fc "resume:session-two pid:" "${agent_receipt}")" -eq 2 ]] ||
+        fail "retry did not launch exactly one replacement child"
+    zentty_product_close_window "${backend}"
+    wait_for_product_exit
+    printf 'rust-session-restore: PASS retried-agent-restore first=failure retry=physical authenticated=true fallback=real-shell topology=preserved\n'
+    exit 0
+fi
+
+if [[ "${ZENTTY_COMPLETED_RESTORE_ONLY:-false}" == true ]]; then
+    agent_sleep_seconds=0.2
+    focus_single_restored_agent
+    start_product
+    pane_id=pane-agent-two
+    zentty_product_wait_for_log "${log}" \
+        "zentty-linux: agent-restore-launch pane=${pane_id} result=authenticated" \
+        "completed restore for ${pane_id} never authenticated" ||
+        fail "completed restore authentication missing for ${pane_id}"
+    assert_completed_restore_shell "${pane_id}"
     zentty_product_prepare_input "${backend}" "${log}" ||
         fail "could not prepare completed-restore close input"
     zentty_product_close_window "${backend}"
