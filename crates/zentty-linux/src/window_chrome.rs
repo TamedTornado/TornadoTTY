@@ -1,6 +1,7 @@
 use gtk::glib::variant::ToVariant;
 use gtk::prelude::*;
 use std::cell::RefCell;
+use std::collections::BTreeMap;
 use zentty_core::{
     OpenWithCatalog, OpenWithTargetKind, RankedServer, ServerRelevanceTier, SidebarWorklaneSummary,
 };
@@ -388,30 +389,8 @@ impl WindowChrome {
         can_navigate_back: bool,
         can_navigate_forward: bool,
     ) {
-        let text = summaries
-            .iter()
-            .find(|summary| summary.is_active)
-            .map(|summary| {
-                let lane = summary
-                    .top_label
-                    .as_deref()
-                    .unwrap_or(summary.primary_text.as_str());
-                let pane = summary
-                    .pane_rows
-                    .iter()
-                    .find(|pane| pane.is_focused)
-                    .map(|pane| pane.primary_text.as_str());
-                pane.filter(|pane| *pane != lane)
-                    .map_or_else(|| lane.to_owned(), |pane| format!("{lane}  ·  {pane}"))
-            })
-            .unwrap_or_default();
-        self.context.set_text(&text);
-        self.context
-            .update_property(&[gtk::accessible::Property::Label(text.as_str())]);
-        if self.rendered_context.borrow().as_str() != text {
-            eprintln!("zentty-linux: window-chrome-context={text}");
-            self.rendered_context.replace(text.clone());
-        }
+        let text = context_text(summaries, &BTreeMap::new());
+        self.render_context(&text);
         let focused_pane = summaries
             .iter()
             .find(|summary| summary.is_active)
@@ -476,6 +455,57 @@ impl WindowChrome {
         self.back.set_sensitive(can_navigate_back);
         self.forward.set_sensitive(can_navigate_forward);
     }
+
+    pub(crate) fn render_codex_activity_titles(
+        &self,
+        summaries: &[SidebarWorklaneSummary],
+        titles: &BTreeMap<String, String>,
+    ) -> bool {
+        let focused_activity = summaries
+            .iter()
+            .find(|summary| summary.is_active)
+            .and_then(|summary| summary.pane_rows.iter().find(|pane| pane.is_focused))
+            .is_some_and(|pane| titles.contains_key(&pane.pane_id));
+        self.render_context(&context_text(summaries, titles));
+        focused_activity
+    }
+
+    fn render_context(&self, text: &str) {
+        self.context.set_text(text);
+        self.context
+            .update_property(&[gtk::accessible::Property::Label(text)]);
+        if self.rendered_context.borrow().as_str() != text {
+            eprintln!("zentty-linux: window-chrome-context={text}");
+            self.rendered_context.replace(text.to_owned());
+        }
+    }
+}
+
+fn context_text(
+    summaries: &[SidebarWorklaneSummary],
+    activity_titles: &BTreeMap<String, String>,
+) -> String {
+    summaries
+        .iter()
+        .find(|summary| summary.is_active)
+        .map(|summary| {
+            let lane = summary
+                .top_label
+                .as_deref()
+                .unwrap_or(summary.primary_text.as_str());
+            let pane = summary
+                .pane_rows
+                .iter()
+                .find(|pane| pane.is_focused)
+                .map(|pane| {
+                    activity_titles
+                        .get(&pane.pane_id)
+                        .map_or(pane.primary_text.as_str(), String::as_str)
+                });
+            pane.filter(|pane| *pane != lane)
+                .map_or_else(|| lane.to_owned(), |pane| format!("{lane}  ·  {pane}"))
+        })
+        .unwrap_or_default()
 }
 
 fn log_chrome_controls() {
@@ -717,8 +747,10 @@ fn arrange_action_button(
 
 #[cfg(test)]
 mod tests {
-    use super::CHROME_CONTROLS;
+    use super::{CHROME_CONTROLS, context_text};
     use crate::source_ui;
+    use std::collections::BTreeMap;
+    use zentty_core::{SidebarPaneSummary, SidebarWorklaneSummary};
 
     #[test]
     fn leading_chrome_matches_the_source_control_order_and_availability() {
@@ -738,5 +770,29 @@ mod tests {
                 .iter()
                 .all(|control| !control.icon.is_empty())
         );
+    }
+
+    #[test]
+    fn activity_title_changes_focused_chrome_presentation_without_mutating_summary() {
+        let summaries = vec![SidebarWorklaneSummary {
+            worklane_id: "lane".to_owned(),
+            top_label: Some("Bro".to_owned()),
+            primary_text: "Working · Bro".to_owned(),
+            pane_rows: vec![SidebarPaneSummary {
+                pane_id: "pane".to_owned(),
+                primary_text: "Working · Bro".to_owned(),
+                custom_title: None,
+                working_directory: None,
+                is_focused: true,
+                agent_status: None,
+                project_context: None,
+                project_icon_path: None,
+            }],
+            is_active: true,
+            color: None,
+        }];
+        let activity = BTreeMap::from([("pane".to_owned(), "Working ⠧ Bro".to_owned())]);
+        assert_eq!(context_text(&summaries, &activity), "Bro  ·  Working ⠧ Bro");
+        assert_eq!(summaries[0].pane_rows[0].primary_text, "Working · Bro");
     }
 }

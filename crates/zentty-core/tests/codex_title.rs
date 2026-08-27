@@ -1,4 +1,42 @@
-use zentty_core::{AgentInteractionKind, CodexTitlePhase, classify_codex_terminal_title};
+use zentty_core::{
+    AgentInteractionKind, CodexTitlePhase, classify_codex_terminal_title,
+    codex_activity_spinner_range, codex_activity_title_frame,
+};
+
+#[test]
+fn activity_spinner_requires_an_exact_phase_delimited_braille_token() {
+    let valid = "  Thinking\t⠙ review ⠸ accessibility";
+    let range = codex_activity_spinner_range(valid).unwrap();
+    assert_eq!(&valid[range], "⠙");
+
+    for title in [
+        "Working on ⠙ literal braille",
+        "Working ⠙without-delimiter",
+        "Ready ⠙ zentty",
+        "Waiting ⠙ zentty",
+        "shell ⠙ zentty",
+    ] {
+        assert!(codex_activity_spinner_range(title).is_none(), "{title}");
+    }
+}
+
+#[test]
+fn activity_frame_replaces_only_the_status_spinner_and_preserves_identity_text() {
+    let title = "Working ⠋ preserve ⠸ literal";
+    assert_eq!(
+        codex_activity_title_frame(title, 7).as_deref(),
+        Some("Working ⠧ preserve ⠸ literal")
+    );
+    assert_eq!(
+        codex_activity_title_frame(title, 10).as_deref(),
+        Some("Working ⠋ preserve ⠸ literal")
+    );
+    assert_eq!(
+        zentty_core::stable_codex_terminal_title(title).as_deref(),
+        Some("Working · preserve ⠸ literal")
+    );
+    assert!(codex_activity_title_frame("bash ⠋ literal", 1).is_none());
+}
 
 #[test]
 fn source_codex_titles_preserve_phase_subject_interaction_and_task_progress() {

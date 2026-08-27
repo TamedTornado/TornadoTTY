@@ -1,4 +1,7 @@
 use crate::{AgentInteractionKind, AgentProgress};
+use std::ops::Range;
+
+const CODEX_BRAILLE_SPINNER_FRAMES: [char; 10] = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum CodexTitlePhase {
@@ -83,22 +86,69 @@ pub fn classify_codex_terminal_title(value: &str) -> Option<CodexTitleSignal> {
 #[must_use]
 pub fn stable_codex_terminal_title(value: &str) -> Option<String> {
     classify_codex_terminal_title(value)?;
-    let mut stable = String::with_capacity(value.len());
-    let mut replaced_spinner = false;
-    for character in value.chars() {
-        if matches!(
-            character,
-            '⠋' | '⠙' | '⠹' | '⠸' | '⠼' | '⠴' | '⠦' | '⠧' | '⠇' | '⠏'
-        ) {
-            if !replaced_spinner {
-                stable.push('·');
-                replaced_spinner = true;
-            }
-        } else {
-            stable.push(character);
-        }
+    let mut stable = value.to_owned();
+    if let Some(range) = codex_activity_spinner_range(value) {
+        stable.replace_range(range, "·");
     }
     Some(stable)
+}
+
+/// Locates Codex's activity spinner without treating arbitrary Braille text as
+/// animation. The glyph must be the standalone token immediately following a
+/// Working, Thinking, or Starting phase word.
+#[must_use]
+pub fn codex_activity_spinner_range(value: &str) -> Option<Range<usize>> {
+    let leading_bytes = value.len().saturating_sub(value.trim_start().len());
+    let trimmed = &value[leading_bytes..];
+    let phase_bytes = trimmed
+        .char_indices()
+        .take_while(|(_, character)| character.is_alphabetic())
+        .last()
+        .map_or(0, |(index, character)| index + character.len_utf8());
+    let phase = trimmed.get(..phase_bytes)?;
+    if !matches!(
+        phase.to_ascii_lowercase().as_str(),
+        "working" | "thinking" | "starting"
+    ) {
+        return None;
+    }
+
+    let remainder = trimmed.get(phase_bytes..)?;
+    let whitespace_bytes = remainder
+        .char_indices()
+        .take_while(|(_, character)| character.is_whitespace())
+        .last()
+        .map_or(0, |(index, character)| index + character.len_utf8());
+    if whitespace_bytes == 0 {
+        return None;
+    }
+    let token_start = leading_bytes + phase_bytes + whitespace_bytes;
+    let token = value.get(token_start..)?.chars().next()?;
+    if !(('\u{2800}'..='\u{28ff}').contains(&token)) {
+        return None;
+    }
+    let token_end = token_start + token.len_utf8();
+    if value
+        .get(token_end..)
+        .and_then(|suffix| suffix.chars().next())
+        .is_some_and(|character| !character.is_whitespace())
+    {
+        return None;
+    }
+    Some(token_start..token_end)
+}
+
+/// Renders one deterministic presentation frame without changing the source
+/// title retained as pane identity.
+#[must_use]
+pub fn codex_activity_title_frame(value: &str, frame: usize) -> Option<String> {
+    let range = codex_activity_spinner_range(value)?;
+    let mut rendered = value.to_owned();
+    rendered.replace_range(
+        range,
+        &CODEX_BRAILLE_SPINNER_FRAMES[frame % CODEX_BRAILLE_SPINNER_FRAMES.len()].to_string(),
+    );
+    Some(rendered)
 }
 
 fn split_trailing_task_progress(value: &str) -> Option<(&str, AgentProgress)> {

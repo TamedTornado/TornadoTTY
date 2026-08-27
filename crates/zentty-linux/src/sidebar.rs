@@ -1,6 +1,7 @@
 use gtk::glib::variant::ToVariant;
 use gtk::prelude::*;
 use std::cell::Cell;
+use std::collections::BTreeMap;
 use std::rc::Rc;
 use zentty_core::{ClipboardConfig, RankedServer, ServerRelevanceTier, SidebarWorklaneSummary};
 
@@ -1276,6 +1277,42 @@ pub(crate) fn update_project_context_metadata(
         };
         let _ = update_project_context_row(&card, summary);
     }
+}
+
+/// Repaints only title labels for the shared Codex activity frame. This must
+/// remain separate from metadata reconciliation so animation cannot rebuild
+/// sidebar hierarchy or invalidate project/process state.
+pub(crate) fn update_codex_activity_titles(
+    sidebar: &gtk::Box,
+    summaries: &[SidebarWorklaneSummary],
+    titles: &BTreeMap<String, String>,
+) -> bool {
+    let mut rendered_activity = false;
+    for summary in summaries {
+        let mut focused_title = None;
+        for pane in &summary.pane_rows {
+            let text = titles
+                .get(&pane.pane_id)
+                .map_or(pane.primary_text.as_str(), String::as_str);
+            if let Some(label) = find_named_label(
+                sidebar.upcast_ref(),
+                &widget_name("pane-title", &pane.pane_id),
+            ) {
+                label.set_text(text);
+                rendered_activity |= titles.contains_key(&pane.pane_id);
+            }
+            if pane.is_focused {
+                focused_title = Some(text);
+            }
+        }
+        if let Some(context) = find_named_label(
+            sidebar.upcast_ref(),
+            &widget_name("worklane-context", &summary.worklane_id),
+        ) {
+            context.set_text(focused_title.unwrap_or(&summary.primary_text));
+        }
+    }
+    rendered_activity
 }
 
 fn update_project_context_row(card: &gtk::Widget, summary: &SidebarWorklaneSummary) -> bool {

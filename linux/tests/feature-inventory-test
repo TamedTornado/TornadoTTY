@@ -60,9 +60,9 @@ jq -e '
     .result == "PASS" and
     .entry_count == 63 and
     .classifications.REQUIRED_INITIAL_RELEASE == 37 and
-    .implementation_statuses.IMPLEMENTED == 48 and
+    .implementation_statuses.IMPLEMENTED == 49 and
     .implementation_statuses.PARTIAL == 3 and
-    .implementation_statuses.NOT_IMPLEMENTED == 12 and
+    .implementation_statuses.NOT_IMPLEMENTED == 11 and
     .evidence.app_commands == 70 and
     .evidence.pane_commands == 33 and
     .evidence.settings_sections == 9 and
@@ -175,6 +175,19 @@ jq -e '
     (.test_plan | contains("two real windows"))
 ' "${source_inventory}" >/dev/null || {
     echo "feature-inventory-test: clipboard closeout evidence regressed" >&2
+    exit 1
+}
+jq -e '
+    .entries[] | select(.id == "application.codex-title-animation") |
+    .linux_owner_issue == 123 and
+    .implementation_status == "IMPLEMENTED" and
+    (.focused_tests | index("crates/zentty-core/tests/codex_title.rs")) != null and
+    (.focused_tests | index("crates/zentty-linux/src/codex_title_animation.rs")) != null and
+    (.product_scenarios | index("linux/tests/rust-multi-window")) != null and
+    (.test_plan | contains("stable display identity")) and
+    (.test_plan | contains("bounded repaint"))
+' "${source_inventory}" >/dev/null || {
+    echo "feature-inventory-test: Codex activity-title evidence regressed" >&2
     exit 1
 }
 jq -e '

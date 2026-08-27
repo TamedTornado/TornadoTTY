@@ -356,3 +356,50 @@ width-reaching prose folds, and every systemd record newline survives. Feature
 inventory after reconciliation: 63 entries, 48 IMPLEMENTED, 3 PARTIAL, and 12
 NOT_IMPLEMENTED. The installed dogfood application was not replaced or
 restarted; operator QA remains queued for the next explicit batch stop.
+
+## GH-123 local Codex activity-title animation
+
+Upstream keeps Codex pane identity stable while animating the exact Braille
+activity token in the sidebar and focused window chrome. Linux previously
+normalized every recognized spinner glyph to one dot before presentation.
+That prevented animation and, on review, also erased later literal Braille
+characters from subjects such as `Working ⠋ preserve ⠸ literal`.
+
+The repair separates the two concerns. `zentty-core` now identifies only the
+standalone token immediately after Working, Thinking, or Starting and replaces
+only that token in stable identity. A focused Linux coordinator retains raw
+eligible titles solely in per-window ephemeral memory. One GTK compositor
+frame-clock callback renders deterministic 100 ms frames directly into the
+existing sidebar labels and focused chrome label. It never writes a frame into
+`WorkspaceState`, navigation history, persistence, terminal metadata, project
+context, or pane-drag identity. There is no timeout, per-label clock, or second
+agent-status system. GTK reduced motion holds frame zero and stops repainting.
+
+Eligibility requires an existing local pane, no custom title, a canonical
+Codex status in Starting or Running, and the exact token grammar. Remote panes,
+other tools, idle/needs-input state, custom titles, malformed delimiters, and
+literal Braille remain static. Title ownership changes remove the entry; live
+surface removal clears it directly; the frame callback prunes tool, remote,
+custom-title, and lifecycle changes and returns `Break` when the final entry
+ends. Window destruction drops the owning widget and weak shell reference.
+
+The first sandboxed X11 attempt failed before product launch because the
+sandbox exposed `/tmp/.X11-unix` as `nobody:nogroup`; no product result was
+claimed. The same existing `nested-x11` actor was rerun with GUI permission and
+created its private Xvfb/Xauthority session normally. Its controlled PTY now
+emits exactly one `Working ⠋ Bro` OSC title. The real GTK frame clock must later
+render `Working ⠏ Bro`, both the existing sidebar label and focused chrome
+label must accept the generated frame, the open Agent Status popover must
+survive, the sidebar-card count must not change, and an authenticated idle
+event must stop the callback. That focused journey passed with two real GTK
+windows, two real Ghostty PTYs, authenticated agent IPC, and deterministic
+widget-render receipts.
+
+Focused parser/frame tests, animation ownership/reduced-motion/teardown tests,
+the chrome stable-summary projection test, Bash syntax, strict all-target Linux
+Clippy, and the controlled X11 fleet journey pass. Feature inventory after
+reconciliation: 63 entries, 49 IMPLEMENTED, 3 PARTIAL, and 11 NOT_IMPLEMENTED.
+The installed GNOME dogfood application was not replaced or restarted. Human
+judgment of the animation's speed, color, and visual polish remains
+intentionally queued for the next operator batch; this is not a claim of
+operator visual acceptance or broad Linux qualification.

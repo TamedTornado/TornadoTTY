@@ -145,7 +145,8 @@ pub use close_decision::{
     CloseDecision, CloseEvidence, ClosePaneEvidence, CloseReason, CloseTarget, decide_close,
 };
 pub use codex_title::{
-    CodexTitlePhase, CodexTitleSignal, classify_codex_terminal_title, stable_codex_terminal_title,
+    CodexTitlePhase, CodexTitleSignal, classify_codex_terminal_title, codex_activity_spinner_range,
+    codex_activity_title_frame, stable_codex_terminal_title,
 };
 pub use codex_transcript::{
     CodexTranscriptCacheKey, CodexTranscriptQuestion, codex_question_from_transcript_path,

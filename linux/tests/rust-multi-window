@@ -112,9 +112,13 @@ resize-overlay = never
 cursor-opacity = 0
 EOF
 mkdir -p "${XDG_CONFIG_HOME}/gtk-4.0"
-cat >"${XDG_CONFIG_HOME}/gtk-4.0/settings.ini" <<'EOF'
+gtk_animations=false
+if [[ "${ZENTTY_MULTI_WINDOW_FLEET_ONLY:-false}" == true ]]; then
+    gtk_animations=true
+fi
+cat >"${XDG_CONFIG_HOME}/gtk-4.0/settings.ini" <<EOF
 [Settings]
-gtk-enable-animations=false
+gtk-enable-animations=${gtk_animations}
 EOF
 # The quoted heredoc defers every expansion to the real PTY child while
 # keeping the controlled agent lifecycle readable and independently auditable.
@@ -134,12 +138,9 @@ while IFS= read -r value; do
             printf '%s' '{"version":1,"event":"agent.running","agent":{"name":"Codex"},"session":{"id":"moved-live-pane"}}' | "$ZENTTY_CLI_BIN" ipc agent-event
             ;;
         codex-spinner)
-            (
-                for glyph in ⠋ ⠙ ⠹ ⠸ ⠼ ⠴ ⠦ ⠧ ⠇ ⠏ ⠋ ⠙ ⠹ ⠸ ⠼ ⠴ ⠦ ⠧ ⠇ ⠏ ⠋ ⠙ ⠹ ⠸ ⠼ ⠴ ⠦ ⠧ ⠇ ⠏; do
-                    printf '\033]2;Working %s Bro\a' "$glyph"
-                    sleep 0.1
-                done
-            ) &
+            # Emit one source frame only. Later visible frames must come from
+            # Zentty's GTK frame-clock presentation, not terminal metadata.
+            printf '\033]2;Working ⠋ Bro\a'
             ;;
         agent-arm-idle)
             (
@@ -201,6 +202,7 @@ start_product() {
         cd "${state_dir}"
         exec env \
             CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1 \
+            ZENTTY_LOG_ANIMATION_FRAMES=1 \
             ZENTTY_FLEET_TRANSITION_FIFO="${fleet_transition_fifo}" \
             GSK_RENDERER=cairo \
             LD_LIBRARY_PATH="${bundle_lib}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" \
@@ -1461,6 +1463,7 @@ zentty_product_type "${backend}" "agent-arm-idle"
 zentty_product_key "${backend}" Return
 zentty_product_wait_for_log "${log}" 'zentty-linux: title-pane=pane-2 value=Working ⠋ Bro' \
     "controlled Codex spinner did not begin" || fail "fleet spinner fixture missing"
+sidebar_render_before="$(grep -Fc 'zentty-linux: sidebar-card ' "${log}" || true)"
 fleet_closed_before="$(grep -Fc 'zentty-linux: chrome-popover=agent-fleet state=closed' "${log}" || true)"
 execute_palette_action "agent activity across every Zentty window" "Agent Status"
 zentty_product_wait_for_log "${log}" 'zentty-linux: chrome-popover=agent-fleet state=open' \
@@ -1470,15 +1473,27 @@ zentty_product_wait_for_log "${log}" 'zentty-linux: chrome-popover=agent-fleet s
 zentty_product_wait_for_log "${log}" \
     'zentty-linux: fleet-row-focus window=window-1 worklane=worklane-1 pane=pane-1' \
     "fleet did not focus its highest-priority real row" || fail "fleet priority focus missing"
-zentty_product_wait_for_log_count "${log}" \
-    'zentty-linux: title-pane=pane-2 value=Working ⠏ Bro' 3 \
-    "controlled Codex spinner did not complete under the open fleet" ||
-    fail "fleet spinner completion missing"
+zentty_product_wait_for_log "${log}" \
+    'zentty-linux: codex-title-animation-frame pane=pane-2 title=Working ⠏ Bro' \
+    "the shared GTK frame clock did not animate the stationary Codex title" ||
+    fail "fleet spinner presentation missing"
+zentty_product_wait_for_log "${log}" \
+    'zentty-linux: codex-title-animation-render sidebar=true focused-chrome=true' \
+    "the deterministic activity frame did not reach both real GTK title projections" ||
+    fail "fleet spinner GTK render evidence missing"
+[[ "$(grep -Fc 'zentty-linux: title-pane=pane-2 value=Working ⠋ Bro' "${log}" || true)" == 1 ]] ||
+    fail "spinner fixture emitted more than one terminal metadata frame"
+[[ "$(grep -Fc 'zentty-linux: sidebar-card ' "${log}" || true)" == "${sidebar_render_before}" ]] ||
+    fail "Codex title animation rebuilt the sidebar hierarchy"
 [[ "$(grep -Fc 'zentty-linux: chrome-popover=agent-fleet state=closed' "${log}" || true)" == "${fleet_closed_before}" ]] ||
     fail "spinner-only titles replaced and closed the open Agent Status popover"
 fleet_idle_refresh_before="$(grep -Fc 'zentty-linux: fleet-refresh windows=2 agents=2 waiting=1 stopped=0 compacting=0 active=0 idle=1 progress=0' "${log}" || true)"
 fleet_idle_render_before="$(grep -Fc 'zentty-linux: fleet-popover-render agents=2 waiting=1 stopped=0 compacting=0 active=0 idle=1 progress=0' "${log}" || true)"
 printf 'release\n' >"${fleet_transition_fifo}"
+zentty_product_wait_for_log "${log}" \
+    'zentty-linux: codex-title-animation pane=pane-2 state=stopped' \
+    "idle ownership transition did not stop title animation" ||
+    fail "fleet spinner teardown missing"
 zentty_product_wait_for_log_count "${log}" \
     'zentty-linux: fleet-refresh windows=2 agents=2 waiting=1 stopped=0 compacting=0 active=0 idle=1 progress=0' \
     "$((fleet_idle_refresh_before + 1))" \

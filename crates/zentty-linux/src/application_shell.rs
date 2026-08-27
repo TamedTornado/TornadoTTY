@@ -220,6 +220,8 @@ pub(crate) struct ApplicationShell {
     last_pane_viewport_width: Cell<i32>,
     last_pane_viewport_height: Cell<i32>,
     pane_drag_source_state: Rc<PaneDragSourceState>,
+    codex_title_animation: crate::codex_title_animation::CodexTitleAnimation,
+    codex_title_animation_tick: RefCell<Option<gtk::TickCallbackId>>,
     action_router: Option<ActionRouter>,
     shortcut_manager: Rc<RefCell<zentty_core::ShortcutManager>>,
     shortcut_controller: Option<gtk::EventControllerKey>,
@@ -503,6 +505,8 @@ impl ApplicationShell {
             last_pane_viewport_width: Cell::new(0),
             last_pane_viewport_height: Cell::new(0),
             pane_drag_source_state: Rc::new(PaneDragSourceState::default()),
+            codex_title_animation: crate::codex_title_animation::CodexTitleAnimation::default(),
+            codex_title_animation_tick: RefCell::new(None),
             action_router: None,
             shortcut_manager: Rc::new(RefCell::new(zentty_core::ShortcutManager::new(
                 &shortcut_registry::definitions(),
@@ -4042,8 +4046,116 @@ impl ApplicationShell {
 
     fn remove_live_surface(&mut self, pane_id: &str) -> Result<(), String> {
         self.agent_events.unregister_pane(pane_id);
+        self.codex_title_animation.remove(pane_id);
         project_context_runtime::forget_pane(self, pane_id);
         self.pane_runtime.remove(pane_id, false).map(|_| ())
+    }
+
+    fn codex_title_animation_is_eligible(&self, pane_id: &str, title: &str) -> bool {
+        let Some(pane) = self.state.pane(pane_id) else {
+            return false;
+        };
+        let status = self.state.pane_agent_status(pane_id);
+        crate::codex_title_animation::is_eligible(
+            title,
+            status.map(|status| status.agent_name.as_str()),
+            status.map(|status| status.phase),
+            pane.custom_title.is_some(),
+            pane.ssh_connection_label.is_some()
+                || self.remote_panes.identities.contains_key(pane_id),
+        )
+    }
+
+    fn reconcile_codex_title_animation(&mut self, pane_id: &str, title: &str) -> bool {
+        let eligible = self.codex_title_animation_is_eligible(pane_id, title);
+        let changed = self
+            .codex_title_animation
+            .reconcile(pane_id, title, eligible);
+        if changed {
+            eprintln!(
+                "zentty-linux: codex-title-animation pane={pane_id} state={}",
+                if eligible { "active" } else { "stopped" }
+            );
+        }
+        eligible
+    }
+
+    fn ensure_codex_title_animation_tick(shell: &Rc<RefCell<Self>>) {
+        if shell.borrow().codex_title_animation.is_empty()
+            || shell.borrow().codex_title_animation_tick.borrow().is_some()
+        {
+            return;
+        }
+        let weak = Rc::downgrade(shell);
+        let tick = shell.borrow().window.add_tick_callback(move |_, frame_clock| {
+            let Some(shell) = weak.upgrade() else {
+                return glib::ControlFlow::Break;
+            };
+            let Ok(mut shell) = shell.try_borrow_mut() else {
+                return glib::ControlFlow::Continue;
+            };
+            let reduced_motion = gtk::Settings::default()
+                .is_none_or(|settings| !settings.property::<bool>("gtk-enable-animations"));
+            let frame = usize::try_from(frame_clock.frame_time().max(0) / 100_000)
+                .unwrap_or(usize::MAX);
+            if !shell
+                .codex_title_animation
+                .frame_is_due(frame, reduced_motion)
+            {
+                return glib::ControlFlow::Continue;
+            }
+            let snapshot = shell.codex_title_animation.snapshot();
+            let eligible = snapshot
+                .iter()
+                .filter(|(pane_id, title)| {
+                    shell.codex_title_animation_is_eligible(pane_id, title)
+                })
+                .map(|(pane_id, _)| pane_id.clone())
+                .collect::<std::collections::BTreeSet<_>>();
+            shell
+                .codex_title_animation
+                .retain(|pane_id, _| eligible.contains(pane_id));
+            for (pane_id, _) in snapshot
+                .iter()
+                .filter(|(pane_id, _)| !eligible.contains(pane_id))
+            {
+                eprintln!("zentty-linux: codex-title-animation pane={pane_id} state=stopped");
+            }
+            if shell.codex_title_animation.is_empty() {
+                shell.codex_title_animation_tick.borrow_mut().take();
+                return glib::ControlFlow::Break;
+            }
+            let Some(titles) = shell
+                .codex_title_animation
+                .render_frame(frame, reduced_motion)
+            else {
+                return glib::ControlFlow::Continue;
+            };
+            if std::env::var_os("ZENTTY_LOG_ANIMATION_FRAMES").is_some() {
+                for (pane_id, title) in &titles {
+                    eprintln!(
+                        "zentty-linux: codex-title-animation-frame pane={pane_id} title={title}"
+                    );
+                }
+            }
+            let summaries = shell.sidebar_summaries();
+            let sidebar_rendered =
+                sidebar::update_codex_activity_titles(&shell.sidebar, &summaries, &titles);
+            let chrome_rendered = shell
+                .chrome
+                .render_codex_activity_titles(&summaries, &titles);
+            if std::env::var_os("ZENTTY_LOG_ANIMATION_FRAMES").is_some() {
+                eprintln!(
+                    "zentty-linux: codex-title-animation-render sidebar={sidebar_rendered} focused-chrome={chrome_rendered}"
+                );
+            }
+            glib::ControlFlow::Continue
+        });
+        shell
+            .borrow()
+            .codex_title_animation_tick
+            .borrow_mut()
+            .replace(tick);
     }
 
     fn take_pane_id(&mut self) -> String {

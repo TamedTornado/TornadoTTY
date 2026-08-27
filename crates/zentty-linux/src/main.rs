@@ -13,6 +13,7 @@ mod attention_inbox;
 mod bookmarks_view;
 mod closed_pane_archive;
 mod codex_enrichment;
+mod codex_title_animation;
 mod command_palette;
 mod config_reload;
 mod config_store;

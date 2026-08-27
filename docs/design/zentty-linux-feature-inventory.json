@@ -747,9 +747,15 @@
       "origin": "PORT_PARITY",
       "user_impact": "Without the activity treatment, running Codex panes lose the current source application's glanceable distinction between active work and static identity.",
       "linux_owner_issue": 123,
-      "implementation_status": "NOT_IMPLEMENTED",
-      "focused_tests": [],
-      "product_scenarios": [],
+      "implementation_status": "IMPLEMENTED",
+      "focused_tests": [
+        "crates/zentty-core/tests/codex_title.rs",
+        "crates/zentty-linux/src/codex_title_animation.rs",
+        "crates/zentty-linux/src/window_chrome.rs"
+      ],
+      "product_scenarios": [
+        "linux/tests/rust-multi-window"
+      ],
       "test_plan": "Separate stable display identity from frame presentation, unit-test eligibility and frame progression with an injected monotonic clock, and run a real controlled Codex event journey proving animation only while eligible, no topology or persisted-title mutation, immediate stop on terminal state change, and bounded repaint behavior while hidden or inactive.",
       "alternative_or_blocker": null
     },

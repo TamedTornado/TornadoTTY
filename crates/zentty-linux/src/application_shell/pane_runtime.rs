@@ -608,26 +608,35 @@ impl PaneRuntimeCoordinator {
             let title = title.clone();
             glib::idle_add_local_once(move || {
                 if let Some(shell) = weak.upgrade() {
-                    let mut shell = shell.borrow_mut();
-                    if shell.shutting_down {
-                        return;
-                    }
-                    let now = unix_time_ms();
-                    let agent_changed =
-                        shell.state.reconcile_terminal_title(&title_id, &title, now);
-                    if agent_changed {
-                        shell.schedule_codex_transcript_enrichment(&title_id);
-                    }
-                    let display_title = zentty_core::stable_codex_terminal_title(&title)
-                        .unwrap_or_else(|| title.clone());
-                    let title_changed = shell.state.set_pane_title(&title_id, &display_title);
-                    if title_changed {
-                        super::project_context_runtime::mark_pane_for_process_refresh(
-                            &mut shell, &title_id,
-                        );
-                    }
-                    if title_changed || agent_changed {
-                        shell.refresh_sidebar_metadata();
+                    let animate = {
+                        let mut shell_ref = shell.borrow_mut();
+                        if shell_ref.shutting_down {
+                            return;
+                        }
+                        let now = unix_time_ms();
+                        let agent_changed = shell_ref
+                            .state
+                            .reconcile_terminal_title(&title_id, &title, now);
+                        if agent_changed {
+                            shell_ref.schedule_codex_transcript_enrichment(&title_id);
+                        }
+                        let display_title = zentty_core::stable_codex_terminal_title(&title)
+                            .unwrap_or_else(|| title.clone());
+                        let title_changed =
+                            shell_ref.state.set_pane_title(&title_id, &display_title);
+                        if title_changed {
+                            super::project_context_runtime::mark_pane_for_process_refresh(
+                                &mut shell_ref,
+                                &title_id,
+                            );
+                        }
+                        if title_changed || agent_changed {
+                            shell_ref.refresh_sidebar_metadata();
+                        }
+                        shell_ref.reconcile_codex_title_animation(&title_id, &title)
+                    };
+                    if animate {
+                        ApplicationShell::ensure_codex_title_animation_tick(&shell);
                     }
                 }
             });

@@ -727,6 +727,14 @@ impl WorkspaceState {
             .collect()
     }
 
+    /// Returns the canonical visible agent status without constructing a UI
+    /// projection. Presentation clocks use this to validate title ownership
+    /// without allocating sidebar summaries on every frame.
+    #[must_use]
+    pub fn pane_agent_status(&self, pane_id: &str) -> Option<&PaneAgentStatus> {
+        self.agent_statuses.status_for_pane(pane_id)
+    }
+
     pub fn create_worklane(
         &mut self,
         worklane_id: impl Into<String>,
