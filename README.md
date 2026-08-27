@@ -23,6 +23,13 @@
 > [dedene](https://github.com/dedene/zentty) for macOS. This fork is not an
 > official Linux release from the upstream project.
 
+> [!NOTE]
+> The Linux build uses [Tamed Tornado's Ghostty fork](https://github.com/TamedTornado/ghostty),
+> which carries the narrow GTK host-embedding API needed to own real Ghostty
+> surfaces from the Rust application. The exact reviewed revision is pinned in
+> [`linux/ghostty.lock`](linux/ghostty.lock); terminal-product policy remains
+> in Zentty.
+
 ![Zentty for Linux running Codex with worklanes and agent status](assets/zentty-linux-workspace.png)
 
 ## What works
@@ -174,8 +181,8 @@ The Linux application is not a re-skinned web terminal:
 
 - product and portable model code are written in Rust;
 - the native shell uses `gtk4-rs`;
-- terminal rendering and PTY behavior come from a narrow embedding API in a
-  maintained Ghostty GTK fork;
+- terminal rendering and PTY behavior come from a narrow embedding API in the
+  [maintained Tamed Tornado Ghostty GTK fork](https://github.com/TamedTornado/ghostty);
 - Zentty-specific worklane, agent, settings, and persistence policy stays out
   of Ghostty; and
 - the macOS Swift implementation and tests remain the behavioral source for
