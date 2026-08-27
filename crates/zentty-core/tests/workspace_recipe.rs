@@ -180,6 +180,34 @@ fn droid_restore_accepts_only_one_safe_opaque_session_argument() {
 }
 
 #[test]
+fn kimi_restore_distinguishes_safe_legacy_and_modern_sessions() {
+    let mut envelope = SessionRestoreEnvelope::from_json(V3_ENVELOPE).unwrap();
+    let draft = &mut envelope.restore_draft_windows[0].pane_drafts[0];
+    draft.tool_name = "Kimi".to_owned();
+    draft.session_id = "A8098C1A-3A71-4E50-B36B-F17AB79E6A90".to_owned();
+    assert_eq!(
+        draft.resume_command().as_deref(),
+        Some("kimi -r a8098c1a-3a71-4e50-b36b-f17ab79e6a90")
+    );
+    draft.session_id = "session_A8098C1A-3A71-4E50-B36B-F17AB79E6A90".to_owned();
+    assert_eq!(
+        draft.resume_command().as_deref(),
+        Some("kimi -S session_a8098c1a-3a71-4e50-b36b-f17ab79e6a90")
+    );
+    for session_id in [
+        "",
+        "session_not-a-uuid",
+        "-starts-like-an-option",
+        "session with spaces",
+        "$(touch /tmp/no)",
+        "zentty-placeholder-unsafe",
+    ] {
+        draft.session_id = session_id.to_owned();
+        assert_eq!(draft.resume_command(), None, "session_id={session_id}");
+    }
+}
+
+#[test]
 fn unversioned_migration_only_sanitizes_legacy_generated_titles() {
     let recipe = WorkspaceRecipe::from_json(UNVERSIONED_RECIPE).unwrap();
     assert_eq!(recipe.schema_version, None);

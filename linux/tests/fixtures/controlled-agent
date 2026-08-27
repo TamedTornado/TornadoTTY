@@ -31,6 +31,15 @@ fi
 [[ -z "${finish_gate}" || -p "${finish_gate}" ]] ||
     fail "ZENTTY_CONTROLLED_AGENT_FINISH_GATE must be an existing FIFO"
 
+if [[ "${profile}" == kimi-hooks && "${1:-}" == --help ]]; then
+    printf 'Kimi modern controlled help\n'
+    exit 0
+fi
+if [[ "${profile}" == kimi-legacy-hooks && "${1:-}" == --help ]]; then
+    printf 'Kimi legacy controlled help --config-file FILE\n'
+    exit 0
+fi
+
 require_helper() {
     [[ -x "${helper}" ]] || fail "ZENTTY_CLI_BIN must name the staged executable helper"
 }
@@ -460,11 +469,63 @@ case "${profile}" in
             printf 'droid-negative-control:rejected\n'
         } >>"${ZENTTY_CONTROLLED_AGENT_START_RECEIPT}"
         ;;
-    kimi-adapter)
+    kimi-hooks | kimi-legacy-hooks)
         require_helper
-        printf '%s' \
-            '{"hook_event_name":"PreToolUse","session_id":"kimi-e2e","tool_name":"WriteFile","tool_input":{"file_path":"README.md"}}' |
-            "${helper}" ipc agent-event --adapter=kimi
+        if [[ "${profile}" == kimi-hooks ]]; then
+            kimi_config="${KIMI_CODE_HOME:-${HOME}/.kimi-code}/config.toml"
+            session_id="session_a8098c1a-3a71-4e50-b36b-f17ab79e6a90"
+        else
+            kimi_config=""
+            previous=""
+            for argument in "$@"; do
+                if [[ "${previous}" == --config-file ]]; then
+                    kimi_config="${argument}"
+                    break
+                fi
+                previous="${argument}"
+            done
+            session_id="a8098c1a-3a71-4e50-b36b-f17ab79e6a90"
+        fi
+        [[ -f "${kimi_config}" ]] || fail "Kimi managed config is missing"
+        [[ "$(grep -c -- '--adapter=kimi' "${kimi_config}")" == 7 ]] ||
+            fail "Kimi installed hook groups are incomplete"
+        kimi_hook() {
+            local event="$1"
+            local payload="$2"
+            local command
+            command="$(awk -v event="${event}" '
+                $0 == "event = \"" event "\"" { wanted = 1; next }
+                wanted && /^command = "/ {
+                    sub(/^command = "/, ""); sub(/"$/, ""); print; exit
+                }
+            ' "${kimi_config}")"
+            [[ -n "${command}" ]] || fail "Kimi managed hook command is missing for ${event}"
+            printf '%s' "${payload}" | /bin/sh -c "${command}"
+        }
+        kimi_hook SessionStart \
+            "{\"hook_event_name\":\"SessionStart\",\"session_id\":\"${session_id}\",\"cwd\":\"${PWD}\"}"
+        kimi_hook UserPromptSubmit \
+            "{\"hook_event_name\":\"UserPromptSubmit\",\"session_id\":\"${session_id}\",\"cwd\":\"${PWD}\"}"
+        kimi_hook PreToolUse \
+            "{\"hook_event_name\":\"PreToolUse\",\"session_id\":\"${session_id}\",\"tool_name\":\"AskUserQuestion\",\"cwd\":\"${PWD}\",\"tool_input\":{\"question\":\"Which Kimi target?\"}}"
+        IFS= read -r _ <"${ZENTTY_CONTROLLED_AGENT_STATE_DIRECTORY}/kimi-question.fifo"
+        kimi_hook PostToolUse \
+            "{\"hook_event_name\":\"PostToolUse\",\"session_id\":\"${session_id}\",\"tool_name\":\"AskUserQuestion\",\"cwd\":\"${PWD}\"}"
+        kimi_hook PreToolUse \
+            "{\"hook_event_name\":\"PreToolUse\",\"session_id\":\"${session_id}\",\"tool_name\":\"WriteFile\",\"cwd\":\"${PWD}\",\"tool_input\":{\"path\":\"README.md\"}}"
+        IFS= read -r _ <"${ZENTTY_CONTROLLED_AGENT_STATE_DIRECTORY}/kimi-approval.fifo"
+        if printf '%s' \
+            "{\"hook_event_name\":\"Stop\",\"session_id\":\"${session_id}\"}" |
+            ZENTTY_PANE_TOKEN=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb \
+                "${helper}" ipc agent-event --adapter=kimi >/dev/null 2>&1; then
+            fail "Kimi bad-token negative control was accepted"
+        fi
+        kimi_hook Stop \
+            "{\"hook_event_name\":\"Stop\",\"session_id\":\"${session_id}\",\"cwd\":\"${PWD}\"}"
+        {
+            printf '%s:%s\n' "${profile}" "$(grep -c -- '--adapter=kimi' "${kimi_config}")"
+            printf 'kimi-negative-control:rejected\n'
+        } >>"${ZENTTY_CONTROLLED_AGENT_START_RECEIPT}"
         ;;
     grok-adapter)
         require_helper

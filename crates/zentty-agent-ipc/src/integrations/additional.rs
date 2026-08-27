@@ -36,6 +36,21 @@ pub(super) fn uninstall(target: &str, home: &Path) -> Result<String, String> {
 
 fn install_kimi(home: &Path, cli: &Path) -> Result<String, String> {
     let command = shell_command(cli, "ipc agent-event --adapter=kimi")?;
+    let block = kimi_array_table_block(&command);
+    for path in [home.join(".kimi/config.toml"), kimi_modern_path(home)] {
+        install_kimi_file(&path, &command, &block)?;
+    }
+    Ok("Installed Zentty Kimi hooks for legacy and modern Kimi.".to_owned())
+}
+
+pub(crate) fn install_kimi_modern_at(config: &Path, cli: &Path) -> Result<String, String> {
+    let command = shell_command(cli, "ipc agent-event --adapter=kimi")?;
+    let block = kimi_array_table_block(&command);
+    install_kimi_file(config, &command, &block)?;
+    Ok("Installed Zentty hooks for modern Kimi.".to_owned())
+}
+
+fn kimi_array_table_block(command: &str) -> String {
     let entries = [
         "SessionStart",
         "SessionEnd",
@@ -49,18 +64,14 @@ fn install_kimi(home: &Path, cli: &Path) -> Result<String, String> {
     .map(|event| {
         format!(
             "[[hooks]]\nevent = \"{event}\"\ncommand = \"{}\"",
-            toml_escape(&command)
+            toml_escape(command)
         )
     })
     .collect::<Vec<_>>();
-    let block = format!(
+    format!(
         "{KIMI_BEGIN}\n# zentty-managed-style = arrayTables\n{}\n{KIMI_END}\n",
         entries.join("\n\n")
-    );
-    for path in [home.join(".kimi/config.toml"), kimi_modern_path(home)] {
-        install_kimi_file(&path, &command, &block)?;
-    }
-    Ok("Installed Zentty Kimi hooks for legacy and modern Kimi.".to_owned())
+    )
 }
 
 fn uninstall_kimi(home: &Path) -> Result<String, String> {
@@ -71,8 +82,33 @@ fn uninstall_kimi(home: &Path) -> Result<String, String> {
 }
 
 fn install_kimi_file(path: &Path, command: &str, array_table_block: &str) -> Result<(), String> {
-    let existing = read_text(path)?;
-    let clean = uninstall_kimi_text(&existing)?;
+    AtomicFileStore::new(path, MAX_BYTES)
+        .transaction(|bytes| {
+            let existing = bytes.map_or(Ok(""), |bytes| {
+                std::str::from_utf8(bytes).map_err(|_| format!("{} is not UTF-8", path.display()))
+            })?;
+            let next = merged_kimi_config(existing, command, array_table_block)?;
+            Ok(AtomicFileAction::Replace {
+                bytes: next.into_bytes(),
+                value: (),
+            })
+        })
+        .map(|(value, _)| value)
+        .map_err(|error| error.to_string())
+}
+
+pub(crate) fn build_kimi_overlay(existing: &str, cli: &Path) -> Result<String, String> {
+    let command = shell_command(cli, "ipc agent-event --adapter=kimi")?;
+    let block = kimi_array_table_block(&command);
+    merged_kimi_config(existing, &command, &block)
+}
+
+fn merged_kimi_config(
+    existing: &str,
+    command: &str,
+    array_table_block: &str,
+) -> Result<String, String> {
+    let clean = uninstall_kimi_text(existing)?;
     if let Some(open) = inline_hooks_open(&clean) {
         let has_elements = clean[open + 1..].contains('{');
         let comma = if has_elements { "," } else { "" };
@@ -100,9 +136,14 @@ fn install_kimi_file(path: &Path, command: &str, array_table_block: &str) -> Res
         );
         let mut next = clean;
         next.insert_str(open + 1, &inline);
-        replace_text(path, &next)
+        Ok(next)
     } else {
-        update_managed_text(path, KIMI_BEGIN, KIMI_END, array_table_block)
+        let prefix = clean.trim_end();
+        if prefix.is_empty() {
+            Ok(array_table_block.to_owned())
+        } else {
+            Ok(format!("{prefix}\n\n{array_table_block}"))
+        }
     }
 }
 
@@ -422,18 +463,6 @@ fn update_hermes_yaml(path: &Path, block: &str) -> Result<(), String> {
     let insertion = next.find("hooks:").unwrap() + "hooks:".len();
     next.insert_str(insertion, &format!("\n{block}"));
     next.push('\n');
-    replace_text(path, &next)
-}
-
-fn update_managed_text(path: &Path, begin: &str, end: &str, block: &str) -> Result<(), String> {
-    let existing = read_text(path)?;
-    let clean = strip_block(&existing, begin, end)?;
-    let prefix = clean.trim_end();
-    let next = if prefix.is_empty() {
-        block.to_owned()
-    } else {
-        format!("{prefix}\n\n{block}")
-    };
     replace_text(path, &next)
 }
 

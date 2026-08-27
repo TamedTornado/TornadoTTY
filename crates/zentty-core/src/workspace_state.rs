@@ -3095,6 +3095,13 @@ impl WorkspaceState {
                 "-s".to_owned(),
                 status.session_id.clone(),
             ]
+        } else if status.agent_name.eq_ignore_ascii_case("kimi") {
+            let flag = if status.session_id.starts_with("session_") {
+                "-S"
+            } else {
+                "-r"
+            };
+            vec!["kimi".to_owned(), flag.to_owned(), status.session_id.clone()]
         } else if status.agent_name.eq_ignore_ascii_case("opencode") {
             vec![
                 "opencode".to_owned(),

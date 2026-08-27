@@ -319,6 +319,14 @@ impl PaneRestoreDraft {
             let session_id = validated_droid_session_id(&self.session_id)?;
             return Some(format!("droid exec -s {session_id}"));
         }
+        if self.tool_name.eq_ignore_ascii_case("kimi") {
+            if let Some(uuid) = self.session_id.strip_prefix("session_") {
+                let session_id = validated_uuid(uuid)?;
+                return Some(format!("kimi -S session_{session_id}"));
+            }
+            let session_id = validated_uuid(&self.session_id)?;
+            return Some(format!("kimi -r {session_id}"));
+        }
         if self.tool_name.eq_ignore_ascii_case("opencode") {
             let session_id = validated_opencode_session_id(&self.session_id)?;
             return Some(format!("opencode --session {session_id}"));

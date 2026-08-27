@@ -697,6 +697,16 @@ fn remaining_managed_agents_produce_their_source_resume_invocations() {
             "session.safe:opaque-42",
             "droid exec -s session.safe:opaque-42",
         ),
+        (
+            "Kimi",
+            "a8098c1a-3a71-4e50-b36b-f17ab79e6a90",
+            "kimi -r a8098c1a-3a71-4e50-b36b-f17ab79e6a90",
+        ),
+        (
+            "Kimi",
+            "session_a8098c1a-3a71-4e50-b36b-f17ab79e6a90",
+            "kimi -S session_a8098c1a-3a71-4e50-b36b-f17ab79e6a90",
+        ),
         ("OpenCode", "ses_AbC123", "opencode --session ses_AbC123"),
         ("Pi", "project-session", "pi -c"),
         ("OMP", "project-session", "omp -c"),

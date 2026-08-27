@@ -6,6 +6,8 @@ use zentty_core::{AtomicFileAction, AtomicFileStore};
 
 mod additional;
 
+pub(crate) use additional::{build_kimi_overlay, install_kimi_modern_at};
+
 const MAX_CONFIG_BYTES: usize = 1024 * 1024;
 const CURSOR_EVENTS: &[&str] = &[
     "sessionStart",

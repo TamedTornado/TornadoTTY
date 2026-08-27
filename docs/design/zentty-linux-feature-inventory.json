@@ -924,12 +924,19 @@
       "swift_tests": ["ZenttyLogicTests/AgentStatusSupportTests.swift", "ZenttyLogicTests/AgentResumeCommandBuilderTests.swift"],
       "classification": "REQUIRED_LATER",
       "origin": "PORT_PARITY",
-      "user_impact": "Kimi remains usable, but hook status and management-command passthrough are deferred.",
-      "linux_owner_issue": 7,
-      "implementation_status": "NOT_IMPLEMENTED",
-      "focused_tests": [],
-      "product_scenarios": [],
-      "test_plan": "Run the real Kimi CLI help and passthrough paths, hook installer, PTY, adapter, and visible status.",
+      "user_impact": "Modern and legacy Kimi launches preserve user configuration while receiving exact hook status, attention, CWD, and injection-safe session restoration.",
+      "linux_owner_issue": 130,
+      "implementation_status": "IMPLEMENTED",
+      "focused_tests": [
+        "crates/zentty-agent-ipc/tests/integration_cli.rs",
+        "crates/zentty-agent-ipc/tests/launch_cli.rs",
+        "crates/zentty-core/tests/agent_adapters.rs",
+        "crates/zentty-core/tests/agent_launch.rs",
+        "crates/zentty-core/tests/workspace_recipe.rs",
+        "crates/zentty-core/tests/workspace_state.rs"
+      ],
+      "product_scenarios": ["linux/tests/rust-agent-ipc"],
+      "test_plan": "Keep bounded ANSI-safe modern/legacy executable probing, probe failure/timeout non-mutation, exact passthrough, modern real/custom-home atomic hooks, stale runtime-home rejection, selective session-index repair, legacy private config-file overlay merge, exact adapter interaction/CWD aliases, strict legacy UUID and modern session_UUID resume validation, and restore-draft capture green. The focused nested-X11 journey runs both variants through their real selected wrapper, real PTY child, actual privately installed hook commands, authenticated Unix socket, Linux product, Ghostty surface, deterministic Question/Approval sidebar handshakes, bad-token controls, real window close, and distinct durable resume forms. A live external Kimi account/model call remains the controlled boundary.",
       "alternative_or_blocker": null
     },
     {

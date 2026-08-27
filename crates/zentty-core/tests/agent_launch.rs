@@ -110,6 +110,34 @@ fn persistent_source_agents_preserve_arguments_and_publish_exact_launch_policy()
 }
 
 #[test]
+fn modern_kimi_can_explicitly_drop_only_a_stale_runtime_home() {
+    let mut environment = pane_environment();
+    environment.insert("ZENTTY_KIMI_UNSET_CODE_HOME".to_owned(), "1".to_owned());
+    let plan = build_agent_launch_plan(
+        AgentLaunchTool::Kimi,
+        "/real/kimi",
+        &["chat".to_owned()],
+        "/stage/bin/zentty",
+        SESSION_ID,
+        &environment,
+    )
+    .unwrap();
+    assert_eq!(plan.arguments, ["chat"]);
+    assert_eq!(plan.unset_environment, ["KIMI_CODE_HOME"]);
+
+    let ordinary = build_agent_launch_plan(
+        AgentLaunchTool::Kimi,
+        "/real/kimi",
+        &["chat".to_owned()],
+        "/stage/bin/zentty",
+        SESSION_ID,
+        &pane_environment(),
+    )
+    .unwrap();
+    assert!(ordinary.unset_environment.is_empty());
+}
+
+#[test]
 fn persistent_agent_management_commands_are_direct_but_grok_flags_remain_integrated() {
     for (tool, argument) in [
         (AgentLaunchTool::Amp, "permissions"),

@@ -232,6 +232,7 @@ pub fn build_agent_launch_plan(
         )),
         AgentLaunchTool::Amp => amp_plan(executable_path.into(), arguments),
         AgentLaunchTool::Cursor => Ok(cursor_plan(executable_path.into(), arguments, environment)),
+        AgentLaunchTool::Kimi => Ok(kimi_plan(executable_path.into(), arguments, environment)),
         tool => Ok(persistent_plan(tool, executable_path.into(), arguments)),
     }
 }
@@ -333,6 +334,22 @@ fn persistent_plan(
         unset_environment: Vec::new(),
         pre_launch_actions: Vec::new(),
     }
+}
+
+fn kimi_plan(
+    executable_path: String,
+    arguments: &[String],
+    environment: &BTreeMap<String, String>,
+) -> AgentLaunchPlan {
+    let mut plan = persistent_plan(AgentLaunchTool::Kimi, executable_path, arguments);
+    if environment
+        .get("ZENTTY_KIMI_UNSET_CODE_HOME")
+        .map(String::as_str)
+        == Some("1")
+    {
+        plan.unset_environment.push("KIMI_CODE_HOME".to_owned());
+    }
+    plan
 }
 
 fn persistent_integration_is_disabled(

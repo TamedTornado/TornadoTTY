@@ -209,6 +209,20 @@ fn real_kimi_install_manages_both_supported_config_roots() {
     }
     assert_success(&home.run(&["install", "kimi-hooks"]));
     assert_success(&home.run(&["install", "kimi-hooks"]));
+    let children = (0..2)
+        .map(|_| {
+            Command::new(env!("CARGO_BIN_EXE_zentty"))
+                .args(["install", "kimi-hooks"])
+                .env("HOME", &home.0)
+                .env("XDG_CONFIG_HOME", home.0.join("xdg-config"))
+                .env_remove("KIMI_CODE_HOME")
+                .spawn()
+                .unwrap()
+        })
+        .collect::<Vec<_>>();
+    for child in children {
+        assert!(child.wait_with_output().unwrap().status.success());
+    }
     for relative in [".kimi/config.toml", ".kimi-code/config.toml"] {
         let text = fs::read_to_string(home.path(relative)).unwrap();
         assert_eq!(text.matches("### BEGIN ZENTTY KIMI HOOKS").count(), 1);

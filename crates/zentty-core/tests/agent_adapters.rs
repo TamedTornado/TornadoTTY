@@ -761,7 +761,10 @@ fn remaining_integration_adapters_cover_source_lifecycle_and_input_semantics() {
         )
         .unwrap(),
     );
-    assert_eq!(kimi.text.as_deref(), Some("Allow WriteFile on README.md?"));
+    assert_eq!(
+        kimi.text.as_deref(),
+        Some("WriteFile is requesting approval to write file: README.md")
+    );
 }
 
 #[test]
@@ -806,6 +809,45 @@ fn claude_and_kimi_do_not_regress_into_generic_hook_guesses() {
         .unwrap(),
     );
     assert_eq!(kimi_resolved.phase, AgentPhase::Running);
+}
+
+#[test]
+fn kimi_source_interaction_text_aliases_and_cwd_are_preserved() {
+    for (tool, input, expected) in [
+        (
+            "Shell",
+            r#"{"command":"cargo test"}"#,
+            "Shell is requesting approval to run command: cargo test",
+        ),
+        (
+            "WriteFile",
+            r#"{"path":"README.md"}"#,
+            "WriteFile is requesting approval to write file: README.md",
+        ),
+        (
+            "StrReplaceFile",
+            r#"{"filePath":"src/main.rs"}"#,
+            "StrReplaceFile is requesting approval to edit file: src/main.rs",
+        ),
+    ] {
+        let payload = format!(
+            r#"{{"hookEventName":"PreToolUse","sessionId":"kimi-source","toolName":"{tool}","workingDirectory":"/tmp","toolInput":{input}}}"#
+        );
+        let status = reduce(adapt_kimi_hook(payload.as_bytes(), Some(7171)).unwrap());
+        assert_eq!(status.phase, AgentPhase::NeedsInput, "tool={tool}");
+        assert_eq!(status.text.as_deref(), Some(expected), "tool={tool}");
+        assert_eq!(status.working_directory.as_deref(), Some("/tmp"));
+    }
+
+    let question = reduce(
+        adapt_kimi_hook(
+            br#"{"hook_event_name":"PreToolUse","session_id":"kimi-source","tool_name":"AskUserQuestion","project_dir":"/tmp","tool_input":{"question":"Which target?"}}"#,
+            None,
+        )
+        .unwrap(),
+    );
+    assert_eq!(question.text.as_deref(), Some("Which target?"));
+    assert_eq!(question.working_directory.as_deref(), Some("/tmp"));
 }
 
 #[test]

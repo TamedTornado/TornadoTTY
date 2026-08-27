@@ -1,17 +1,20 @@
+use crate::integrations::{build_kimi_overlay, install_kimi_modern_at};
 use crate::{AgentIpcClient, generate_pane_token, install_integration};
 use std::collections::{BTreeMap, HashSet};
 use std::fmt;
 use std::fs;
 use std::fs::OpenOptions;
-use std::io::Write;
+use std::io::{Read, Write};
 use std::os::unix::fs::OpenOptionsExt;
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
+use std::time::{Duration, Instant};
 use zentty_core::{
-    AgentLaunchAction, AgentLaunchTool, agent_launch_requires_bootstrap, build_agent_launch_plan,
-    build_copilot_config, build_cursor_hooks, build_gemini_settings, build_small_harness_hooks,
+    AgentLaunchAction, AgentLaunchTool, AtomicFileAction, AtomicFileStore,
+    agent_launch_requires_bootstrap, build_agent_launch_plan, build_copilot_config,
+    build_cursor_hooks, build_gemini_settings, build_small_harness_hooks,
 };
 
 #[derive(Debug)]
@@ -72,25 +75,49 @@ pub fn launch_agent(tool: &str, arguments: &[String]) -> Result<(), LaunchError>
             overlay.to_string_lossy().into_owned(),
         );
     }
-    prepare_remaining_launch_environment(tool, arguments, &mut environment, &cli_path)?;
+    let mut launch_arguments = arguments.to_vec();
+    prepare_remaining_launch_environment(
+        tool,
+        &mut launch_arguments,
+        &mut environment,
+        &cli_path,
+        &executable,
+    )?;
     if tool == AgentLaunchTool::OpenCode {
         executable = resolve_opencode_sibling(executable);
     }
     let plan = build_agent_launch_plan(
         tool,
         executable.to_string_lossy().into_owned(),
-        arguments,
+        &launch_arguments,
         &cli_path,
         &session_id,
         &environment,
     )
     .map_err(|error| LaunchError::Plan(error.to_string()))?;
     let mut integrated = !plan.set_environment.is_empty();
-    if integrated
+    let install_result = if integrated && tool == AgentLaunchTool::Kimi {
+        match environment.get("ZENTTY_KIMI_VARIANT").map(String::as_str) {
+            Some("modern") => environment
+                .get("ZENTTY_KIMI_HOME")
+                .map(PathBuf::from)
+                .ok_or_else(|| "modern Kimi home is unavailable".to_owned())
+                .and_then(|home| {
+                    install_kimi_modern_at(&home.join("config.toml"), Path::new(&cli_path))
+                })
+                .map(Some),
+            Some("legacy") => Ok(None),
+            _ => install_integration("kimi-hooks").map(Some),
+        }
+    } else if integrated
         && tool != AgentLaunchTool::Cursor
         && let Some(target) = tool.persistent_integration_target()
-        && let Err(error) = install_integration(target)
     {
+        install_integration(target).map(Some)
+    } else {
+        Ok(None)
+    };
+    if let Err(error) = install_result {
         integrated = false;
         if environment.get("ZENTTY_CLI_DEBUG").map(String::as_str) == Some("1") {
             eprintln!("zentty: {tool:?} hook installation failed; launching directly: {error}");
@@ -181,9 +208,10 @@ fn prepare_gemini_overlay(
 
 fn prepare_remaining_launch_environment(
     tool: AgentLaunchTool,
-    arguments: &[String],
+    arguments: &mut Vec<String>,
     environment: &mut BTreeMap<String, String>,
     cli_path: &str,
+    executable: &Path,
 ) -> Result<(), LaunchError> {
     if !agent_launch_requires_bootstrap(tool, arguments, environment) {
         return Ok(());
@@ -203,17 +231,345 @@ fn prepare_remaining_launch_environment(
             "ZENTTY_OMP_EXTENSION",
         ),
         AgentLaunchTool::SmallHarness => prepare_small_harness_overlay(environment, cli_path),
+        AgentLaunchTool::Kimi => prepare_kimi_launch(executable, arguments, environment, cli_path),
         AgentLaunchTool::Amp
         | AgentLaunchTool::Claude
         | AgentLaunchTool::Codex
         | AgentLaunchTool::Droid
         | AgentLaunchTool::Gemini
-        | AgentLaunchTool::Kimi
         | AgentLaunchTool::Grok
         | AgentLaunchTool::Agy
         | AgentLaunchTool::Hermes
         | AgentLaunchTool::Vibe => Ok(()),
     }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum KimiVariant {
+    Modern,
+    Legacy,
+}
+
+fn prepare_kimi_launch(
+    executable: &Path,
+    arguments: &mut Vec<String>,
+    environment: &mut BTreeMap<String, String>,
+    cli_path: &str,
+) -> Result<(), LaunchError> {
+    let variant = probe_kimi_variant(executable, environment)?;
+    environment.insert(
+        "ZENTTY_KIMI_VARIANT".to_owned(),
+        match variant {
+            KimiVariant::Modern => "modern",
+            KimiVariant::Legacy => "legacy",
+        }
+        .to_owned(),
+    );
+    if variant == KimiVariant::Modern {
+        let configured_home = environment
+            .get("KIMI_CODE_HOME")
+            .filter(|value| !value.is_empty())
+            .map(PathBuf::from);
+        let stale_overlay = configured_home
+            .as_deref()
+            .is_some_and(is_kimi_runtime_overlay);
+        let home = match configured_home {
+            Some(home) if !stale_overlay => home,
+            _ => environment
+                .get("HOME")
+                .filter(|value| !value.is_empty())
+                .map(|value| Path::new(value).join(".kimi-code"))
+                .ok_or_else(|| LaunchError::Plan("modern Kimi home is unavailable".to_owned()))?,
+        };
+        if stale_overlay {
+            environment.insert("ZENTTY_KIMI_UNSET_CODE_HOME".to_owned(), "1".to_owned());
+        }
+        if let Err(error) = canonicalize_kimi_session_index(&home)
+            && environment.get("ZENTTY_CLI_DEBUG").map(String::as_str) == Some("1")
+        {
+            eprintln!("zentty: Kimi session index repair skipped: {error}");
+        }
+        environment.insert(
+            "ZENTTY_KIMI_HOME".to_owned(),
+            home.to_string_lossy().into_owned(),
+        );
+        return Ok(());
+    }
+
+    let source = take_kimi_config_argument(arguments).unwrap_or_else(|| {
+        KimiConfigSource::File(
+            environment
+                .get("KIMI_SHARE_DIR")
+                .filter(|value| !value.is_empty())
+                .map(|path| Path::new(path).join("config.toml"))
+                .or_else(|| {
+                    environment
+                        .get("HOME")
+                        .filter(|value| !value.is_empty())
+                        .map(|home| Path::new(home).join(".kimi/config.toml"))
+                })
+                .unwrap_or_default(),
+        )
+    });
+    let existing = match source {
+        KimiConfigSource::File(path) if path.is_file() => read_bounded_text(&path, "Kimi config")?,
+        KimiConfigSource::File(_) => String::new(),
+        KimiConfigSource::Inline(value) => value,
+    };
+    let merged = build_kimi_overlay(&existing, Path::new(cli_path)).map_err(LaunchError::Plan)?;
+    let directory = create_private_tool_directory(environment, "kimi")?;
+    let config = directory.join("config.toml");
+    write_private_file(&config, merged.as_bytes(), "Kimi config overlay")?;
+    arguments.splice(
+        0..0,
+        [
+            "--config-file".to_owned(),
+            config.to_string_lossy().into_owned(),
+        ],
+    );
+    Ok(())
+}
+
+fn is_kimi_runtime_overlay(path: &Path) -> bool {
+    let components = path
+        .components()
+        .filter_map(|component| component.as_os_str().to_str())
+        .collect::<Vec<_>>();
+    components.windows(2).any(|pair| {
+        pair[0] == "agent-overlays" && (pair[1].starts_with("kimi-") || pair[1] == "kimi")
+    })
+}
+
+fn canonicalize_kimi_session_index(home: &Path) -> Result<(), LaunchError> {
+    const MAX_BYTES: usize = 1024 * 1024;
+    let index = home.join("session_index.jsonl");
+    AtomicFileStore::new(&index, MAX_BYTES)
+        .transaction(|bytes| {
+            let Some(bytes) = bytes else {
+                return Ok(AtomicFileAction::ReadOnly(()));
+            };
+            let source = std::str::from_utf8(bytes)
+                .map_err(|_| "Kimi session index is not UTF-8".to_owned())?;
+            let mut changed = false;
+            let lines = source
+                .split('\n')
+                .map(|line| {
+                    canonicalize_kimi_session_line(line, home).map(|(line, line_changed)| {
+                        changed |= line_changed;
+                        line
+                    })
+                })
+                .collect::<Result<Vec<_>, String>>()?;
+            if changed {
+                Ok(AtomicFileAction::Replace {
+                    bytes: lines.join("\n").into_bytes(),
+                    value: (),
+                })
+            } else {
+                Ok(AtomicFileAction::ReadOnly(()))
+            }
+        })
+        .map(|_| ())
+        .map_err(|error| LaunchError::Plan(error.to_string()))
+}
+
+fn canonicalize_kimi_session_line(line: &str, home: &Path) -> Result<(String, bool), String> {
+    let trimmed = line.trim();
+    if trimmed.is_empty() {
+        return Ok((line.to_owned(), false));
+    }
+    let Ok(mut value) = serde_json::from_str::<serde_json::Value>(trimmed) else {
+        return Ok((line.to_owned(), false));
+    };
+    let Some(object) = value.as_object_mut() else {
+        return Ok((line.to_owned(), false));
+    };
+    if !object
+        .get("sessionId")
+        .is_some_and(serde_json::Value::is_string)
+        && !object.get("id").is_some_and(serde_json::Value::is_string)
+    {
+        return Ok((line.to_owned(), false));
+    }
+    let Some(session_dir) = object.get("sessionDir").and_then(serde_json::Value::as_str) else {
+        return Ok((line.to_owned(), false));
+    };
+    let session_path = Path::new(session_dir);
+    if session_path == home || session_path.starts_with(home) {
+        return Ok((line.to_owned(), false));
+    }
+    let components = session_path.components().collect::<Vec<_>>();
+    let Some(sessions_index) = components
+        .iter()
+        .position(|component| component.as_os_str() == "sessions")
+    else {
+        return Ok((line.to_owned(), false));
+    };
+    let suffix = components[sessions_index..]
+        .iter()
+        .fold(PathBuf::new(), |path, component| {
+            path.join(component.as_os_str())
+        });
+    let canonical = home.join(suffix);
+    if !canonical.exists() {
+        return Ok((line.to_owned(), false));
+    }
+    object.insert(
+        "sessionDir".to_owned(),
+        serde_json::Value::String(canonical.to_string_lossy().into_owned()),
+    );
+    serde_json::to_string(&value)
+        .map(|line| (line, true))
+        .map_err(|error| format!("could not serialize Kimi session index: {error}"))
+}
+
+enum KimiConfigSource {
+    File(PathBuf),
+    Inline(String),
+}
+
+fn take_kimi_config_argument(arguments: &mut Vec<String>) -> Option<KimiConfigSource> {
+    let mut selected = None;
+    let mut retained = Vec::with_capacity(arguments.len());
+    let mut index = 0;
+    while index < arguments.len() {
+        if arguments[index] == "--config-file" && index + 1 < arguments.len() {
+            selected = Some(KimiConfigSource::File(PathBuf::from(&arguments[index + 1])));
+            index += 2;
+        } else if let Some(value) = arguments[index].strip_prefix("--config-file=") {
+            selected = Some(KimiConfigSource::File(PathBuf::from(value)));
+            index += 1;
+        } else if arguments[index] == "--config" && index + 1 < arguments.len() {
+            selected = Some(KimiConfigSource::Inline(arguments[index + 1].clone()));
+            index += 2;
+        } else if let Some(value) = arguments[index].strip_prefix("--config=") {
+            selected = Some(KimiConfigSource::Inline(value.to_owned()));
+            index += 1;
+        } else {
+            retained.push(arguments[index].clone());
+            index += 1;
+        }
+    }
+    *arguments = retained;
+    selected
+}
+
+fn read_bounded_text(path: &Path, label: &str) -> Result<String, LaunchError> {
+    const MAX_BYTES: u64 = 1024 * 1024;
+    let file = fs::File::open(path)
+        .map_err(|error| LaunchError::Plan(format!("could not read {label}: {error}")))?;
+    let mut bytes = Vec::new();
+    file.take(MAX_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|error| LaunchError::Plan(format!("could not read {label}: {error}")))?;
+    if u64::try_from(bytes.len()).unwrap_or(u64::MAX) > MAX_BYTES {
+        return Err(LaunchError::Plan(format!("{label} exceeds 1 MiB")));
+    }
+    String::from_utf8(bytes).map_err(|_| LaunchError::Plan(format!("{label} is not UTF-8")))
+}
+
+fn probe_kimi_variant(
+    executable: &Path,
+    environment: &BTreeMap<String, String>,
+) -> Result<KimiVariant, LaunchError> {
+    const MAX_OUTPUT_BYTES: usize = 1024 * 1024;
+    let mut child = Command::new(executable)
+        .arg("--help")
+        .envs(environment)
+        .env("NO_COLOR", "1")
+        .env("TERM", "dumb")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|error| LaunchError::Plan(format!("could not probe Kimi: {error}")))?;
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| LaunchError::Plan("Kimi probe stdout was unavailable".to_owned()))?;
+    let stderr = child
+        .stderr
+        .take()
+        .ok_or_else(|| LaunchError::Plan("Kimi probe stderr was unavailable".to_owned()))?;
+    let stdout_reader = std::thread::spawn(move || drain_bounded(stdout, MAX_OUTPUT_BYTES));
+    let stderr_reader = std::thread::spawn(move || drain_bounded(stderr, MAX_OUTPUT_BYTES));
+    let timeout = environment
+        .get("ZENTTY_KIMI_PROBE_TIMEOUT_MS")
+        .and_then(|value| value.parse::<u64>().ok())
+        .filter(|milliseconds| (1..=10_000).contains(milliseconds))
+        .map_or_else(|| Duration::from_secs(10), Duration::from_millis);
+    let deadline = Instant::now() + timeout;
+    let status = loop {
+        if let Some(status) = child
+            .try_wait()
+            .map_err(|error| LaunchError::Plan(format!("could not wait for Kimi probe: {error}")))?
+        {
+            break status;
+        }
+        if Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(LaunchError::Plan("Kimi variant probe timed out".to_owned()));
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    };
+    let mut output = join_kimi_probe_reader(stdout_reader, "stdout")?;
+    output.extend(join_kimi_probe_reader(stderr_reader, "stderr")?);
+    if !status.success() {
+        return Err(LaunchError::Plan(format!(
+            "Kimi variant probe exited with {status}"
+        )));
+    }
+    let help = String::from_utf8(output)
+        .map_err(|_| LaunchError::Plan("Kimi variant probe output was not UTF-8".to_owned()))?;
+    Ok(if strip_ansi(&help).contains("--config-file") {
+        KimiVariant::Legacy
+    } else {
+        KimiVariant::Modern
+    })
+}
+
+fn join_kimi_probe_reader(
+    reader: std::thread::JoinHandle<std::io::Result<Vec<u8>>>,
+    stream: &str,
+) -> Result<Vec<u8>, LaunchError> {
+    reader
+        .join()
+        .map_err(|_| LaunchError::Plan(format!("Kimi {stream} reader failed")))?
+        .map_err(|error| LaunchError::Plan(format!("could not read Kimi {stream}: {error}")))
+}
+
+fn drain_bounded(mut reader: impl Read, limit: usize) -> std::io::Result<Vec<u8>> {
+    let mut retained = Vec::new();
+    let mut buffer = [0_u8; 8192];
+    loop {
+        let count = reader.read(&mut buffer)?;
+        if count == 0 {
+            return Ok(retained);
+        }
+        let remaining = limit.saturating_sub(retained.len());
+        retained.extend_from_slice(&buffer[..count.min(remaining)]);
+    }
+}
+
+fn strip_ansi(value: &str) -> String {
+    let mut output = String::with_capacity(value.len());
+    let mut characters = value.chars().peekable();
+    while let Some(character) = characters.next() {
+        if character != '\u{1b}' {
+            output.push(character);
+            continue;
+        }
+        if characters.next_if_eq(&'[').is_some() {
+            for character in characters.by_ref() {
+                if ('@'..='~').contains(&character) {
+                    break;
+                }
+            }
+        } else {
+            let _ = characters.next();
+        }
+    }
+    output
 }
 
 fn prepare_cursor_overlay(

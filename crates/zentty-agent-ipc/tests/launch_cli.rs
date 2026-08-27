@@ -30,7 +30,7 @@ impl FakeTool {
         let binary = directory.join(name);
         fs::write(
             &binary,
-            "#!/bin/sh\nprintf '%s\\n' \"$@\" >\"$ZENTTY_TEST_RECEIPT\"\nprintf 'AGENT=%s\\n' \"${ZENTTY_AGENT_TOOL:-}\" >>\"$ZENTTY_TEST_RECEIPT\"\nprintf 'CANONICAL=%s\\n' \"${ZENTTY_AGENT_CANONICAL_NAME:-}\" >>\"$ZENTTY_TEST_RECEIPT\"\nprintf 'CLAUDECODE=%s\\n' \"${CLAUDECODE:-}\" >>\"$ZENTTY_TEST_RECEIPT\"\nprintf 'GEMINI_SETTINGS=%s\\n' \"${GEMINI_CLI_SYSTEM_SETTINGS_PATH:-}\" >>\"$ZENTTY_TEST_RECEIPT\"\nprintf 'COPILOT_HOME=%s\\n' \"${COPILOT_HOME:-}\" >>\"$ZENTTY_TEST_RECEIPT\"\nprintf 'CURSOR_CONFIG=%s\\n' \"${CURSOR_CONFIG_DIR:-}\" >>\"$ZENTTY_TEST_RECEIPT\"\nprintf 'OPENCODE_CONFIG=%s\\n' \"${OPENCODE_CONFIG_DIR:-}\" >>\"$ZENTTY_TEST_RECEIPT\"\nprintf 'SMALL_HOOKS=%s\\n' \"${SMALL_HARNESS_MANAGED_HOOKS_FILE:-}\" >>\"$ZENTTY_TEST_RECEIPT\"\nprintf 'CURSOR_PID=%s DROID_PID=%s KIMI_PID=%s GROK_PID=%s AGY_PID=%s HERMES_PID=%s VIBE_PID=%s COPILOT_PID=%s SMALL_PID=%s\\n' \"${ZENTTY_CURSOR_PID:-}\" \"${ZENTTY_DROID_PID:-}\" \"${ZENTTY_KIMI_PID:-}\" \"${ZENTTY_GROK_PID:-}\" \"${ZENTTY_AGY_PID:-}\" \"${ZENTTY_HERMES_PID:-}\" \"${ZENTTY_VIBE_PID:-}\" \"${ZENTTY_COPILOT_PID:-}\" \"${ZENTTY_SMALL_HARNESS_PID:-}\" >>\"$ZENTTY_TEST_RECEIPT\"\nprintf 'VIBE_HOOKS=%s\\n' \"${VIBE_ENABLE_EXPERIMENTAL_HOOKS:-}\" >>\"$ZENTTY_TEST_RECEIPT\"\nif [ -n \"${GEMINI_CLI_SYSTEM_SETTINGS_PATH:-}\" ]; then cp \"$GEMINI_CLI_SYSTEM_SETTINGS_PATH\" \"$ZENTTY_TEST_RECEIPT.settings\"; stat -c 'MODE=%a' \"$GEMINI_CLI_SYSTEM_SETTINGS_PATH\" >>\"$ZENTTY_TEST_RECEIPT\"; fi\nif [ -n \"${COPILOT_HOME:-}\" ]; then cp \"$COPILOT_HOME/config.json\" \"$ZENTTY_TEST_RECEIPT.copilot\"; stat -c 'COPILOT_MODE=%a' \"$COPILOT_HOME/config.json\" >>\"$ZENTTY_TEST_RECEIPT\"; fi\nif [ -n \"${CURSOR_CONFIG_DIR:-}\" ]; then cp \"$CURSOR_CONFIG_DIR/hooks.json\" \"$ZENTTY_TEST_RECEIPT.cursor\"; stat -c 'CURSOR_MODE=%a' \"$CURSOR_CONFIG_DIR/hooks.json\" >>\"$ZENTTY_TEST_RECEIPT\"; fi\nif [ -n \"${OPENCODE_CONFIG_DIR:-}\" ]; then cp \"$OPENCODE_CONFIG_DIR/plugins/zentty-opencode-zentty.js\" \"$ZENTTY_TEST_RECEIPT.opencode\"; stat -c 'OPENCODE_MODE=%a' \"$OPENCODE_CONFIG_DIR/plugins/zentty-opencode-zentty.js\" >>\"$ZENTTY_TEST_RECEIPT\"; fi\nif [ -n \"${SMALL_HARNESS_MANAGED_HOOKS_FILE:-}\" ]; then cp \"$SMALL_HARNESS_MANAGED_HOOKS_FILE\" \"$ZENTTY_TEST_RECEIPT.small\"; stat -c 'SMALL_MODE=%a' \"$SMALL_HARNESS_MANAGED_HOOKS_FILE\" >>\"$ZENTTY_TEST_RECEIPT\"; fi\n",
+            "#!/bin/sh\nif [ \"${1:-}\" = --help ] && [ -n \"${ZENTTY_TEST_KIMI_HELP:-}\" ]; then printf '%b\\n' \"$ZENTTY_TEST_KIMI_HELP\"; exit \"${ZENTTY_TEST_KIMI_HELP_STATUS:-0}\"; fi\nprintf '%s\\n' \"$@\" >\"$ZENTTY_TEST_RECEIPT\"\nprintf 'AGENT=%s\\n' \"${ZENTTY_AGENT_TOOL:-}\" >>\"$ZENTTY_TEST_RECEIPT\"\nprintf 'CANONICAL=%s\\n' \"${ZENTTY_AGENT_CANONICAL_NAME:-}\" >>\"$ZENTTY_TEST_RECEIPT\"\nprintf 'CLAUDECODE=%s\\n' \"${CLAUDECODE:-}\" >>\"$ZENTTY_TEST_RECEIPT\"\nprintf 'GEMINI_SETTINGS=%s\\n' \"${GEMINI_CLI_SYSTEM_SETTINGS_PATH:-}\" >>\"$ZENTTY_TEST_RECEIPT\"\nprintf 'COPILOT_HOME=%s\\n' \"${COPILOT_HOME:-}\" >>\"$ZENTTY_TEST_RECEIPT\"\nprintf 'CURSOR_CONFIG=%s\\n' \"${CURSOR_CONFIG_DIR:-}\" >>\"$ZENTTY_TEST_RECEIPT\"\nprintf 'OPENCODE_CONFIG=%s\\n' \"${OPENCODE_CONFIG_DIR:-}\" >>\"$ZENTTY_TEST_RECEIPT\"\nprintf 'SMALL_HOOKS=%s\\n' \"${SMALL_HARNESS_MANAGED_HOOKS_FILE:-}\" >>\"$ZENTTY_TEST_RECEIPT\"\nprintf 'CURSOR_PID=%s DROID_PID=%s KIMI_PID=%s GROK_PID=%s AGY_PID=%s HERMES_PID=%s VIBE_PID=%s COPILOT_PID=%s SMALL_PID=%s\\n' \"${ZENTTY_CURSOR_PID:-}\" \"${ZENTTY_DROID_PID:-}\" \"${ZENTTY_KIMI_PID:-}\" \"${ZENTTY_GROK_PID:-}\" \"${ZENTTY_AGY_PID:-}\" \"${ZENTTY_HERMES_PID:-}\" \"${ZENTTY_VIBE_PID:-}\" \"${ZENTTY_COPILOT_PID:-}\" \"${ZENTTY_SMALL_HARNESS_PID:-}\" >>\"$ZENTTY_TEST_RECEIPT\"\nprintf 'VIBE_HOOKS=%s\\n' \"${VIBE_ENABLE_EXPERIMENTAL_HOOKS:-}\" >>\"$ZENTTY_TEST_RECEIPT\"\nif [ -n \"${GEMINI_CLI_SYSTEM_SETTINGS_PATH:-}\" ]; then cp \"$GEMINI_CLI_SYSTEM_SETTINGS_PATH\" \"$ZENTTY_TEST_RECEIPT.settings\"; stat -c 'MODE=%a' \"$GEMINI_CLI_SYSTEM_SETTINGS_PATH\" >>\"$ZENTTY_TEST_RECEIPT\"; fi\nif [ -n \"${COPILOT_HOME:-}\" ]; then cp \"$COPILOT_HOME/config.json\" \"$ZENTTY_TEST_RECEIPT.copilot\"; stat -c 'COPILOT_MODE=%a' \"$COPILOT_HOME/config.json\" >>\"$ZENTTY_TEST_RECEIPT\"; fi\nif [ -n \"${CURSOR_CONFIG_DIR:-}\" ]; then cp \"$CURSOR_CONFIG_DIR/hooks.json\" \"$ZENTTY_TEST_RECEIPT.cursor\"; stat -c 'CURSOR_MODE=%a' \"$CURSOR_CONFIG_DIR/hooks.json\" >>\"$ZENTTY_TEST_RECEIPT\"; fi\nif [ -n \"${OPENCODE_CONFIG_DIR:-}\" ]; then cp \"$OPENCODE_CONFIG_DIR/plugins/zentty-opencode-zentty.js\" \"$ZENTTY_TEST_RECEIPT.opencode\"; stat -c 'OPENCODE_MODE=%a' \"$OPENCODE_CONFIG_DIR/plugins/zentty-opencode-zentty.js\" >>\"$ZENTTY_TEST_RECEIPT\"; fi\nif [ -n \"${SMALL_HARNESS_MANAGED_HOOKS_FILE:-}\" ]; then cp \"$SMALL_HARNESS_MANAGED_HOOKS_FILE\" \"$ZENTTY_TEST_RECEIPT.small\"; stat -c 'SMALL_MODE=%a' \"$SMALL_HARNESS_MANAGED_HOOKS_FILE\" >>\"$ZENTTY_TEST_RECEIPT\"; fi\n",
         )
         .unwrap();
         fs::set_permissions(&binary, fs::Permissions::from_mode(0o700)).unwrap();
@@ -324,6 +324,169 @@ fn persistent_agent_passthrough_does_not_install_or_emit_status_environment() {
     assert!(receipt.contains("AGENT=\n"));
     assert!(receipt.contains("KIMI_PID= "));
     assert!(!tool.directory.join(".kimi-code/config.toml").exists());
+}
+
+#[test]
+fn modern_kimi_probe_installs_only_real_home_hooks_without_an_overlay() {
+    let tool = FakeTool::new("kimi");
+    let output = tool
+        .command("kimi")
+        .arg("chat")
+        .env("ZENTTY_TEST_KIMI_HELP", "modern kimi help")
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let receipt = fs::read_to_string(&tool.receipt).unwrap();
+    assert!(receipt.starts_with("chat\n"), "{receipt}");
+    assert!(receipt.contains("AGENT=kimi"), "{receipt}");
+    assert!(tool.directory.join(".kimi-code/config.toml").is_file());
+    assert!(!tool.directory.join(".kimi/config.toml").exists());
+}
+
+#[test]
+fn legacy_kimi_probe_builds_a_private_overlay_and_preserves_user_config() {
+    let tool = FakeTool::new("kimi");
+    let source = tool.directory.join("legacy.toml");
+    fs::write(&source, "model = \"user-choice\"\n").unwrap();
+    let output = tool
+        .command("kimi")
+        .args(["--config-file", source.to_str().unwrap(), "chat"])
+        .env(
+            "ZENTTY_TEST_KIMI_HELP",
+            "\u{1b}[32mlegacy\u{1b}[0m --config-file FILE",
+        )
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let receipt = fs::read_to_string(&tool.receipt).unwrap();
+    let lines = receipt.lines().collect::<Vec<_>>();
+    assert_eq!(lines[0], "--config-file", "{receipt}");
+    let overlay = std::path::Path::new(lines[1]);
+    assert!(overlay.starts_with(tool.directory.join("agent-overlays")));
+    assert!(
+        overlay
+            .parent()
+            .and_then(std::path::Path::file_name)
+            .and_then(std::ffi::OsStr::to_str)
+            .is_some_and(|name| name.starts_with("kimi-"))
+    );
+    let config = fs::read_to_string(overlay).unwrap();
+    assert!(config.contains("model = \"user-choice\""), "{config}");
+    assert_eq!(config.matches("--adapter=kimi").count(), 7, "{config}");
+    assert_eq!(
+        fs::read_to_string(&source).unwrap(),
+        "model = \"user-choice\"\n"
+    );
+    assert_eq!(lines[2], "chat", "{receipt}");
+    assert!(!tool.directory.join(".kimi/config.toml").exists());
+    assert!(!tool.directory.join(".kimi-code/config.toml").exists());
+}
+
+#[test]
+fn modern_kimi_repairs_only_existing_session_paths_in_the_selected_real_home() {
+    let tool = FakeTool::new("kimi");
+    let home = tool.directory.join("custom-kimi-home");
+    let canonical = home.join("sessions/project/session-1");
+    fs::create_dir_all(&canonical).unwrap();
+    fs::write(
+        home.join("session_index.jsonl"),
+        concat!(
+            "{\"sessionId\":\"session-1\",\"sessionDir\":\"/tmp/old/agent-overlays/kimi-dead/sessions/project/session-1\",\"keep\":true}\n",
+            "{\"sessionId\":\"missing\",\"sessionDir\":\"/tmp/old/sessions/missing\"}\n",
+            "not-json\n"
+        ),
+    )
+    .unwrap();
+    let output = tool
+        .command("kimi")
+        .arg("chat")
+        .env("KIMI_CODE_HOME", &home)
+        .env("ZENTTY_TEST_KIMI_HELP", "modern kimi help")
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let lines = fs::read_to_string(home.join("session_index.jsonl")).unwrap();
+    assert!(
+        lines.contains(canonical.to_str().unwrap()),
+        "selected existing session path was not repaired: {lines}"
+    );
+    assert!(lines.contains("\"keep\":true"), "{lines}");
+    assert!(lines.contains("/tmp/old/sessions/missing"), "{lines}");
+    assert!(lines.ends_with("not-json\n"), "{lines}");
+    assert!(home.join("config.toml").is_file());
+    assert!(!tool.directory.join(".kimi-code/config.toml").exists());
+}
+
+#[test]
+fn modern_kimi_rejects_a_stale_runtime_overlay_as_its_persistent_home() {
+    let tool = FakeTool::new("kimi");
+    let stale = tool.directory.join("agent-overlays/kimi-dead");
+    let output = tool
+        .command("kimi")
+        .arg("chat")
+        .env("KIMI_CODE_HOME", &stale)
+        .env("ZENTTY_TEST_KIMI_HELP", "modern kimi help")
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(tool.directory.join(".kimi-code/config.toml").is_file());
+    assert!(!stale.join("config.toml").exists());
+}
+
+#[test]
+fn kimi_probe_failure_and_timeout_abort_without_config_mutation() {
+    let failed = FakeTool::new("kimi");
+    let output = failed
+        .command("kimi")
+        .arg("chat")
+        .env("ZENTTY_TEST_KIMI_HELP", "probe failed")
+        .env("ZENTTY_TEST_KIMI_HELP_STATUS", "9")
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("Kimi variant probe exited"),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(!failed.directory.join(".kimi-code/config.toml").exists());
+
+    let timed_out = FakeTool::new("kimi");
+    fs::write(
+        &timed_out.binary,
+        "#!/bin/sh\nif [ \"${1:-}\" = --help ]; then sleep 1; exit 0; fi\nexit 0\n",
+    )
+    .unwrap();
+    fs::set_permissions(&timed_out.binary, fs::Permissions::from_mode(0o700)).unwrap();
+    let output = timed_out
+        .command("kimi")
+        .arg("chat")
+        .env("ZENTTY_KIMI_PROBE_TIMEOUT_MS", "50")
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("Kimi variant probe timed out"),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(!timed_out.directory.join(".kimi-code/config.toml").exists());
 }
 
 #[test]

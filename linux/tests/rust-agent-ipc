@@ -85,8 +85,8 @@ cleanup() {
 trap cleanup EXIT
 
 case "${scenario}" in
-    full | installed-gemini | copilot-presentation | amp-plugin | cursor-hooks | droid-hooks) ;;
-    *) fail "ZENTTY_AGENT_IPC_SCENARIO must be full, installed-gemini, copilot-presentation, amp-plugin, cursor-hooks, or droid-hooks" ;;
+    full | installed-gemini | copilot-presentation | amp-plugin | cursor-hooks | droid-hooks | kimi-hooks) ;;
+    *) fail "ZENTTY_AGENT_IPC_SCENARIO must be full, installed-gemini, copilot-presentation, amp-plugin, cursor-hooks, droid-hooks, or kimi-hooks" ;;
 esac
 
 case "${backend}" in
@@ -179,6 +179,8 @@ run_adapter() {
     local forbidden="${5:-}"
     local socket=""
     local finish_gate=""
+    local kimi_question_gate=""
+    local kimi_approval_gate=""
 
     log="$(mktemp)"
     start_receipt="$(mktemp)"
@@ -186,21 +188,38 @@ run_adapter() {
     private_home="$(mktemp -d)"
     XDG_CONFIG_HOME="${private_home}/xdg-config" \
         zentty_product_disable_lifecycle_confirmations
-    if [[ "${name}" == cursor || "${name}" == droid ]]; then
+    if [[ "${name}" == cursor || "${name}" == droid || "${name}" == kimi ]]; then
         finish_gate="${state_directory}/controlled-agent-finish.fifo"
         mkfifo "${finish_gate}"
+    fi
+    if [[ "${name}" == kimi ]]; then
+        kimi_question_gate="${state_directory}/kimi-question.fifo"
+        kimi_approval_gate="${state_directory}/kimi-approval.fifo"
+        mkfifo "${kimi_question_gate}" "${kimi_approval_gate}"
     fi
     PATH="${fake_bin}:${PATH}" GDK_SCALE=1 GDK_DPI_SCALE=1 \
         HOME="${private_home}" XDG_CONFIG_HOME="${private_home}/xdg-config" \
         ZENTTY_CLI_DEBUG=1 \
         ZENTTY_CONTROLLED_AGENT_START_RECEIPT="${start_receipt}" \
         ZENTTY_CONTROLLED_AGENT_FINISH_GATE="${finish_gate}" \
+        ZENTTY_CONTROLLED_AGENT_STATE_DIRECTORY="${state_directory}" \
         ZENTTY_CONTROLLED_AGENT_PROFILE="${profile}" \
         "${product}" \
         --command "${command}" \
         --state-directory "${state_directory}" \
         --no-session-restore >"${log}" 2>&1 &
     product_pid=$!
+
+    if [[ "${name}" == kimi ]]; then
+        zentty_product_wait_for_log "${log}" \
+            'sidebar-agent-status pane=pane-1 phase=NeedsInput interaction=Question attention=true' \
+            "Kimi question did not reach visible sidebar presentation" 600
+        printf 'observed\n' >"${kimi_question_gate}"
+        zentty_product_wait_for_log "${log}" \
+            'sidebar-agent-status pane=pane-1 phase=NeedsInput interaction=Approval attention=true' \
+            "Kimi approval did not reach visible sidebar presentation" 600
+        printf 'observed\n' >"${kimi_approval_gate}"
+    fi
 
     for _ in {1..600}; do
         grep -Fq "completed pid:" "${start_receipt}" 2>/dev/null &&
@@ -261,6 +280,21 @@ run_adapter() {
         grep -Fq 'kind=task.delta session=session.safe:droid-42' "${log}" ||
             fail "Droid anonymous subagent counter did not cross the authenticated product boundary"
     fi
+    if [[ "${name}" == kimi ]]; then
+        local kimi_session="session_a8098c1a-3a71-4e50-b36b-f17ab79e6a90"
+        [[ "${profile}" == kimi-legacy-hooks ]] &&
+            kimi_session="a8098c1a-3a71-4e50-b36b-f17ab79e6a90"
+        grep -Fq "${profile}:7" "${start_receipt}" ||
+            fail "Kimi controlled child did not audit all installed hooks"
+        grep -Fq 'kimi-negative-control:rejected' "${start_receipt}" ||
+            fail "Kimi controlled child did not reject the bad pane token"
+        grep -Fq "kind=agent.needs-input session=${kimi_session}" "${log}" ||
+            fail "Kimi input events did not cross the authenticated product boundary"
+        grep -Fq 'interaction=Question attention=true' "${log}" ||
+            fail "Kimi question did not reach visible sidebar presentation"
+        grep -Fq 'interaction=Approval attention=true' "${log}" ||
+            fail "Kimi approval did not reach visible sidebar presentation"
+    fi
 
     socket="$(sed -n 's/^zentty-linux: agent-runtime socket=//p' "${log}" | head -1)"
     [[ -S "${socket}" ]] || fail "private product socket was not live during ${name}"
@@ -268,7 +302,7 @@ run_adapter() {
     [[ "$(stat -c '%a' "$(dirname "${socket}")")" == 700 ]] ||
         fail "product socket directory mode was not 0700"
 
-    if [[ "${name}" == cursor || "${name}" == droid ]]; then
+    if [[ "${name}" == cursor || "${name}" == droid || "${name}" == kimi ]]; then
         zentty_product_prepare_input "${backend}" "${log}"
         zentty_product_close_window "${backend}"
     fi
@@ -293,6 +327,18 @@ run_adapter() {
             (.workingDirectory | type == "string" and length > 0)
         ' "${state_directory}/restore-snapshot.json" >/dev/null ||
             fail "Droid session and working directory were not durable restore state"
+    fi
+    if [[ "${name}" == kimi ]]; then
+        local kimi_session="session_a8098c1a-3a71-4e50-b36b-f17ab79e6a90"
+        [[ "${profile}" == kimi-legacy-hooks ]] &&
+            kimi_session="a8098c1a-3a71-4e50-b36b-f17ab79e6a90"
+        jq -e --arg session "${kimi_session}" '
+            .restoreDraftWindows[0].paneDrafts[0] |
+            .toolName == "Kimi" and
+            .sessionID == $session and
+            (.workingDirectory | type == "string" and length > 0)
+        ' "${state_directory}/restore-snapshot.json" >/dev/null ||
+            fail "Kimi modern session and working directory were not durable restore state"
     fi
     rm -f -- "${log}"
     rm -f -- "${start_receipt}"
@@ -819,9 +865,8 @@ run_adapter \
 run_adapter \
     kimi \
     'kimi' \
-    kimi-adapter \
-    'zentty-linux: sidebar-agent-status pane=pane-1 phase=NeedsInput interaction=Approval attention=true' \
-    'README.md'
+    kimi-hooks \
+    'zentty-linux: sidebar-agent-status pane=pane-1 phase=Idle interaction=None attention=false progress=none'
 run_adapter \
     grok \
     'grok' \
@@ -870,6 +915,19 @@ if [[ "${scenario}" == droid-hooks ]]; then
         'droid' \
         droid-hooks \
         'zentty-linux: sidebar-agent-status pane=pane-1 phase=Idle interaction=None attention=false progress=1/3'
+fi
+
+if [[ "${scenario}" == kimi-hooks ]]; then
+    run_adapter \
+        kimi \
+        'kimi' \
+        kimi-hooks \
+        'zentty-linux: sidebar-agent-status pane=pane-1 phase=Idle interaction=None attention=false progress=none'
+    run_adapter \
+        kimi \
+        'kimi' \
+        kimi-legacy-hooks \
+        'zentty-linux: sidebar-agent-status pane=pane-1 phase=Idle interaction=None attention=false progress=none'
 fi
 
 if [[ "${ZENTTY_REQUIRE_REAL_GEMINI:-false}" == true ]]; then
@@ -1035,6 +1093,8 @@ elif [[ "${scenario}" == cursor-hooks ]]; then
     adapters="cursor-real-hooks"
 elif [[ "${scenario}" == droid-hooks ]]; then
     adapters="droid-real-hooks"
+elif [[ "${scenario}" == kimi-hooks ]]; then
+    adapters="kimi-modern-real-hooks+kimi-legacy-real-hooks"
 else
     adapters="not-run-in-installed-gemini-scenario"
 fi
