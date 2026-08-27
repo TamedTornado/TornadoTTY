@@ -42,6 +42,8 @@ enum AgentEventKind {
     Failed,
     #[serde(rename = "task.progress")]
     TaskProgress,
+    #[serde(rename = "task.snapshot")]
+    TaskSnapshot,
     #[serde(rename = "task.started")]
     TaskStarted,
     #[serde(rename = "task.completed")]
@@ -84,6 +86,13 @@ struct ProgressDescriptor {
 #[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
 struct TaskDescriptor {
     id: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
+struct TaskSnapshotDescriptor {
+    id: Option<String>,
+    #[serde(default)]
+    completed: bool,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, Eq, PartialEq)]
@@ -147,6 +156,9 @@ pub struct AgentEvent {
     state: Option<StateDescriptor>,
     progress: Option<ProgressDescriptor>,
     task: Option<TaskDescriptor>,
+    tasks: Option<Vec<TaskSnapshotDescriptor>>,
+    #[serde(default)]
+    merge: bool,
     artifact: Option<ArtifactDescriptor>,
     context: Option<ContextDescriptor>,
     #[serde(rename = "transcriptPath")]
@@ -212,6 +224,16 @@ impl AgentEvent {
         {
             return Err(AgentProtocolError::MissingTaskIdentity);
         }
+        if event.event == AgentEventKind::TaskSnapshot
+            && (event.session_id().is_none_or(|id| id.trim().is_empty())
+                || event.tasks.as_ref().is_none_or(|tasks| {
+                    tasks
+                        .iter()
+                        .any(|task| task.id.as_deref().is_none_or(|id| id.trim().is_empty()))
+                }))
+        {
+            return Err(AgentProtocolError::MissingTaskIdentity);
+        }
         Ok(event)
     }
 
@@ -228,6 +250,8 @@ impl AgentEvent {
             state: None,
             progress: None,
             task: None,
+            tasks: None,
+            merge: false,
             artifact: None,
             context: None,
             transcript_path: None,
@@ -246,6 +270,7 @@ impl AgentEvent {
             AgentEventKind::InputResolved => "agent.input-resolved",
             AgentEventKind::Failed => "agent.failed",
             AgentEventKind::TaskProgress => "task.progress",
+            AgentEventKind::TaskSnapshot => "task.snapshot",
             AgentEventKind::TaskStarted => "task.started",
             AgentEventKind::TaskCompleted => "task.completed",
         }
@@ -261,6 +286,17 @@ impl AgentEvent {
 
     pub(crate) fn task_id(&self) -> Option<&str> {
         self.task.as_ref()?.id.as_deref()
+    }
+
+    pub(crate) fn task_snapshot(&self) -> Option<(bool, Vec<(&str, bool)>)> {
+        let tasks = self.tasks.as_ref()?;
+        Some((
+            self.merge,
+            tasks
+                .iter()
+                .filter_map(|task| Some((task.id.as_deref()?, task.completed)))
+                .collect(),
+        ))
     }
 
     pub(crate) fn agent_name(&self) -> Option<&str> {

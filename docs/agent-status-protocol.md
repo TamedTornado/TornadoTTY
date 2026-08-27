@@ -231,6 +231,19 @@ Events received after `session.end` are ignored until an explicit
 {"version":1,"event":"task.completed","session":{"id":"session-1"},"task":{"id":"worker-a"}}
 ```
 
+### `task.snapshot`
+
+Built-in adapters use an identity-bearing snapshot when an agent reports a
+whole task list and later sends partial updates. `session.id` and every task
+`id` are required. With `merge: false` (the default), the snapshot replaces the
+session's prior task identities. With `merge: true`, only the supplied task
+identities are updated. This avoids adapter-specific task stores while keeping
+partial updates deterministic in Zentty's canonical status store.
+
+```json
+{"version":1,"event":"task.snapshot","session":{"id":"session-1"},"merge":true,"tasks":[{"id":"task-a","completed":true}]}
+```
+
 ## 5. JSON Schema
 
 Every event uses the same JSON envelope. Only `version` and `event` are required — everything else is optional with sensible defaults.
@@ -243,6 +256,9 @@ Every event uses the same JSON envelope. Only `version` and `event` are required
   "session": { ... },
   "state": { ... },
   "progress": { ... },
+  "task": { ... },
+  "tasks": [ ... ],
+  "merge": false,
   "artifact": { ... },
   "context": { ... }
 }
@@ -253,7 +269,7 @@ Every event uses the same JSON envelope. Only `version` and `event` are required
 | Field | Type | Required | Description |
 |---|---|---|---|
 | `version` | integer | yes | Protocol version. Must be `1`. |
-| `event` | string | yes | One of: `session.start`, `session.end`, `agent.running`, `agent.compacting`, `agent.compacted`, `agent.idle`, `agent.needs-input`, `agent.input-resolved`, `agent.failed`, `task.progress`, `task.started`, `task.completed`. |
+| `event` | string | yes | One of: `session.start`, `session.end`, `agent.running`, `agent.compacting`, `agent.compacted`, `agent.idle`, `agent.needs-input`, `agent.input-resolved`, `agent.failed`, `task.progress`, `task.snapshot`, `task.started`, `task.completed`. |
 
 ### `agent` Object
 
@@ -298,6 +314,13 @@ Task progress counters. Can be sent with any event but is primarily intended for
 |---|---|---|---|
 | `done` | integer | yes | Number of completed tasks. Clamped to `[0, total]`. |
 | `total` | integer | yes | Total number of tasks. Must be greater than 0. |
+
+### `tasks` Array and `merge`
+
+`task.snapshot` carries a `tasks` array of `{ "id": string, "completed":
+boolean }` objects. `session.id` and every non-blank task ID are required. The
+top-level `merge` boolean defaults to `false`; `false` replaces the identity
+set and `true` updates only the supplied identities.
 
 ### `artifact` Object
 

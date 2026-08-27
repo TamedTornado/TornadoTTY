@@ -687,6 +687,11 @@ fn remaining_managed_agents_produce_their_source_resume_invocations() {
             "123e4567-e89b-12d3-a456-426614174000",
             "copilot --resume=123e4567-e89b-12d3-a456-426614174000",
         ),
+        (
+            "Cursor",
+            "123e4567-e89b-12d3-a456-426614174002",
+            "cursor-agent --resume=123e4567-e89b-12d3-a456-426614174002",
+        ),
         ("OpenCode", "ses_AbC123", "opencode --session ses_AbC123"),
         ("Pi", "project-session", "pi -c"),
         ("OMP", "project-session", "omp -c"),

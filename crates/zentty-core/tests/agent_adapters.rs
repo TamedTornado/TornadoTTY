@@ -917,6 +917,138 @@ fn cursor_and_droid_todo_hooks_emit_observable_progress() {
 }
 
 #[test]
+fn cursor_todo_identity_snapshots_merge_in_the_canonical_status_store() {
+    let target = AgentTarget::new("window", "lane", "pane");
+    let mut store = AgentStatusStore::default();
+    let mut now = 0;
+    for payload in [
+        br#"{"hook_event_name":"preToolUse","conversation_id":"cursor-merge","tool_name":"TodoWrite","tool_input":{"merge":false,"todos":[{"id":"one","status":"pending"},{"id":"two","status":"pending"},{"id":"three","status":"pending"},{"id":"four","status":"pending"},{"id":"five","status":"pending"}]}}"#.as_slice(),
+        br#"{"hook_event_name":"preToolUse","conversation_id":"cursor-merge","tool_name":"TodoWrite","tool_input":{"merge":true,"todos":[{"id":"one","status":"completed"},{"id":"three","status":"completed"}]}}"#.as_slice(),
+        br#"{"hook_event_name":"postToolUse","conversation_id":"cursor-merge","tool_name":"TodoWrite","tool_input":{"merge":true,"todos":[{"id":"six","status":"pending"}]}}"#.as_slice(),
+    ] {
+        for event in adapt_cursor_hook(payload, Some(8181)).unwrap() {
+            store.apply(
+                AuthenticatedAgentEvent {
+                    target: target.clone(),
+                    pane_token: "token".to_owned(),
+                    event,
+                },
+                now,
+            );
+            now += 1;
+        }
+    }
+    let status = store.status_for(&target).unwrap();
+    assert_eq!(status.phase, AgentPhase::Running);
+    assert_eq!(
+        status
+            .progress
+            .map(|progress| (progress.done, progress.total)),
+        Some((2, 6))
+    );
+
+    for event in adapt_cursor_hook(
+        br#"{"hook_event_name":"stop","conversation_id":"cursor-merge","status":"completed"}"#,
+        Some(8181),
+    )
+    .unwrap()
+    {
+        store.apply(
+            AuthenticatedAgentEvent {
+                target: target.clone(),
+                pane_token: "token".to_owned(),
+                event,
+            },
+            now,
+        );
+        now += 1;
+    }
+    let stopped = store.status_for(&target).unwrap();
+    assert_eq!(stopped.phase, AgentPhase::Idle);
+    assert_eq!(
+        stopped
+            .progress
+            .map(|progress| (progress.done, progress.total)),
+        Some((2, 6))
+    );
+}
+
+#[test]
+fn cursor_payload_identity_captures_cwd_transcript_and_suppresses_noise() {
+    let cwd = std::env::temp_dir();
+    let payload = format!(
+        r#"{{"hookEventName":"sessionStart","conversationId":"cursor-camel","workspaceRoots":[{:?}],"transcriptPath":"/tmp/cursor-transcript.jsonl"}}"#,
+        cwd.to_string_lossy()
+    );
+    let status = reduce(adapt_cursor_hook(payload.as_bytes(), Some(9191)).unwrap());
+    assert_eq!(status.session_id, "cursor-camel");
+    assert_eq!(status.tracked_pid, Some(9191));
+    assert_eq!(
+        status.working_directory.as_deref(),
+        Some(cwd.to_string_lossy().as_ref())
+    );
+    assert_eq!(
+        status.transcript_path.as_deref(),
+        Some("/tmp/cursor-transcript.jsonl")
+    );
+    assert!(
+        adapt_cursor_hook(
+            br#"{"hook_event_name":"beforeShellExecution","conversation_id":"cursor-camel"}"#,
+            None,
+        )
+        .unwrap()
+        .is_empty()
+    );
+}
+
+#[test]
+fn cursor_checklists_and_subagents_use_shared_progress_projection() {
+    let checklist = reduce(
+        adapt_cursor_hook(
+            br#"{"hook_event_name":"postToolUse","conversationId":"cursor-checklist","toolName":"TodoWrite","toolInput":{"todos":"- [x] Review logs\n- [ ] Run tests"}}"#,
+            Some(7272),
+        )
+        .unwrap(),
+    );
+    assert_eq!(checklist.phase, AgentPhase::Running);
+    assert_eq!(
+        checklist
+            .progress
+            .map(|progress| (progress.done, progress.total)),
+        Some((1, 2))
+    );
+
+    let target = AgentTarget::new("window", "lane", "subagent-pane");
+    let mut store = AgentStatusStore::default();
+    let mut now = 0;
+    for payload in [
+        br#"{"hook_event_name":"subagentStart","parent_conversation_id":"cursor-parent","subagent_id":"worker-one"}"#.as_slice(),
+        br#"{"hook_event_name":"subagentStop","parentConversationId":"cursor-parent","subagentId":"worker-one"}"#.as_slice(),
+    ] {
+        for event in adapt_cursor_hook(payload, Some(7373)).unwrap() {
+            store.apply(
+                AuthenticatedAgentEvent {
+                    target: target.clone(),
+                    pane_token: "token".to_owned(),
+                    event,
+                },
+                now,
+            );
+            now += 1;
+        }
+    }
+    let status = store.status_for(&target).unwrap();
+    assert_eq!(status.session_id, "cursor-parent");
+    assert_eq!(status.phase, AgentPhase::Running);
+    assert_eq!(
+        status
+            .progress
+            .map(|progress| (progress.done, progress.total)),
+        Some((1, 1))
+    );
+}
+
+#[test]
 fn gemini_hooks_map_the_complete_source_lifecycle() {
     const SOURCE: &str = include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),

@@ -311,6 +311,10 @@ impl PaneRestoreDraft {
             let session_id = validated_uuid(&self.session_id)?;
             return Some(format!("copilot --resume={session_id}"));
         }
+        if self.tool_name.eq_ignore_ascii_case("cursor") {
+            let session_id = validated_uuid(&self.session_id)?;
+            return Some(format!("cursor-agent --resume={session_id}"));
+        }
         if self.tool_name.eq_ignore_ascii_case("opencode") {
             let session_id = validated_opencode_session_id(&self.session_id)?;
             return Some(format!("opencode --session {session_id}"));

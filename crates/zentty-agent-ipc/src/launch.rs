@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use zentty_core::{
     AgentLaunchAction, AgentLaunchTool, agent_launch_requires_bootstrap, build_agent_launch_plan,
-    build_copilot_config, build_gemini_settings, build_small_harness_hooks,
+    build_copilot_config, build_cursor_hooks, build_gemini_settings, build_small_harness_hooks,
 };
 
 #[derive(Debug)]
@@ -87,6 +87,7 @@ pub fn launch_agent(tool: &str, arguments: &[String]) -> Result<(), LaunchError>
     .map_err(|error| LaunchError::Plan(error.to_string()))?;
     let mut integrated = !plan.set_environment.is_empty();
     if integrated
+        && tool != AgentLaunchTool::Cursor
         && let Some(target) = tool.persistent_integration_target()
         && let Err(error) = install_integration(target)
     {
@@ -189,6 +190,7 @@ fn prepare_remaining_launch_environment(
     }
     match tool {
         AgentLaunchTool::Copilot => prepare_copilot_overlay(arguments, environment, cli_path),
+        AgentLaunchTool::Cursor => prepare_cursor_overlay(environment, cli_path),
         AgentLaunchTool::OpenCode => prepare_opencode_overlay(environment),
         AgentLaunchTool::Pi => select_extension(
             environment,
@@ -204,7 +206,6 @@ fn prepare_remaining_launch_environment(
         AgentLaunchTool::Amp
         | AgentLaunchTool::Claude
         | AgentLaunchTool::Codex
-        | AgentLaunchTool::Cursor
         | AgentLaunchTool::Droid
         | AgentLaunchTool::Gemini
         | AgentLaunchTool::Kimi
@@ -213,6 +214,55 @@ fn prepare_remaining_launch_environment(
         | AgentLaunchTool::Hermes
         | AgentLaunchTool::Vibe => Ok(()),
     }
+}
+
+fn prepare_cursor_overlay(
+    environment: &mut BTreeMap<String, String>,
+    cli_path: &str,
+) -> Result<(), LaunchError> {
+    let directory = create_private_tool_directory(environment, "cursor")?;
+    let config = directory.join(".cursor");
+    fs::create_dir(&config)
+        .and_then(|()| fs::set_permissions(&config, fs::Permissions::from_mode(0o700)))
+        .map_err(|error| LaunchError::Plan(format!("could not create Cursor overlay: {error}")))?;
+    let source = environment
+        .get("CURSOR_CONFIG_DIR")
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+        .or_else(|| {
+            environment
+                .get("HOME")
+                .filter(|value| !value.is_empty())
+                .map(|home| Path::new(home).join(".cursor"))
+        });
+    if let Some(source) = source.filter(|path| path.is_dir()) {
+        for entry in fs::read_dir(&source)
+            .map_err(|error| LaunchError::Plan(format!("could not read Cursor config: {error}")))?
+        {
+            let entry = entry.map_err(|error| {
+                LaunchError::Plan(format!("could not inspect Cursor config: {error}"))
+            })?;
+            if entry.file_name() == "hooks.json" {
+                continue;
+            }
+            std::os::unix::fs::symlink(entry.path(), config.join(entry.file_name())).map_err(
+                |error| {
+                    LaunchError::Plan(format!(
+                        "could not project Cursor config entry {}: {error}",
+                        entry.path().display()
+                    ))
+                },
+            )?;
+        }
+    }
+    let hooks =
+        build_cursor_hooks(cli_path).map_err(|error| LaunchError::Plan(error.to_string()))?;
+    write_private_file(&config.join("hooks.json"), &hooks, "Cursor hooks")?;
+    environment.insert(
+        "ZENTTY_CURSOR_CONFIG_OVERLAY".to_owned(),
+        config.to_string_lossy().into_owned(),
+    );
+    Ok(())
 }
 
 fn prepare_copilot_overlay(

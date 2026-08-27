@@ -3083,6 +3083,11 @@ impl WorkspaceState {
                 "copilot".to_owned(),
                 format!("--resume={}", status.session_id),
             ]
+        } else if status.agent_name.eq_ignore_ascii_case("cursor") {
+            vec![
+                "cursor-agent".to_owned(),
+                format!("--resume={}", status.session_id),
+            ]
         } else if status.agent_name.eq_ignore_ascii_case("opencode") {
             vec![
                 "opencode".to_owned(),

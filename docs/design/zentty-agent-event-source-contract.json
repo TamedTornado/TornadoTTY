@@ -21,6 +21,7 @@
     {"id":"agent.input-resolved","source":true,"linux":"IMPLEMENTED","effect":"running;clear-interaction"},
     {"id":"agent.failed","source":false,"linux":"IMPLEMENTED","effect":"explicit-source-failure-to-unresolved-stop-with-bounded-visibility"},
     {"id":"task.progress","source":true,"linux":"IMPLEMENTED","effect":"clamped-session-progress"},
+    {"id":"task.snapshot","source":false,"linux":"IMPLEMENTED","effect":"replace-or-merge-identity-bearing-session-task-snapshot"},
     {"id":"task.started","source":false,"linux":"IMPLEMENTED","effect":"idempotently-add-source-task-by-session-and-task-identity"},
     {"id":"task.completed","source":false,"linux":"IMPLEMENTED","effect":"idempotently-complete-source-task-even-when-completion-arrives-first"}
   ],

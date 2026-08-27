@@ -30,7 +30,7 @@ impl FakeTool {
         let binary = directory.join(name);
         fs::write(
             &binary,
-            "#!/bin/sh\nprintf '%s\\n' \"$@\" >\"$ZENTTY_TEST_RECEIPT\"\nprintf 'AGENT=%s\\n' \"${ZENTTY_AGENT_TOOL:-}\" >>\"$ZENTTY_TEST_RECEIPT\"\nprintf 'CANONICAL=%s\\n' \"${ZENTTY_AGENT_CANONICAL_NAME:-}\" >>\"$ZENTTY_TEST_RECEIPT\"\nprintf 'CLAUDECODE=%s\\n' \"${CLAUDECODE:-}\" >>\"$ZENTTY_TEST_RECEIPT\"\nprintf 'GEMINI_SETTINGS=%s\\n' \"${GEMINI_CLI_SYSTEM_SETTINGS_PATH:-}\" >>\"$ZENTTY_TEST_RECEIPT\"\nprintf 'COPILOT_HOME=%s\\n' \"${COPILOT_HOME:-}\" >>\"$ZENTTY_TEST_RECEIPT\"\nprintf 'OPENCODE_CONFIG=%s\\n' \"${OPENCODE_CONFIG_DIR:-}\" >>\"$ZENTTY_TEST_RECEIPT\"\nprintf 'SMALL_HOOKS=%s\\n' \"${SMALL_HARNESS_MANAGED_HOOKS_FILE:-}\" >>\"$ZENTTY_TEST_RECEIPT\"\nprintf 'CURSOR_PID=%s DROID_PID=%s KIMI_PID=%s GROK_PID=%s AGY_PID=%s HERMES_PID=%s VIBE_PID=%s COPILOT_PID=%s SMALL_PID=%s\\n' \"${ZENTTY_CURSOR_PID:-}\" \"${ZENTTY_DROID_PID:-}\" \"${ZENTTY_KIMI_PID:-}\" \"${ZENTTY_GROK_PID:-}\" \"${ZENTTY_AGY_PID:-}\" \"${ZENTTY_HERMES_PID:-}\" \"${ZENTTY_VIBE_PID:-}\" \"${ZENTTY_COPILOT_PID:-}\" \"${ZENTTY_SMALL_HARNESS_PID:-}\" >>\"$ZENTTY_TEST_RECEIPT\"\nprintf 'VIBE_HOOKS=%s\\n' \"${VIBE_ENABLE_EXPERIMENTAL_HOOKS:-}\" >>\"$ZENTTY_TEST_RECEIPT\"\nif [ -n \"${GEMINI_CLI_SYSTEM_SETTINGS_PATH:-}\" ]; then cp \"$GEMINI_CLI_SYSTEM_SETTINGS_PATH\" \"$ZENTTY_TEST_RECEIPT.settings\"; stat -c 'MODE=%a' \"$GEMINI_CLI_SYSTEM_SETTINGS_PATH\" >>\"$ZENTTY_TEST_RECEIPT\"; fi\nif [ -n \"${COPILOT_HOME:-}\" ]; then cp \"$COPILOT_HOME/config.json\" \"$ZENTTY_TEST_RECEIPT.copilot\"; stat -c 'COPILOT_MODE=%a' \"$COPILOT_HOME/config.json\" >>\"$ZENTTY_TEST_RECEIPT\"; fi\nif [ -n \"${OPENCODE_CONFIG_DIR:-}\" ]; then cp \"$OPENCODE_CONFIG_DIR/plugins/zentty-opencode-zentty.js\" \"$ZENTTY_TEST_RECEIPT.opencode\"; stat -c 'OPENCODE_MODE=%a' \"$OPENCODE_CONFIG_DIR/plugins/zentty-opencode-zentty.js\" >>\"$ZENTTY_TEST_RECEIPT\"; fi\nif [ -n \"${SMALL_HARNESS_MANAGED_HOOKS_FILE:-}\" ]; then cp \"$SMALL_HARNESS_MANAGED_HOOKS_FILE\" \"$ZENTTY_TEST_RECEIPT.small\"; stat -c 'SMALL_MODE=%a' \"$SMALL_HARNESS_MANAGED_HOOKS_FILE\" >>\"$ZENTTY_TEST_RECEIPT\"; fi\n",
+            "#!/bin/sh\nprintf '%s\\n' \"$@\" >\"$ZENTTY_TEST_RECEIPT\"\nprintf 'AGENT=%s\\n' \"${ZENTTY_AGENT_TOOL:-}\" >>\"$ZENTTY_TEST_RECEIPT\"\nprintf 'CANONICAL=%s\\n' \"${ZENTTY_AGENT_CANONICAL_NAME:-}\" >>\"$ZENTTY_TEST_RECEIPT\"\nprintf 'CLAUDECODE=%s\\n' \"${CLAUDECODE:-}\" >>\"$ZENTTY_TEST_RECEIPT\"\nprintf 'GEMINI_SETTINGS=%s\\n' \"${GEMINI_CLI_SYSTEM_SETTINGS_PATH:-}\" >>\"$ZENTTY_TEST_RECEIPT\"\nprintf 'COPILOT_HOME=%s\\n' \"${COPILOT_HOME:-}\" >>\"$ZENTTY_TEST_RECEIPT\"\nprintf 'CURSOR_CONFIG=%s\\n' \"${CURSOR_CONFIG_DIR:-}\" >>\"$ZENTTY_TEST_RECEIPT\"\nprintf 'OPENCODE_CONFIG=%s\\n' \"${OPENCODE_CONFIG_DIR:-}\" >>\"$ZENTTY_TEST_RECEIPT\"\nprintf 'SMALL_HOOKS=%s\\n' \"${SMALL_HARNESS_MANAGED_HOOKS_FILE:-}\" >>\"$ZENTTY_TEST_RECEIPT\"\nprintf 'CURSOR_PID=%s DROID_PID=%s KIMI_PID=%s GROK_PID=%s AGY_PID=%s HERMES_PID=%s VIBE_PID=%s COPILOT_PID=%s SMALL_PID=%s\\n' \"${ZENTTY_CURSOR_PID:-}\" \"${ZENTTY_DROID_PID:-}\" \"${ZENTTY_KIMI_PID:-}\" \"${ZENTTY_GROK_PID:-}\" \"${ZENTTY_AGY_PID:-}\" \"${ZENTTY_HERMES_PID:-}\" \"${ZENTTY_VIBE_PID:-}\" \"${ZENTTY_COPILOT_PID:-}\" \"${ZENTTY_SMALL_HARNESS_PID:-}\" >>\"$ZENTTY_TEST_RECEIPT\"\nprintf 'VIBE_HOOKS=%s\\n' \"${VIBE_ENABLE_EXPERIMENTAL_HOOKS:-}\" >>\"$ZENTTY_TEST_RECEIPT\"\nif [ -n \"${GEMINI_CLI_SYSTEM_SETTINGS_PATH:-}\" ]; then cp \"$GEMINI_CLI_SYSTEM_SETTINGS_PATH\" \"$ZENTTY_TEST_RECEIPT.settings\"; stat -c 'MODE=%a' \"$GEMINI_CLI_SYSTEM_SETTINGS_PATH\" >>\"$ZENTTY_TEST_RECEIPT\"; fi\nif [ -n \"${COPILOT_HOME:-}\" ]; then cp \"$COPILOT_HOME/config.json\" \"$ZENTTY_TEST_RECEIPT.copilot\"; stat -c 'COPILOT_MODE=%a' \"$COPILOT_HOME/config.json\" >>\"$ZENTTY_TEST_RECEIPT\"; fi\nif [ -n \"${CURSOR_CONFIG_DIR:-}\" ]; then cp \"$CURSOR_CONFIG_DIR/hooks.json\" \"$ZENTTY_TEST_RECEIPT.cursor\"; stat -c 'CURSOR_MODE=%a' \"$CURSOR_CONFIG_DIR/hooks.json\" >>\"$ZENTTY_TEST_RECEIPT\"; fi\nif [ -n \"${OPENCODE_CONFIG_DIR:-}\" ]; then cp \"$OPENCODE_CONFIG_DIR/plugins/zentty-opencode-zentty.js\" \"$ZENTTY_TEST_RECEIPT.opencode\"; stat -c 'OPENCODE_MODE=%a' \"$OPENCODE_CONFIG_DIR/plugins/zentty-opencode-zentty.js\" >>\"$ZENTTY_TEST_RECEIPT\"; fi\nif [ -n \"${SMALL_HARNESS_MANAGED_HOOKS_FILE:-}\" ]; then cp \"$SMALL_HARNESS_MANAGED_HOOKS_FILE\" \"$ZENTTY_TEST_RECEIPT.small\"; stat -c 'SMALL_MODE=%a' \"$SMALL_HARNESS_MANAGED_HOOKS_FILE\" >>\"$ZENTTY_TEST_RECEIPT\"; fi\n",
         )
         .unwrap();
         fs::set_permissions(&binary, fs::Permissions::from_mode(0o700)).unwrap();
@@ -217,12 +217,6 @@ fn gemini_overlay_refuses_a_substituted_or_non_private_runtime_root() {
 fn real_cli_launches_every_persistent_agent_with_managed_hooks_and_pid() {
     for (tool_name, binary_name, installed_path, pid_key) in [
         (
-            "cursor",
-            "cursor-agent",
-            ".cursor/hooks.json",
-            "CURSOR_PID=",
-        ),
-        (
             "droid",
             "droid",
             ".factory/settings.local.json",
@@ -275,6 +269,48 @@ fn real_cli_launches_every_persistent_agent_with_managed_hooks_and_pid() {
 }
 
 #[test]
+fn cursor_launch_uses_private_hooks_without_mutating_user_configuration() {
+    let tool = FakeTool::new("cursor-agent");
+    let runtime = tool.directory.join("runtime");
+    let source = tool.directory.join(".cursor");
+    fs::create_dir_all(&runtime).unwrap();
+    fs::create_dir_all(&source).unwrap();
+    let user_hooks = br#"{"version":1,"hooks":{"sessionStart":[{"command":"user-hook"}]}}"#;
+    fs::write(source.join("hooks.json"), user_hooks).unwrap();
+    fs::write(source.join("state.db"), b"cursor-user-state").unwrap();
+
+    let output = tool
+        .command("cursor")
+        .args(["--model", "cursor-fast"])
+        .env("ZENTTY_INSTANCE_SOCKET", runtime.join("instance.sock"))
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(fs::read(source.join("hooks.json")).unwrap(), user_hooks);
+    let receipt = fs::read_to_string(&tool.receipt).unwrap();
+    assert!(receipt.starts_with("--model\ncursor-fast\n"), "{receipt}");
+    assert!(receipt.contains("AGENT=cursor"), "{receipt}");
+    assert!(receipt.contains("CURSOR_MODE=600"), "{receipt}");
+    let overlay = receipt
+        .lines()
+        .find_map(|line| line.strip_prefix("CURSOR_CONFIG="))
+        .unwrap();
+    assert!(std::path::Path::new(overlay).starts_with(runtime));
+    assert_eq!(
+        fs::read_link(std::path::Path::new(overlay).join("state.db")).unwrap(),
+        source.join("state.db")
+    );
+    let hooks: serde_json::Value =
+        serde_json::from_slice(&fs::read(tool.receipt.with_extension("cursor")).unwrap()).unwrap();
+    assert_eq!(hooks["hooks"].as_object().unwrap().len(), 10);
+    assert_eq!(hooks["hooks"]["preToolUse"][0]["matcher"], "TodoWrite");
+}
+
+#[test]
 fn persistent_agent_passthrough_does_not_install_or_emit_status_environment() {
     let tool = FakeTool::new("kimi");
     let output = tool.command("kimi").arg("login").output().unwrap();
@@ -291,7 +327,7 @@ fn persistent_agent_passthrough_does_not_install_or_emit_status_environment() {
 }
 
 #[test]
-fn failed_persistent_hook_install_never_prevents_the_real_agent_launch() {
+fn cursor_private_overlay_ignores_but_preserves_malformed_user_hooks() {
     let tool = FakeTool::new("cursor-agent");
     fs::create_dir_all(tool.directory.join(".cursor")).unwrap();
     fs::write(tool.directory.join(".cursor/hooks.json"), "not-json").unwrap();
@@ -306,11 +342,12 @@ fn failed_persistent_hook_install_never_prevents_the_real_agent_launch() {
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
-    assert!(String::from_utf8_lossy(&output.stderr).contains("launching directly"));
+    assert!(!String::from_utf8_lossy(&output.stderr).contains("launching directly"));
     let receipt = fs::read_to_string(&tool.receipt).unwrap();
     assert!(receipt.starts_with("chat\n"));
-    assert!(receipt.contains("AGENT=\n"));
-    assert!(receipt.contains("CURSOR_PID= "));
+    assert!(receipt.contains("AGENT=cursor\n"));
+    assert!(!receipt.contains("CURSOR_PID= "));
+    assert!(receipt.contains("CURSOR_MODE=600"));
     assert_eq!(
         fs::read(tool.directory.join(".cursor/hooks.json")).unwrap(),
         b"not-json"

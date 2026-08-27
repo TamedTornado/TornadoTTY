@@ -85,8 +85,8 @@ cleanup() {
 trap cleanup EXIT
 
 case "${scenario}" in
-    full | installed-gemini | copilot-presentation | amp-plugin) ;;
-    *) fail "ZENTTY_AGENT_IPC_SCENARIO must be full, installed-gemini, copilot-presentation, or amp-plugin" ;;
+    full | installed-gemini | copilot-presentation | amp-plugin | cursor-hooks) ;;
+    *) fail "ZENTTY_AGENT_IPC_SCENARIO must be full, installed-gemini, copilot-presentation, amp-plugin, or cursor-hooks" ;;
 esac
 
 case "${backend}" in
@@ -116,7 +116,7 @@ esac
 if [[ "${scenario}" == installed-gemini && "${ZENTTY_REQUIRE_REAL_GEMINI:-false}" != true ]]; then
     fail "installed-gemini scenario requires the reviewed real Gemini prerequisite"
 fi
-for dependency in cut grep jq mktemp ps sed sha256sum sleep stat; do
+for dependency in cut grep jq mkfifo mktemp ps sed sha256sum sleep stat; do
     command -v "${dependency}" >/dev/null || fail "${dependency} is required"
 done
 [[ -x "${product}" ]] || fail "staged product is not built: ${product}"
@@ -178,13 +178,19 @@ run_adapter() {
     local expected="$4"
     local forbidden="${5:-}"
     local socket=""
+    local finish_gate=""
 
     log="$(mktemp)"
     start_receipt="$(mktemp)"
     state_directory="$(mktemp -d)"
+    if [[ "${name}" == cursor ]]; then
+        finish_gate="${state_directory}/controlled-agent-finish.fifo"
+        mkfifo "${finish_gate}"
+    fi
     PATH="${fake_bin}:${PATH}" GDK_SCALE=1 GDK_DPI_SCALE=1 \
         ZENTTY_CLI_DEBUG=1 \
         ZENTTY_CONTROLLED_AGENT_START_RECEIPT="${start_receipt}" \
+        ZENTTY_CONTROLLED_AGENT_FINISH_GATE="${finish_gate}" \
         ZENTTY_CONTROLLED_AGENT_PROFILE="${profile}" \
         "${product}" \
         --command "${command}" \
@@ -229,6 +235,16 @@ run_adapter() {
         [[ "$(stat -c '%a' "${overlay}/themes/zentty-synced.json")" == 600 ]] ||
             fail "OpenCode synchronized theme was not private"
     fi
+    if [[ "${name}" == cursor ]]; then
+        grep -Fq 'cursor-hooks:10' "${start_receipt}" ||
+            fail "Cursor controlled child did not audit all generated hooks"
+        grep -Fq 'cursor-negative-control:rejected' "${start_receipt}" ||
+            fail "Cursor controlled child did not reject the bad pane token"
+        grep -Fq 'kind=agent.running session=123e4567-e89b-12d3-a456-426614174000' "${log}" ||
+            fail "Cursor Running event did not cross the authenticated product boundary"
+        grep -Fq 'kind=task.snapshot session=123e4567-e89b-12d3-a456-426614174000' "${log}" ||
+            fail "Cursor merged TodoWrite snapshot did not cross the authenticated product boundary"
+    fi
 
     socket="$(sed -n 's/^zentty-linux: agent-runtime socket=//p' "${log}" | head -1)"
     [[ -S "${socket}" ]] || fail "private product socket was not live during ${name}"
@@ -236,10 +252,23 @@ run_adapter() {
     [[ "$(stat -c '%a' "$(dirname "${socket}")")" == 700 ]] ||
         fail "product socket directory mode was not 0700"
 
+    if [[ "${name}" == cursor ]]; then
+        zentty_product_prepare_input "${backend}" "${log}"
+        zentty_product_close_window "${backend}"
+    fi
     wait_for_product "${name} product run" 200
     [[ ! -e "${socket}" ]] || fail "${name} product left its agent socket behind"
     [[ ! -e "$(dirname "${socket}")" ]] ||
         fail "${name} product left its private runtime directory behind"
+    if [[ "${name}" == cursor ]]; then
+        jq -e '
+            .restoreDraftWindows[0].paneDrafts[0] |
+            .toolName == "Cursor" and
+            .sessionID == "123e4567-e89b-12d3-a456-426614174000" and
+            (.workingDirectory | type == "string" and length > 0)
+        ' "${state_directory}/restore-snapshot.json" >/dev/null ||
+            fail "Cursor UUID and working directory were not durable restore state"
+    fi
     rm -f -- "${log}"
     rm -f -- "${start_receipt}"
     start_receipt=""
@@ -754,8 +783,8 @@ run_gemini_terminal_notifications
 run_adapter \
     cursor \
     'cursor-agent' \
-    cursor-adapter \
-    'zentty-linux: sidebar-agent-status pane=pane-1 phase=UnresolvedStop interaction=None attention=false'
+    cursor-hooks \
+    'zentty-linux: sidebar-agent-status pane=pane-1 phase=Idle interaction=None attention=false progress=2/4'
 run_adapter \
     droid \
     'droid' \
@@ -800,6 +829,14 @@ fi
 
 if [[ "${scenario}" == amp-plugin ]]; then
     run_amp_plugin
+fi
+
+if [[ "${scenario}" == cursor-hooks ]]; then
+    run_adapter \
+        cursor \
+        'cursor-agent' \
+        cursor-hooks \
+        'zentty-linux: sidebar-agent-status pane=pane-1 phase=Idle interaction=None attention=false progress=2/4'
 fi
 
 if [[ "${ZENTTY_REQUIRE_REAL_GEMINI:-false}" == true ]]; then
@@ -961,6 +998,8 @@ elif [[ "${scenario}" == copilot-presentation ]]; then
     adapters="copilot-presentation"
 elif [[ "${scenario}" == amp-plugin ]]; then
     adapters="amp-real-plugin"
+elif [[ "${scenario}" == cursor-hooks ]]; then
+    adapters="cursor-real-hooks"
 else
     adapters="not-run-in-installed-gemini-scenario"
 fi

@@ -873,12 +873,22 @@
       "swift_tests": ["ZenttyLogicTests/AgentStatusSupportTests.swift"],
       "classification": "REQUIRED_LATER",
       "origin": "PORT_PARITY",
-      "user_impact": "Cursor remains usable, but its hook-driven state is deferred.",
-      "linux_owner_issue": 7,
-      "implementation_status": "NOT_IMPLEMENTED",
-      "focused_tests": [],
-      "product_scenarios": [],
-      "test_plan": "Run Cursor's real hook installer, terminal, event adapter, and visible status path.",
+      "user_impact": "Cursor launches receive isolated managed hooks, visible lifecycle and task state, attention, and safe UUID-based restoration without mutating user hook configuration.",
+      "linux_owner_issue": 128,
+      "implementation_status": "IMPLEMENTED",
+      "focused_tests": [
+        "crates/zentty-core/tests/agent_launch.rs",
+        "crates/zentty-core/tests/agent_adapters.rs",
+        "crates/zentty-core/tests/agent_status.rs",
+        "crates/zentty-core/tests/workspace_recipe.rs",
+        "crates/zentty-core/tests/workspace_state.rs",
+        "crates/zentty-agent-ipc/tests/integration_cli.rs",
+        "crates/zentty-agent-ipc/tests/launch_cli.rs"
+      ],
+      "product_scenarios": [
+        "linux/tests/rust-agent-ipc"
+      ],
+      "test_plan": "Unit and integration tests prove the complete ten-event hook file, shell-safe command, private mode-0700 per-launch Cursor config with mode-0600 hooks, byte-identical user-hook preservation including malformed input, explicit persistent install/uninstall ownership, original argument and PID projection, snake/camel identities, workspace-root and transcript capture, array/checklist TodoWrite progress, deterministic partial identity merges in the canonical status store, subagent identity, completed/error/aborted stop behavior, strict UUID-only resume, and restore-draft capture. The focused controlled nested-X11 product journey executes the generated hook commands through the staged wrapper, real PTY, helper, authenticated Unix socket, Ghostty, and sidebar; it rejects a bad pane token, proves final Idle 2/4 projection, and closes the real window while Cursor remains live to verify durable UUID/CWD restore state. A live Cursor account/model request remains the controlled external boundary.",
       "alternative_or_blocker": null
     },
     {

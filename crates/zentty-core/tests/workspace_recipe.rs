@@ -81,6 +81,22 @@ fn supported_agent_restore_commands_are_source_compatible_and_injection_safe() {
         Some("opencode --session ses_AbC123")
     );
 
+    draft.tool_name = "Cursor".to_owned();
+    draft.session_id = "123E4567-E89B-12D3-A456-426614174000".to_owned();
+    assert_eq!(
+        draft.resume_command().as_deref(),
+        Some("cursor-agent --resume=123e4567-e89b-12d3-a456-426614174000")
+    );
+    for session_id in [
+        "not-a-uuid",
+        "123e4567-e89b-12d3-a456-426614174000;touch /tmp/no",
+        " 123e4567-e89b-12d3-a456-426614174000",
+        "$(touch /tmp/no)",
+    ] {
+        draft.session_id = session_id.to_owned();
+        assert_eq!(draft.resume_command(), None, "session_id={session_id}");
+    }
+
     draft.tool_name = "Amp".to_owned();
     draft.session_id = "T-ZenttyBenchRestore".to_owned();
     draft.agent_launch_snapshot = Some(zentty_core::AgentLaunchSnapshot {

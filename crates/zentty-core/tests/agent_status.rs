@@ -626,6 +626,22 @@ fn protocol_rejects_bad_versions_unknown_events_and_oversized_requests() {
 }
 
 #[test]
+fn task_snapshot_requires_session_and_valid_task_identities() {
+    for payload in [
+        br#"{"version":1,"event":"task.snapshot","tasks":[]}"#.as_slice(),
+        br#"{"version":1,"event":"task.snapshot","session":{"id":"session"},"tasks":[{"id":" ","completed":false}]}"#.as_slice(),
+    ] {
+        assert!(AgentEvent::parse(payload).is_err());
+    }
+    assert!(
+        AgentEvent::parse(
+            br#"{"version":1,"event":"task.snapshot","session":{"id":"session"},"merge":true,"tasks":[{"id":"one","completed":true}]}"#,
+        )
+        .is_ok()
+    );
+}
+
+#[test]
 fn attention_requires_both_the_needs_input_phase_and_a_real_interaction() {
     let status = |phase, interaction| PaneAgentStatus {
         session_id: "session".to_owned(),

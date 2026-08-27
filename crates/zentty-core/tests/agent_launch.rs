@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 use zentty_core::{
-    AgentLaunchTool, build_agent_launch_plan, build_copilot_config, build_gemini_settings,
-    build_small_harness_hooks, sanitize_amp_resume_arguments,
+    AgentLaunchTool, build_agent_launch_plan, build_copilot_config, build_cursor_hooks,
+    build_gemini_settings, build_small_harness_hooks, sanitize_amp_resume_arguments,
 };
 
 const SESSION_ID: &str = "12345678-1234-4234-8234-123456789abc";
@@ -297,6 +297,64 @@ fn amp_plan_activates_the_owned_plugin_and_publishes_ordered_launch_identity() {
             .pre_launch_actions
             .iter()
             .all(|action| action.standard_input.contains("\"arguments\":[]"))
+    );
+}
+
+#[test]
+fn cursor_plan_selects_the_private_overlay_and_preserves_original_arguments() {
+    let mut environment = pane_environment();
+    environment.insert(
+        "ZENTTY_CURSOR_CONFIG_OVERLAY".to_owned(),
+        "/runtime/agent-overlays/cursor-private/.cursor".to_owned(),
+    );
+    let arguments = ["--model".to_owned(), "cursor-fast".to_owned()];
+    let plan = build_agent_launch_plan(
+        AgentLaunchTool::Cursor,
+        "/real/cursor-agent",
+        &arguments,
+        "/stage/bin/zentty",
+        SESSION_ID,
+        &environment,
+    )
+    .unwrap();
+
+    assert_eq!(plan.arguments, arguments);
+    assert_eq!(plan.set_environment["ZENTTY_AGENT_TOOL"], "cursor");
+    assert_eq!(
+        plan.set_environment["CURSOR_CONFIG_DIR"],
+        "/runtime/agent-overlays/cursor-private/.cursor"
+    );
+    assert!(plan.pre_launch_actions.is_empty());
+}
+
+#[test]
+fn cursor_hooks_are_complete_shell_safe_and_todo_scoped() {
+    let hooks: serde_json::Value =
+        serde_json::from_slice(&build_cursor_hooks("/stage/bin/zentty;$(must-not-run)").unwrap())
+            .unwrap();
+    assert_eq!(hooks["version"], 1);
+    let groups = hooks["hooks"].as_object().unwrap();
+    assert_eq!(groups.len(), 10);
+    for event in [
+        "sessionStart",
+        "sessionEnd",
+        "beforeSubmitPrompt",
+        "stop",
+        "beforeShellExecution",
+        "afterShellExecution",
+        "subagentStart",
+        "subagentStop",
+    ] {
+        assert_eq!(groups[event].as_array().unwrap().len(), 1, "event={event}");
+        assert!(groups[event][0].get("matcher").is_none(), "event={event}");
+    }
+    for event in ["preToolUse", "postToolUse"] {
+        assert_eq!(groups[event][0]["matcher"], "TodoWrite");
+    }
+    let command = groups["sessionStart"][0]["command"].as_str().unwrap();
+    assert_eq!(
+        command,
+        r#""/stage/bin/zentty;\$(must-not-run)" ipc agent-event --adapter=cursor"#
     );
 }
 

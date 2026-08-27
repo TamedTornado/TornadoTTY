@@ -5,10 +5,13 @@ use std::fmt;
 use std::path::Path;
 
 mod amp;
+mod cursor;
 mod remaining;
 
 use amp::plan as amp_plan;
 pub use amp::sanitize_resume_arguments as sanitize_amp_resume_arguments;
+pub use cursor::build_hooks as build_cursor_hooks;
+use cursor::plan as cursor_plan;
 pub use remaining::{build_copilot_config, build_small_harness_hooks};
 use remaining::{copilot_plan, opencode_plan, pi_family_plan, small_harness_plan};
 
@@ -228,6 +231,7 @@ pub fn build_agent_launch_plan(
             environment,
         )),
         AgentLaunchTool::Amp => amp_plan(executable_path.into(), arguments),
+        AgentLaunchTool::Cursor => Ok(cursor_plan(executable_path.into(), arguments, environment)),
         tool => Ok(persistent_plan(tool, executable_path.into(), arguments)),
     }
 }

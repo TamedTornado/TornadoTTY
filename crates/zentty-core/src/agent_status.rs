@@ -739,7 +739,7 @@ impl AgentStatusStore {
                 lifecycle.unresolved_stop_visible_until =
                     Some(now.saturating_add(UNRESOLVED_STOP_VISIBILITY_MS));
             }
-            "task.progress" | "task.started" | "task.completed" => {
+            "task.progress" | "task.snapshot" | "task.started" | "task.completed" => {
                 if !apply_task_projection(status, event, lifecycle) {
                     return;
                 }
@@ -1230,6 +1230,24 @@ fn apply_task_projection(
     event: &crate::AgentEvent,
     bookkeeping: &mut SessionBookkeeping,
 ) -> bool {
+    if event.kind() == "task.snapshot" {
+        let Some((merge, tasks)) = event.task_snapshot() else {
+            return false;
+        };
+        if !merge {
+            bookkeeping.tasks.clear();
+        }
+        for (task_id, completed) in tasks {
+            bookkeeping.tasks.insert(task_id.to_owned(), completed);
+        }
+        status.progress = (!bookkeeping.tasks.is_empty()).then(|| AgentProgress {
+            done: u64::try_from(bookkeeping.tasks.values().filter(|done| **done).count())
+                .unwrap_or(u64::MAX),
+            total: u64::try_from(bookkeeping.tasks.len()).unwrap_or(u64::MAX),
+        });
+        bookkeeping.task_progress_authority = TaskProgressAuthority::ExplicitSnapshot;
+        return true;
+    }
     if event.kind() == "task.progress" {
         status.progress = event
             .progress()

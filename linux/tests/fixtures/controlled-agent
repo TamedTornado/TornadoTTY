@@ -7,6 +7,7 @@ fixture_dir="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
 sleep_seconds="${ZENTTY_CONTROLLED_AGENT_SLEEP_SECONDS:-2}"
 start_delay_seconds="${ZENTTY_CONTROLLED_AGENT_START_DELAY_SECONDS:-0}"
 start_gate="${ZENTTY_CONTROLLED_AGENT_START_GATE:-}"
+finish_gate="${ZENTTY_CONTROLLED_AGENT_FINISH_GATE:-}"
 
 fail() {
     echo "controlled-agent: $*" >&2
@@ -25,6 +26,10 @@ if [[ "${start_gate}" == *'{pane}'* ]]; then
 fi
 [[ -z "${start_gate}" || "${start_gate}" == /* ]] ||
     fail "ZENTTY_CONTROLLED_AGENT_START_GATE must be an absolute path"
+[[ -z "${finish_gate}" || "${finish_gate}" == /* ]] ||
+    fail "ZENTTY_CONTROLLED_AGENT_FINISH_GATE must be an absolute path"
+[[ -z "${finish_gate}" || -p "${finish_gate}" ]] ||
+    fail "ZENTTY_CONTROLLED_AGENT_FINISH_GATE must be an existing FIFO"
 
 require_helper() {
     [[ -x "${helper}" ]] || fail "ZENTTY_CLI_BIN must name the staged executable helper"
@@ -357,11 +362,56 @@ case "${profile}" in
         printf '\033]777;notify;Gemini;Session complete\a'
         sleep 0.3
         ;;
-    cursor-adapter)
+    cursor-hooks)
         require_helper
-        printf '%s' \
-            '{"hook_event_name":"Stop","conversation_id":"cursor-e2e","status":"error"}' |
-            "${helper}" ipc agent-event --adapter=cursor
+        cursor_config="${CURSOR_CONFIG_DIR:-}"
+        hooks_file="${cursor_config}/hooks.json"
+        session_id="123e4567-e89b-12d3-a456-426614174000"
+        [[ -d "${cursor_config}" && -f "${hooks_file}" ]] ||
+            fail "Cursor private hook overlay is missing"
+        [[ "$(stat -c '%a' "${cursor_config}")" == 700 ]] ||
+            fail "Cursor config overlay is not private"
+        [[ "$(stat -c '%a' "${hooks_file}")" == 600 ]] ||
+            fail "Cursor hook file is not private"
+        jq -e '
+            .version == 1 and
+            (.hooks | length) == 10 and
+            .hooks.preToolUse == [{"command":.hooks.preToolUse[0].command,"matcher":"TodoWrite"}] and
+            .hooks.postToolUse == [{"command":.hooks.postToolUse[0].command,"matcher":"TodoWrite"}]
+        ' "${hooks_file}" >/dev/null || fail "Cursor generated hooks are incomplete"
+        cursor_hook() {
+            local event="$1"
+            local payload="$2"
+            local command
+            command="$(jq -er --arg event "${event}" '.hooks[$event][0].command' "${hooks_file}")" ||
+                fail "Cursor hook command is missing for ${event}"
+            printf '%s' "${payload}" | /bin/sh -c "${command}"
+        }
+        cursor_hook sessionStart \
+            "{\"hook_event_name\":\"sessionStart\",\"conversation_id\":\"${session_id}\",\"workspace_roots\":[\"${PWD}\"],\"transcript_path\":\"/tmp/controlled-cursor.jsonl\"}"
+        cursor_hook beforeSubmitPrompt \
+            "{\"hook_event_name\":\"beforeSubmitPrompt\",\"conversation_id\":\"${session_id}\"}"
+        cursor_hook preToolUse \
+            "{\"hook_event_name\":\"preToolUse\",\"conversation_id\":\"${session_id}\",\"tool_name\":\"TodoWrite\",\"tool_input\":{\"merge\":false,\"todos\":[{\"id\":\"one\",\"status\":\"pending\"},{\"id\":\"two\",\"status\":\"pending\"},{\"id\":\"three\",\"status\":\"pending\"}]}}"
+        cursor_hook postToolUse \
+            "{\"hook_event_name\":\"postToolUse\",\"conversation_id\":\"${session_id}\",\"tool_name\":\"TodoWrite\",\"tool_input\":{\"merge\":true,\"todos\":[{\"id\":\"one\",\"status\":\"completed\"},{\"id\":\"three\",\"status\":\"completed\"},{\"id\":\"four\",\"status\":\"pending\"}]}}"
+        cursor_hook subagentStart \
+            "{\"hook_event_name\":\"subagentStart\",\"parent_conversation_id\":\"${session_id}\",\"subagent_id\":\"worker-one\"}"
+        cursor_hook subagentStop \
+            "{\"hook_event_name\":\"subagentStop\",\"parent_conversation_id\":\"${session_id}\",\"subagent_id\":\"worker-one\"}"
+        if printf '%s' \
+            "{\"hook_event_name\":\"stop\",\"conversation_id\":\"${session_id}\",\"status\":\"error\"}" |
+            ZENTTY_PANE_TOKEN=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb \
+                "${helper}" ipc agent-event --adapter=cursor >/dev/null 2>&1; then
+            fail "Cursor bad-token negative control was accepted"
+        fi
+        cursor_hook stop \
+            "{\"hook_event_name\":\"stop\",\"conversation_id\":\"${session_id}\",\"status\":\"completed\"}"
+        {
+            printf 'cursor-config:%s\n' "${cursor_config}"
+            printf 'cursor-hooks:%s\n' "$(jq '.hooks | length' "${hooks_file}")"
+            printf 'cursor-negative-control:rejected\n'
+        } >>"${ZENTTY_CONTROLLED_AGENT_START_RECEIPT}"
         ;;
     droid-adapter)
         require_helper
@@ -511,4 +561,8 @@ if [[ -n "${ZENTTY_CONTROLLED_AGENT_START_RECEIPT:-}" ]]; then
     printf 'completed pid:%s profile:%s\n' "$$" "${profile}" \
         >>"${ZENTTY_CONTROLLED_AGENT_START_RECEIPT}"
 fi
-sleep "${sleep_seconds}"
+if [[ -n "${finish_gate}" ]]; then
+    IFS= read -r _ <"${finish_gate}" || true
+else
+    sleep "${sleep_seconds}"
+fi
