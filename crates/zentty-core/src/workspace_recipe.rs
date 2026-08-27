@@ -365,7 +365,69 @@ impl PaneRestoreDraft {
             self.require_working_directory()?;
             return Some("small-harness --continue".to_owned());
         }
+        if self.tool_name.eq_ignore_ascii_case("grok") {
+            return self.grok_resume_command();
+        }
+        if self.tool_name.eq_ignore_ascii_case("antigravity")
+            || self.tool_name.eq_ignore_ascii_case("agy")
+        {
+            return self.agy_resume_command();
+        }
+        if self.tool_name.eq_ignore_ascii_case("hermes")
+            || self.tool_name.eq_ignore_ascii_case("hermes agent")
+        {
+            return self.hermes_resume_command();
+        }
+        if self.tool_name.eq_ignore_ascii_case("vibe")
+            || self.tool_name.eq_ignore_ascii_case("mistral vibe")
+        {
+            return self.vibe_resume_command();
+        }
         None
+    }
+
+    fn grok_resume_command(&self) -> Option<String> {
+        if let Some(session_id) = validated_grok_or_vibe_session_id(&self.session_id) {
+            return Some(format!("grok --resume {session_id}"));
+        }
+        self.require_working_directory()?;
+        Some("grok --resume".to_owned())
+    }
+
+    fn agy_resume_command(&self) -> Option<String> {
+        if self.session_id.is_empty() || self.session_id.starts_with("zentty-placeholder-") {
+            return Some("agy --continue".to_owned());
+        }
+        let session_id = validated_agy_session_id(&self.session_id)?;
+        Some(format!("agy --conversation {session_id}"))
+    }
+
+    fn hermes_resume_command(&self) -> Option<String> {
+        let session_id = validated_hermes_session_id(&self.session_id)?;
+        let snapshot = self.agent_launch_snapshot.as_ref();
+        let resume_arguments = sanitize_hermes_resume_arguments(
+            snapshot.map_or(&[], |snapshot| snapshot.arguments.as_slice()),
+        )?;
+        let command = ["hermes".to_owned()]
+            .into_iter()
+            .chain(resume_arguments)
+            .chain(["--resume".to_owned(), session_id])
+            .map(|argument| shell_quoted_argument(&argument))
+            .collect::<Vec<_>>()
+            .join(" ");
+        let hermes_home = snapshot
+            .and_then(|snapshot| snapshot.environment.as_ref())
+            .and_then(|environment| environment.get("HERMES_HOME"))
+            .map(|value| value.trim())
+            .filter(|value| !value.is_empty());
+        Some(hermes_home.map_or(command.clone(), |home| {
+            format!("env HERMES_HOME={} {command}", shell_quoted_argument(home))
+        }))
+    }
+
+    fn vibe_resume_command(&self) -> Option<String> {
+        let session_id = validated_grok_or_vibe_session_id(&self.session_id)?;
+        Some(format!("vibe --resume {session_id}"))
     }
 
     fn require_working_directory(&self) -> Option<()> {
@@ -436,6 +498,73 @@ fn validated_droid_session_id(value: &str) -> Option<String> {
         return None;
     }
     Some(value.to_owned())
+}
+
+fn validated_grok_or_vibe_session_id(value: &str) -> Option<String> {
+    if let Some(uuid) = validated_uuid(value) {
+        return Some(uuid);
+    }
+    (value.len() >= 4
+        && value.as_bytes()[0].is_ascii_alphanumeric()
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-'))
+    .then(|| value.to_owned())
+}
+
+fn validated_agy_session_id(value: &str) -> Option<String> {
+    (!value.starts_with("zentty-placeholder-")
+        && !value.is_empty()
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-'))
+    .then(|| value.to_owned())
+}
+
+fn validated_hermes_session_id(value: &str) -> Option<String> {
+    (!value.starts_with("zentty-hermes-placeholder-")
+        && !value.is_empty()
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'.' | b':' | b'-')))
+    .then(|| value.to_owned())
+}
+
+fn sanitize_hermes_resume_arguments(arguments: &[String]) -> Option<Vec<String>> {
+    const ONE_SHOT_FLAGS: [&str; 6] = ["--oneshot", "-z", "--query", "-q", "--quiet", "-Q"];
+    if arguments.iter().any(|argument| {
+        let option = if argument.starts_with("--") {
+            argument
+                .split_once('=')
+                .map_or(argument.as_str(), |(flag, _)| flag)
+        } else {
+            argument.as_str()
+        };
+        ONE_SHOT_FLAGS.contains(&option)
+    }) {
+        return None;
+    }
+
+    let mut result = Vec::new();
+    let mut index = 0;
+    while index < arguments.len() {
+        let argument = &arguments[index];
+        if index == 0 && argument == "chat" {
+            index += 1;
+            continue;
+        }
+        if argument == "--resume" || argument == "-r" {
+            index += 2;
+            continue;
+        }
+        if argument.starts_with("--resume=") {
+            index += 1;
+            continue;
+        }
+        result.push(argument.clone());
+        index += 1;
+    }
+    Some(result)
 }
 
 fn shell_quoted_argument(argument: &str) -> String {

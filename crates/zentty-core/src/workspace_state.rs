@@ -3057,70 +3057,7 @@ impl WorkspaceState {
 
     fn agent_restore_draft_for_pane(&self, pane: &PaneState) -> Option<PaneRestoreDraft> {
         let status = self.agent_statuses.status_for_pane(&pane.id)?;
-        let arguments = if status.agent_name.eq_ignore_ascii_case("codex") {
-            vec![
-                "codex".to_owned(),
-                "resume".to_owned(),
-                status.session_id.clone(),
-            ]
-        } else if status.agent_name.eq_ignore_ascii_case("claude")
-            || status.agent_name.eq_ignore_ascii_case("claude code")
-        {
-            vec![
-                "claude".to_owned(),
-                "--resume".to_owned(),
-                status.session_id.clone(),
-            ]
-        } else if status.agent_name.eq_ignore_ascii_case("gemini")
-            || status.agent_name.eq_ignore_ascii_case("gemini cli")
-        {
-            vec!["gemini".to_owned(), "--resume".to_owned()]
-        } else if status.agent_name.eq_ignore_ascii_case("copilot")
-            || status.agent_name.eq_ignore_ascii_case("github copilot")
-            || status.agent_name.eq_ignore_ascii_case("github copilot cli")
-        {
-            vec![
-                "copilot".to_owned(),
-                format!("--resume={}", status.session_id),
-            ]
-        } else if status.agent_name.eq_ignore_ascii_case("cursor") {
-            vec![
-                "cursor-agent".to_owned(),
-                format!("--resume={}", status.session_id),
-            ]
-        } else if status.agent_name.eq_ignore_ascii_case("droid") {
-            vec![
-                "droid".to_owned(),
-                "exec".to_owned(),
-                "-s".to_owned(),
-                status.session_id.clone(),
-            ]
-        } else if status.agent_name.eq_ignore_ascii_case("kimi") {
-            let flag = if status.session_id.starts_with("session_") {
-                "-S"
-            } else {
-                "-r"
-            };
-            vec!["kimi".to_owned(), flag.to_owned(), status.session_id.clone()]
-        } else if status.agent_name.eq_ignore_ascii_case("opencode") {
-            vec![
-                "opencode".to_owned(),
-                "--session".to_owned(),
-                status.session_id.clone(),
-            ]
-        } else if status.agent_name.eq_ignore_ascii_case("pi") {
-            vec!["pi".to_owned(), "-c".to_owned()]
-        } else if status.agent_name.eq_ignore_ascii_case("omp")
-            || status.agent_name.eq_ignore_ascii_case("oh my pi")
-        {
-            vec!["omp".to_owned(), "-c".to_owned()]
-        } else if status.agent_name.eq_ignore_ascii_case("small harness")
-            || status.agent_name.eq_ignore_ascii_case("small-harness")
-        {
-            vec!["small-harness".to_owned(), "--continue".to_owned()]
-        } else {
-            return None;
-        };
+        let agent_launch_snapshot = restore_launch_snapshot(status)?;
         let (tasks, task_progress_authoritative) = self
             .agent_statuses
             .task_restore_state(&pane.id, &status.session_id);
@@ -3134,10 +3071,7 @@ impl WorkspaceState {
                 .clone()
                 .or_else(|| pane.working_directory.clone()),
             tracked_pid: status.tracked_pid.unwrap_or_default(),
-            agent_launch_snapshot: Some(AgentLaunchSnapshot {
-                arguments,
-                environment: None,
-            }),
+            agent_launch_snapshot: Some(agent_launch_snapshot),
             task_progress: status.progress,
             tasks,
             task_progress_authoritative,
@@ -3503,6 +3437,120 @@ impl WorkspaceState {
             })
             .expect("workspace invariant: available generated column identity")
     }
+}
+
+fn restore_launch_snapshot(status: &PaneAgentStatus) -> Option<AgentLaunchSnapshot> {
+    if status.agent_name.eq_ignore_ascii_case("hermes")
+        || status.agent_name.eq_ignore_ascii_case("hermes agent")
+    {
+        return Some(
+            status
+                .agent_launch_snapshot
+                .clone()
+                .unwrap_or(AgentLaunchSnapshot {
+                    arguments: Vec::new(),
+                    environment: None,
+                }),
+        );
+    }
+    Some(AgentLaunchSnapshot {
+        arguments: restore_arguments(status)?,
+        environment: None,
+    })
+}
+
+fn restore_arguments(status: &PaneAgentStatus) -> Option<Vec<String>> {
+    let arguments = if status.agent_name.eq_ignore_ascii_case("codex") {
+        vec![
+            "codex".to_owned(),
+            "resume".to_owned(),
+            status.session_id.clone(),
+        ]
+    } else if status.agent_name.eq_ignore_ascii_case("claude")
+        || status.agent_name.eq_ignore_ascii_case("claude code")
+    {
+        vec![
+            "claude".to_owned(),
+            "--resume".to_owned(),
+            status.session_id.clone(),
+        ]
+    } else if status.agent_name.eq_ignore_ascii_case("gemini")
+        || status.agent_name.eq_ignore_ascii_case("gemini cli")
+    {
+        vec!["gemini".to_owned(), "--resume".to_owned()]
+    } else if status.agent_name.eq_ignore_ascii_case("copilot")
+        || status.agent_name.eq_ignore_ascii_case("github copilot")
+        || status.agent_name.eq_ignore_ascii_case("github copilot cli")
+    {
+        vec![
+            "copilot".to_owned(),
+            format!("--resume={}", status.session_id),
+        ]
+    } else if status.agent_name.eq_ignore_ascii_case("cursor") {
+        vec![
+            "cursor-agent".to_owned(),
+            format!("--resume={}", status.session_id),
+        ]
+    } else if status.agent_name.eq_ignore_ascii_case("droid") {
+        vec![
+            "droid".to_owned(),
+            "exec".to_owned(),
+            "-s".to_owned(),
+            status.session_id.clone(),
+        ]
+    } else if status.agent_name.eq_ignore_ascii_case("kimi") {
+        let flag = if status.session_id.starts_with("session_") {
+            "-S"
+        } else {
+            "-r"
+        };
+        vec![
+            "kimi".to_owned(),
+            flag.to_owned(),
+            status.session_id.clone(),
+        ]
+    } else if status.agent_name.eq_ignore_ascii_case("opencode") {
+        vec![
+            "opencode".to_owned(),
+            "--session".to_owned(),
+            status.session_id.clone(),
+        ]
+    } else if status.agent_name.eq_ignore_ascii_case("pi") {
+        vec!["pi".to_owned(), "-c".to_owned()]
+    } else if status.agent_name.eq_ignore_ascii_case("omp")
+        || status.agent_name.eq_ignore_ascii_case("oh my pi")
+    {
+        vec!["omp".to_owned(), "-c".to_owned()]
+    } else if status.agent_name.eq_ignore_ascii_case("small harness")
+        || status.agent_name.eq_ignore_ascii_case("small-harness")
+    {
+        vec!["small-harness".to_owned(), "--continue".to_owned()]
+    } else if status.agent_name.eq_ignore_ascii_case("grok") {
+        vec![
+            "grok".to_owned(),
+            "--resume".to_owned(),
+            status.session_id.clone(),
+        ]
+    } else if status.agent_name.eq_ignore_ascii_case("antigravity")
+        || status.agent_name.eq_ignore_ascii_case("agy")
+    {
+        vec![
+            "agy".to_owned(),
+            "--conversation".to_owned(),
+            status.session_id.clone(),
+        ]
+    } else if status.agent_name.eq_ignore_ascii_case("vibe")
+        || status.agent_name.eq_ignore_ascii_case("mistral vibe")
+    {
+        vec![
+            "vibe".to_owned(),
+            "--resume".to_owned(),
+            status.session_id.clone(),
+        ]
+    } else {
+        return None;
+    };
+    Some(arguments)
 }
 
 fn arrange_golden_column_width(

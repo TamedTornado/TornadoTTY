@@ -85,8 +85,8 @@ cleanup() {
 trap cleanup EXIT
 
 case "${scenario}" in
-    full | installed-gemini | copilot-presentation | amp-plugin | cursor-hooks | droid-hooks | kimi-hooks) ;;
-    *) fail "ZENTTY_AGENT_IPC_SCENARIO must be full, installed-gemini, copilot-presentation, amp-plugin, cursor-hooks, droid-hooks, or kimi-hooks" ;;
+    full | installed-gemini | copilot-presentation | amp-plugin | cursor-hooks | droid-hooks | kimi-hooks | remaining-hooks) ;;
+    *) fail "ZENTTY_AGENT_IPC_SCENARIO must be full, installed-gemini, copilot-presentation, amp-plugin, cursor-hooks, droid-hooks, kimi-hooks, or remaining-hooks" ;;
 esac
 
 case "${backend}" in
@@ -188,7 +188,9 @@ run_adapter() {
     private_home="$(mktemp -d)"
     XDG_CONFIG_HOME="${private_home}/xdg-config" \
         zentty_product_disable_lifecycle_confirmations
-    if [[ "${name}" == cursor || "${name}" == droid || "${name}" == kimi ]]; then
+    if [[ "${name}" == cursor || "${name}" == droid || "${name}" == kimi ||
+        "${name}" == grok || "${name}" == agy || "${name}" == hermes ||
+        "${name}" == vibe ]]; then
         finish_gate="${state_directory}/controlled-agent-finish.fifo"
         mkfifo "${finish_gate}"
     fi
@@ -295,6 +297,26 @@ run_adapter() {
         grep -Fq 'interaction=Approval attention=true' "${log}" ||
             fail "Kimi approval did not reach visible sidebar presentation"
     fi
+    if [[ "${name}" == grok ]]; then
+        grep -Fq 'grok-hooks:9' "${start_receipt}" ||
+            fail "Grok controlled child did not audit all installed hooks"
+    fi
+    if [[ "${name}" == agy ]]; then
+        grep -Fq 'agy-hooks:8' "${start_receipt}" ||
+            fail "Antigravity controlled child did not audit all installed hooks"
+    fi
+    if [[ "${name}" == hermes ]]; then
+        grep -Fq 'hermes-hooks:10' "${start_receipt}" ||
+            fail "Hermes controlled child did not audit all installed hooks"
+        for phase in Running NeedsInput Idle; do
+            grep -Fq "zentty-linux: sidebar-agent-status pane=pane-1 phase=${phase}" "${log}" ||
+                fail "Hermes PTY title/hook lifecycle did not render ${phase}"
+        done
+    fi
+    if [[ "${name}" == vibe ]]; then
+        grep -Fq 'vibe-hooks:3' "${start_receipt}" ||
+            fail "Vibe controlled child did not audit all installed hooks"
+    fi
 
     socket="$(sed -n 's/^zentty-linux: agent-runtime socket=//p' "${log}" | head -1)"
     [[ -S "${socket}" ]] || fail "private product socket was not live during ${name}"
@@ -302,7 +324,9 @@ run_adapter() {
     [[ "$(stat -c '%a' "$(dirname "${socket}")")" == 700 ]] ||
         fail "product socket directory mode was not 0700"
 
-    if [[ "${name}" == cursor || "${name}" == droid || "${name}" == kimi ]]; then
+    if [[ "${name}" == cursor || "${name}" == droid || "${name}" == kimi ||
+        "${name}" == grok || "${name}" == agy || "${name}" == hermes ||
+        "${name}" == vibe ]]; then
         zentty_product_prepare_input "${backend}" "${log}"
         zentty_product_close_window "${backend}"
     fi
@@ -339,6 +363,23 @@ run_adapter() {
             (.workingDirectory | type == "string" and length > 0)
         ' "${state_directory}/restore-snapshot.json" >/dev/null ||
             fail "Kimi modern session and working directory were not durable restore state"
+    fi
+    if [[ "${name}" == grok || "${name}" == agy || "${name}" == hermes ||
+        "${name}" == vibe ]]; then
+        local expected_tool expected_session
+        case "${name}" in
+            grok) expected_tool=Grok; expected_session=grok-e2e ;;
+            agy) expected_tool=Antigravity; expected_session=agy-e2e ;;
+            hermes) expected_tool='Hermes Agent'; expected_session=hermes-e2e ;;
+            vibe) expected_tool='Mistral Vibe'; expected_session=vibe-e2e ;;
+        esac
+        jq -e --arg tool "${expected_tool}" --arg session "${expected_session}" '
+            .restoreDraftWindows[0].paneDrafts[0] |
+            .toolName == $tool and
+            .sessionID == $session and
+            (.workingDirectory | type == "string" and length > 0)
+        ' "${state_directory}/restore-snapshot.json" >/dev/null ||
+            fail "${name} session and working directory were not durable restore state"
     fi
     rm -f -- "${log}"
     rm -f -- "${start_receipt}"
@@ -471,7 +512,7 @@ run_agent_status_lifecycle() {
     PATH="${fake_bin}:${PATH}" GDK_SCALE=1 GDK_DPI_SCALE=1 \
         ZENTTY_CONTROLLED_AGENT_PROFILE=agent-status-lifecycle \
         "${product}" \
-        --command codex \
+        --command plain-title \
         --state-directory "${state_directory}" \
         --no-session-restore >"${log}" 2>&1 &
     product_pid=$!
@@ -480,19 +521,19 @@ run_agent_status_lifecycle() {
         'zentty-linux: agent-signal pane=pane-1 kind=lifecycle' \
         "source-compatible agent-status did not reach the product lifecycle route"
     zentty_product_wait_for_log "${log}" \
-        'sidebar-agent-status pane=pane-1 phase=Running interaction=None attention=false' \
+        'sidebar-agent-status pane=pane-1 phase=Running interaction=None attention=false progress=none agent="Review Bot"' \
         "agent-status running did not reach the visible sidebar"
     zentty_product_wait_for_log "${log}" \
         'zentty-linux: agent-signal pane=pane-1 kind=pid event=attach pid=' \
         "agent-signal did not attach the real controlled child PID"
     zentty_product_wait_for_log "${log}" \
-        'sidebar-agent-status pane=pane-1 phase=NeedsInput interaction=GenericInput attention=true' \
+        'sidebar-agent-status pane=pane-1 phase=NeedsInput interaction=GenericInput attention=true progress=none agent="Review Bot"' \
         "agent-status needs-input did not reach the visible sidebar"
     zentty_product_wait_for_log "${log}" \
         'zentty-linux: fleet-refresh windows=1 agents=1 waiting=1 stopped=0 compacting=0 active=0 idle=0 progress=0' \
         "agent-status needs-input did not reach the canonical fleet"
     zentty_product_wait_for_log "${log}" \
-        'sidebar-agent-status pane=pane-1 phase=Idle interaction=None attention=false' \
+        'sidebar-agent-status pane=pane-1 phase=Idle interaction=None attention=false progress=none agent="Review Bot"' \
         "the completed compatibility alias did not reach the visible sidebar"
     zentty_product_wait_for_log "${log}" \
         'zentty-linux: fleet-refresh windows=1 agents=0 waiting=0 stopped=0 compacting=0 active=0 idle=0 progress=0' \
@@ -867,28 +908,33 @@ run_adapter \
     'kimi' \
     kimi-hooks \
     'zentty-linux: sidebar-agent-status pane=pane-1 phase=Idle interaction=None attention=false progress=none'
+fi
+
+if [[ "${scenario}" == full || "${scenario}" == remaining-hooks ]]; then
+if [[ "${scenario}" == remaining-hooks ]]; then
+    run_agent_status_lifecycle
+fi
 run_adapter \
     grok \
     'grok' \
-    grok-adapter \
+    grok-hooks \
     'zentty-linux: sidebar-agent-status pane=pane-1 phase=Running interaction=None attention=false' \
     'Approve the Grok action?'
 run_adapter \
     agy \
     'agy' \
-    agy-adapter \
+    agy-hooks \
     'zentty-linux: sidebar-agent-status pane=pane-1 phase=NeedsInput interaction=Approval attention=true' \
     'Approve the Antigravity action?'
 run_adapter \
     hermes \
     'hermes' \
-    hermes-adapter \
-    'zentty-linux: sidebar-agent-status pane=pane-1 phase=NeedsInput interaction=Approval attention=true' \
-    'Approve the Hermes action?'
+    hermes-hooks \
+    'zentty-linux: sidebar-agent-status pane=pane-1 phase=Idle interaction=None attention=false'
 run_adapter \
     vibe \
     'vibe' \
-    vibe-adapter \
+    vibe-hooks \
     'zentty-linux: sidebar-agent-status pane=pane-1 phase=NeedsInput interaction=Question attention=true' \
     'Choose the Vibe path?'
 fi
@@ -1095,6 +1141,8 @@ elif [[ "${scenario}" == droid-hooks ]]; then
     adapters="droid-real-hooks"
 elif [[ "${scenario}" == kimi-hooks ]]; then
     adapters="kimi-modern-real-hooks+kimi-legacy-real-hooks"
+elif [[ "${scenario}" == remaining-hooks ]]; then
+    adapters="custom-explicit+grok-real-hooks+agy-real-hooks+hermes-real-hooks-and-title+vibe-real-hooks"
 else
     adapters="not-run-in-installed-gemini-scenario"
 fi

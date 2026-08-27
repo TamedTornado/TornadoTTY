@@ -730,7 +730,7 @@ fn remaining_integration_adapters_cover_source_lifecycle_and_input_semantics() {
                 Some(4),
             )
             .unwrap(),
-            "Hermes",
+            "Hermes Agent",
         ),
     ] {
         let status = reduce(event);

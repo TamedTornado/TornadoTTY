@@ -208,6 +208,108 @@ fn kimi_restore_distinguishes_safe_legacy_and_modern_sessions() {
 }
 
 #[test]
+fn grok_agy_and_vibe_restore_match_source_fallback_and_validation_rules() {
+    let mut envelope = SessionRestoreEnvelope::from_json(V3_ENVELOPE).unwrap();
+    let draft = &mut envelope.restore_draft_windows[0].pane_drafts[0];
+    draft.working_directory = Some("/tmp/project".to_owned());
+
+    draft.tool_name = "Grok".to_owned();
+    draft.session_id = "123E4567-E89B-12D3-A456-426614174000".to_owned();
+    assert_eq!(
+        draft.resume_command().as_deref(),
+        Some("grok --resume 123e4567-e89b-12d3-a456-426614174000")
+    );
+    draft.session_id = "grok_short-42".to_owned();
+    assert_eq!(
+        draft.resume_command().as_deref(),
+        Some("grok --resume grok_short-42")
+    );
+    for invalid in ["abc", "$(touch /tmp/no)", "unsafe;session"] {
+        draft.session_id = invalid.to_owned();
+        assert_eq!(draft.resume_command().as_deref(), Some("grok --resume"));
+    }
+    draft.working_directory = Some(" ".to_owned());
+    assert_eq!(draft.resume_command(), None);
+    draft.working_directory = Some("/tmp/project".to_owned());
+
+    draft.tool_name = "Antigravity".to_owned();
+    draft.session_id.clear();
+    assert_eq!(draft.resume_command().as_deref(), Some("agy --continue"));
+    draft.session_id = "zentty-placeholder-session".to_owned();
+    assert_eq!(draft.resume_command().as_deref(), Some("agy --continue"));
+    draft.session_id = "conversation_safe-42".to_owned();
+    assert_eq!(
+        draft.resume_command().as_deref(),
+        Some("agy --conversation conversation_safe-42")
+    );
+    for invalid in ["unsafe session", "unsafe;session", "$(touch /tmp/no)"] {
+        draft.session_id = invalid.to_owned();
+        assert_eq!(draft.resume_command(), None, "session_id={invalid}");
+    }
+
+    draft.tool_name = "Vibe".to_owned();
+    draft.session_id = "vibe_safe-42".to_owned();
+    assert_eq!(
+        draft.resume_command().as_deref(),
+        Some("vibe --resume vibe_safe-42")
+    );
+    for invalid in ["abc", "unsafe session", "unsafe;session", ""] {
+        draft.session_id = invalid.to_owned();
+        assert_eq!(draft.resume_command(), None, "session_id={invalid}");
+    }
+}
+
+#[test]
+fn hermes_restore_sanitizes_launch_state_and_preserves_hermes_home() {
+    let mut envelope = SessionRestoreEnvelope::from_json(V3_ENVELOPE).unwrap();
+    let draft = &mut envelope.restore_draft_windows[0].pane_drafts[0];
+    draft.tool_name = "Hermes Agent".to_owned();
+    draft.session_id = "hermes.session:42".to_owned();
+    draft.agent_launch_snapshot = Some(zentty_core::AgentLaunchSnapshot {
+        arguments: vec![
+            "chat".to_owned(),
+            "--model".to_owned(),
+            "grok 4.3".to_owned(),
+            "--resume".to_owned(),
+            "stale-session".to_owned(),
+            "--theme=dark".to_owned(),
+        ],
+        environment: Some(std::collections::BTreeMap::from([(
+            "HERMES_HOME".to_owned(),
+            " /tmp/hermes home ".to_owned(),
+        )])),
+    });
+    assert_eq!(
+        draft.resume_command().as_deref(),
+        Some(
+            "env HERMES_HOME='/tmp/hermes home' hermes --model 'grok 4.3' --theme=dark --resume hermes.session:42"
+        )
+    );
+
+    for one_shot in ["--oneshot", "-z", "--query=hello", "-q", "--quiet", "-Q"] {
+        draft.agent_launch_snapshot = Some(zentty_core::AgentLaunchSnapshot {
+            arguments: vec!["chat".to_owned(), one_shot.to_owned()],
+            environment: None,
+        });
+        assert_eq!(draft.resume_command(), None, "one_shot={one_shot}");
+    }
+
+    draft.agent_launch_snapshot = Some(zentty_core::AgentLaunchSnapshot {
+        arguments: vec!["chat".to_owned(), "--resume=stale".to_owned()],
+        environment: None,
+    });
+    for invalid in [
+        "zentty-hermes-placeholder-42",
+        "unsafe session",
+        "unsafe;session",
+        "",
+    ] {
+        draft.session_id = invalid.to_owned();
+        assert_eq!(draft.resume_command(), None, "session_id={invalid}");
+    }
+}
+
+#[test]
 fn unversioned_migration_only_sanitizes_legacy_generated_titles() {
     let recipe = WorkspaceRecipe::from_json(UNVERSIONED_RECIPE).unwrap();
     assert_eq!(recipe.schema_version, None);

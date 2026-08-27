@@ -348,7 +348,7 @@ fn real_cli_process_runs_installed_agy_and_hermes_subcommands() {
             "hermes-hook",
             "pre-llm-call",
             br#"{"session_id":"hermes-real"}"#.as_slice(),
-            "Hermes",
+            "Hermes Agent",
         ),
     ] {
         let harness = Harness::start();

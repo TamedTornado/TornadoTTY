@@ -308,11 +308,52 @@ impl AgentStatusStore {
     /// store. Copilot question titles can update only an existing recognized
     /// Copilot session; title text alone never creates agent state.
     pub fn apply_terminal_title(&mut self, pane_id: &str, title: &str, now: u64) -> bool {
+        if let Some(changed) = self.apply_hermes_status_title(pane_id, title, now) {
+            return changed;
+        }
         if let Some(changed) = self.apply_copilot_question_title(pane_id, title, now) {
             return changed;
         }
         self.clear_codex_after_shell_return(pane_id, title)
             || self.apply_codex_title(pane_id, title, now)
+    }
+
+    fn apply_hermes_status_title(&mut self, pane_id: &str, title: &str, now: u64) -> Option<bool> {
+        let normalized = title.trim();
+        let mut characters = normalized.chars();
+        let phase = match characters.next()? {
+            '⏳' => AgentPhase::Running,
+            '✓' => AgentPhase::Idle,
+            '⚠' => AgentPhase::NeedsInput,
+            _ => return None,
+        };
+        let subject = characters.as_str().trim_start_matches('\u{fe0f}').trim();
+        if subject.is_empty() {
+            return None;
+        }
+        let status = self.panes.get_mut(pane_id).and_then(|sessions| {
+            sessions
+                .values_mut()
+                .filter(|status| {
+                    status.agent_name.eq_ignore_ascii_case("hermes")
+                        || status.agent_name.eq_ignore_ascii_case("hermes agent")
+                })
+                .max_by_key(|status| (status_priority(status), status.updated_at))
+        })?;
+        let interaction = if phase == AgentPhase::NeedsInput {
+            AgentInteractionKind::Question
+        } else {
+            AgentInteractionKind::None
+        };
+        let changed =
+            status.phase != phase || status.interaction != interaction || status.text.is_some();
+        if changed {
+            status.phase = phase;
+            status.interaction = interaction;
+            status.text = None;
+            status.updated_at = now;
+        }
+        Some(changed)
     }
 
     fn apply_copilot_question_title(

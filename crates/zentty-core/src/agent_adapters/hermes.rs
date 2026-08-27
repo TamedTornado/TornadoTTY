@@ -35,17 +35,18 @@ pub fn adapt_hermes_hook(
     let event = match hook.as_str() {
         "onsessionstart" | "onsessionreset" | "sessionstart" | "start" => canonical(
             "session.start",
-            "Hermes",
+            "Hermes Agent",
             pid,
             session.as_deref(),
             None,
             None,
         )?,
         "pretoolcall" if tool.as_deref().is_some_and(common_question_tool) => {
-            let text = common_input_text(&payload, "Hermes", tool.as_deref().unwrap_or("tool"));
+            let text =
+                common_input_text(&payload, "Hermes Agent", tool.as_deref().unwrap_or("tool"));
             canonical(
                 "agent.needs-input",
-                "Hermes",
+                "Hermes Agent",
                 pid,
                 session.as_deref(),
                 Some(&text),
@@ -58,21 +59,26 @@ pub fn adapt_hermes_hook(
         }
         "prellmcall" | "pretoolcall" | "posttoolcall" | "postapprovalresponse" => canonical(
             "agent.running",
-            "Hermes",
+            "Hermes Agent",
             pid,
             session.as_deref(),
             None,
             None,
         )?,
-        "postllmcall" | "onsessionend" | "onsessionfinalize" | "sessionend" | "end" => {
-            canonical("agent.idle", "Hermes", pid, session.as_deref(), None, None)?
-        }
+        "postllmcall" | "onsessionend" | "onsessionfinalize" | "sessionend" | "end" => canonical(
+            "agent.idle",
+            "Hermes Agent",
+            pid,
+            session.as_deref(),
+            None,
+            None,
+        )?,
         "preapprovalrequest" => {
-            let text =
-                first_message(&payload).unwrap_or_else(|| "Hermes needs your approval".into());
+            let text = first_message(&payload)
+                .unwrap_or_else(|| "Hermes Agent needs your approval".into());
             canonical(
                 "agent.needs-input",
-                "Hermes",
+                "Hermes Agent",
                 pid,
                 session.as_deref(),
                 Some(&text),

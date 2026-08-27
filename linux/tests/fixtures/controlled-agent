@@ -209,24 +209,24 @@ case "${profile}" in
     agent-status-lifecycle)
         require_helper
         "${helper}" ipc agent-status running \
-            --tool Codex \
+            --tool 'Review Bot' \
             --session-id agent-status-parent-e2e \
             --text 'Running through the compatibility CLI'
         "${helper}" ipc agent-signal pid attach "$$" \
-            --tool Codex \
+            --tool 'Review Bot' \
             --session-id agent-status-parent-e2e
         sleep 0.2
         "${helper}" ipc agent-status needs-input \
-            --tool Codex \
+            --tool 'Review Bot' \
             --session-id agent-status-parent-e2e \
             --text 'Choose λ mode --literal [Safe] [Fast]'
         sleep 0.4
         "${helper}" ipc agent-status completed \
-            --tool Codex \
+            --tool 'Review Bot' \
             --session-id agent-status-parent-e2e
         sleep 0.2
         "${helper}" ipc agent-status clear \
-            --tool Codex \
+            --tool 'Review Bot' \
             --session-id agent-status-parent-e2e
         sleep 0.2
         ;;
@@ -527,29 +527,66 @@ case "${profile}" in
             printf 'kimi-negative-control:rejected\n'
         } >>"${ZENTTY_CONTROLLED_AGENT_START_RECEIPT}"
         ;;
-    grok-adapter)
+    grok-hooks)
         require_helper
+        grok_config="${HOME}/.grok/hooks/zentty-status.json"
+        grok_script="${HOME}/.grok/hooks/zentty-status/01-zentty-status.sh"
+        [[ -f "${grok_config}" && -x "${grok_script}" ]] ||
+            fail "Grok installed hooks are missing"
+        [[ "$(jq '.hooks | length' "${grok_config}")" == 9 ]] ||
+            fail "Grok installed hook groups are incomplete"
         printf '%s' \
             '{"hook_event_name":"pre_tool_use","session_id":"grok-e2e","tool_name":"shell"}' |
-            "${helper}" ipc agent-event --adapter=grok
+            "${grok_script}"
+        printf 'grok-hooks:9\n' >>"${ZENTTY_CONTROLLED_AGENT_START_RECEIPT}"
         ;;
-    agy-adapter)
+    agy-hooks)
         require_helper
+        agy_config="${HOME}/.gemini/config/hooks.json"
+        [[ -f "${agy_config}" ]] || fail "Antigravity installed hooks are missing"
+        [[ "$(jq '.zentty | length' "${agy_config}")" == 8 ]] ||
+            fail "Antigravity installed hook groups are incomplete"
+        agy_command="$(jq -er '.zentty.Notification[0].command' "${agy_config}")" ||
+            fail "Antigravity Notification command is missing"
         printf '%s' \
-            '{"hook_event_name":"approval","session_id":"agy-e2e","message":"Approve the Antigravity action?"}' |
-            "${helper}" ipc agent-event --adapter=agy
+            '{"conversation_id":"agy-e2e","message":"Approve the Antigravity action?"}' |
+            /bin/sh -c "${agy_command}" >/dev/null
+        printf 'agy-hooks:8\n' >>"${ZENTTY_CONTROLLED_AGENT_START_RECEIPT}"
         ;;
-    hermes-adapter)
+    hermes-hooks)
         require_helper
+        hermes_root="${HERMES_HOME:-${HOME}/.hermes}"
+        hermes_config="${hermes_root}/config.yaml"
+        hermes_start_script="${hermes_root}/hooks/zentty-status/on-session-start.sh"
+        hermes_script="${hermes_root}/hooks/zentty-status/pre-approval-request.sh"
+        [[ -f "${hermes_config}" && -x "${hermes_start_script}" && -x "${hermes_script}" ]] ||
+            fail "Hermes installed hooks are missing"
+        [[ "$(grep -c 'hooks/zentty-status/' "${hermes_config}")" == 10 ]] ||
+            fail "Hermes installed hook groups are incomplete"
+        printf '%s' '{"session_id":"hermes-e2e"}' |
+            "${hermes_start_script}" >/dev/null
+        printf '\033]0;⏳ grok-4.3 · 19.9K/1M · 2%%\007'
+        sleep 0.1
         printf '%s' \
-            '{"hook_event_name":"pre_approval_request","session_id":"hermes-e2e","message":"Approve the Hermes action?"}' |
-            "${helper}" ipc agent-event --adapter=hermes
+            '{"session_id":"hermes-e2e","message":"Approve the Hermes action?"}' |
+            "${hermes_script}" >/dev/null
+        printf '\033]0;⚠️ grok-4.3 · clarify\007'
+        sleep 0.1
+        printf '\033]0;✓ grok-4.3 · 19.9K/1M\007'
+        printf 'hermes-hooks:10\n' >>"${ZENTTY_CONTROLLED_AGENT_START_RECEIPT}"
         ;;
-    vibe-adapter)
+    vibe-hooks)
         require_helper
+        vibe_config="${HOME}/.vibe/hooks.toml"
+        [[ -f "${vibe_config}" ]] || fail "Vibe installed hooks are missing"
+        [[ "$(grep -c '^command = .*ipc agent-event --adapter=vibe' "${vibe_config}")" == 3 ]] ||
+            fail "Vibe installed hook groups are incomplete"
+        vibe_command="$(sed -n 's/^command = "\(.*\)"$/\1/p' "${vibe_config}" | head -1)"
+        [[ -n "${vibe_command}" ]] || fail "Vibe installed hook command is missing"
         printf '%s' \
             '{"hook_event_name":"before_tool","session_id":"vibe-e2e","tool_name":"ask_user_question","tool_input":{"question":"Choose the Vibe path?"}}' |
-            "${helper}" ipc agent-event --adapter=vibe
+            /bin/sh -c "${vibe_command}"
+        printf 'vibe-hooks:3\n' >>"${ZENTTY_CONTROLLED_AGENT_START_RECEIPT}"
         ;;
     claude-team)
         fixture="${ZENTTY_CONTROLLED_CLAUDE_FIXTURE:-}"

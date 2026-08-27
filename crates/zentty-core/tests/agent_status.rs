@@ -1189,6 +1189,58 @@ fn copilot_question_titles_are_tokenized_tool_scoped_and_override_stale_phases()
 }
 
 #[test]
+fn hermes_tui_title_markers_override_hook_phase_without_creating_agent_state() {
+    let mut store = AgentStatusStore::default();
+    store.apply(
+        event_for(
+            "pane-a",
+            br#"{"version":1,"event":"agent.idle","agent":{"name":"Hermes"},"session":{"id":"hermes-title"}}"#,
+        ),
+        1_000,
+    );
+
+    assert!(store.apply_terminal_title("pane-a", "⏳ grok-4.3 · 19.9K/1M · 2%", 1_100));
+    let running = store.status_for_pane("pane-a").unwrap();
+    assert_eq!(running.phase, AgentPhase::Running);
+    assert_eq!(running.interaction, AgentInteractionKind::None);
+
+    assert!(store.apply_terminal_title("pane-a", "⚠️ grok-4.3 · clarify", 1_200));
+    let attention = store.status_for_pane("pane-a").unwrap();
+    assert_eq!(attention.phase, AgentPhase::NeedsInput);
+    assert_eq!(attention.interaction, AgentInteractionKind::Question);
+    assert!(attention.requires_attention());
+
+    assert!(store.apply_terminal_title("pane-a", "✓ grok-4.3 · 19.9K/1M", 1_300));
+    let idle = store.status_for_pane("pane-a").unwrap();
+    assert_eq!(idle.phase, AgentPhase::Idle);
+    assert_eq!(idle.interaction, AgentInteractionKind::None);
+    assert!(!store.apply_terminal_title("pane-a", "✓ grok-4.3 · 19.9K/1M", 1_400));
+    assert!(!store.apply_terminal_title("pane-a", "⏳", 1_500));
+    assert_eq!(
+        store.status_for_pane("pane-a").unwrap().phase,
+        AgentPhase::Idle
+    );
+
+    let mut absent = AgentStatusStore::default();
+    assert!(!absent.apply_terminal_title("pane-a", "⏳ grok-4.3 · 2%", 2_000));
+    assert!(absent.status_for_pane("pane-a").is_none());
+
+    let mut unrelated = AgentStatusStore::default();
+    unrelated.apply(
+        event_for(
+            "pane-a",
+            br#"{"version":1,"event":"agent.idle","agent":{"name":"Codex"},"session":{"id":"codex-title"}}"#,
+        ),
+        3_000,
+    );
+    assert!(!unrelated.apply_terminal_title("pane-a", "⏳ grok-4.3 · 2%", 3_100));
+    assert_eq!(
+        unrelated.status_for_pane("pane-a").unwrap().phase,
+        AgentPhase::Idle
+    );
+}
+
+#[test]
 fn copilot_question_title_beats_osc_and_preserves_durable_identity() {
     let mut store = AgentStatusStore::default();
     store.apply(

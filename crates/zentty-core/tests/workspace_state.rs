@@ -715,6 +715,18 @@ fn remaining_managed_agents_produce_their_source_resume_invocations() {
             "project-session",
             "small-harness --continue",
         ),
+        ("Grok", "grok-session-42", "grok --resume grok-session-42"),
+        (
+            "Antigravity",
+            "agy-session-42",
+            "agy --conversation agy-session-42",
+        ),
+        (
+            "Hermes Agent",
+            "hermes.session:42",
+            "hermes --resume hermes.session:42",
+        ),
+        ("Vibe", "vibe-session-42", "vibe --resume vibe-session-42"),
     ] {
         let mut state = WorkspaceState::from_window_recipe(&envelope.workspace.windows[0]).unwrap();
         let payload = format!(
@@ -736,6 +748,30 @@ fn remaining_managed_agents_produce_their_source_resume_invocations() {
             "agent={agent}"
         );
     }
+}
+
+#[test]
+fn hermes_restore_draft_preserves_authenticated_launch_arguments_and_environment() {
+    let envelope = SessionRestoreEnvelope::from_json(V3_ENVELOPE).unwrap();
+    let mut state = WorkspaceState::from_window_recipe(&envelope.workspace.windows[0]).unwrap();
+    let payload = r#"{"version":1,"event":"session.start","agent":{"name":"Hermes Agent","pid":4242},"session":{"id":"hermes.session:42"},"context":{"workingDirectory":"/tmp/project","launch":{"arguments":["chat","--model","grok 4.3","--resume","stale"],"environment":{"HERMES_HOME":"/tmp/hermes home"}}}}"#;
+    state.apply_agent_event(
+        AuthenticatedAgentEvent {
+            target: AgentTarget::new("window-main", "worklane-main", "pane-agent"),
+            pane_token: "token-pane-agent".to_owned(),
+            event: AgentEvent::parse(payload.as_bytes()).unwrap(),
+        },
+        10,
+    );
+
+    let drafts = state.agent_restore_drafts();
+    assert_eq!(drafts.len(), 1);
+    assert_eq!(
+        drafts[0].resume_command().as_deref(),
+        Some(
+            "env HERMES_HOME='/tmp/hermes home' hermes --model 'grok 4.3' --resume hermes.session:42"
+        )
+    );
 }
 
 #[test]
