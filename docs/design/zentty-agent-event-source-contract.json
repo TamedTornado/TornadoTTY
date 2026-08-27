@@ -21,6 +21,7 @@
     {"id":"agent.input-resolved","source":true,"linux":"IMPLEMENTED","effect":"running;clear-interaction"},
     {"id":"agent.failed","source":false,"linux":"IMPLEMENTED","effect":"explicit-source-failure-to-unresolved-stop-with-bounded-visibility"},
     {"id":"task.progress","source":true,"linux":"IMPLEMENTED","effect":"clamped-session-progress"},
+    {"id":"task.delta","source":false,"linux":"IMPLEMENTED","effect":"saturating-anonymous-session-task-counter;explicit-progress-or-snapshot-remains-authoritative"},
     {"id":"task.snapshot","source":false,"linux":"IMPLEMENTED","effect":"replace-or-merge-identity-bearing-session-task-snapshot"},
     {"id":"task.started","source":false,"linux":"IMPLEMENTED","effect":"idempotently-add-source-task-by-session-and-task-identity"},
     {"id":"task.completed","source":false,"linux":"IMPLEMENTED","effect":"idempotently-complete-source-task-even-when-completion-arrives-first"}
@@ -36,6 +37,8 @@
     {"id":"state.interaction.text","linux":"IMPLEMENTED"},
     {"id":"progress.done","linux":"IMPLEMENTED"},
     {"id":"progress.total","linux":"IMPLEMENTED"},
+    {"id":"delta.done","linux":"IMPLEMENTED","effect":"nonzero-pair anonymous completed-task increment scoped by required session.id"},
+    {"id":"delta.total","linux":"IMPLEMENTED","effect":"nonzero-pair anonymous total-task increment scoped by required session.id"},
     {"id":"task.id","linux":"IMPLEMENTED","effect":"required non-empty identity for task lifecycle events"},
     {"id":"artifact.kind","linux":"IMPLEMENTED","effect":"retained on the canonical session status exactly when kind, label, and URL are complete"},
     {"id":"artifact.label","linux":"IMPLEMENTED","effect":"retained with the canonical artifact link and never emitted in receipts"},
@@ -109,7 +112,7 @@
     ]},
     {"id":"droid","source":true,"linux":"IMPLEMENTED","events":[
       {"aliases":["SessionStart"],"normalized":["session.start"],"required_identifiers":["authenticated-pane"],"acknowledgement":"exit-0;empty-stdout","failure_behavior":"unknown-no-op;malformed-error"},
-      {"aliases":["UserPromptSubmit","PreToolUse","PostToolUse","SubagentStop"],"normalized":["agent.needs-input for AskUser, ExitSpecMode, or manual-mode mutation;task.progress for TodoWrite;task.started or task.completed when stable task identity exists;otherwise agent.running;PostToolUse ExitSpecMode is no-event"],"required_identifiers":["authenticated-pane"],"acknowledgement":"exit-0;empty-stdout","failure_behavior":"invalid-todo-no-op;missing-task-identity-running-without-progress;malformed-error"},
+      {"aliases":["UserPromptSubmit","PreToolUse","PostToolUse","SubagentStop"],"normalized":["agent.needs-input for AskUser, ExitSpecMode, or manual-mode mutation;task.progress for TodoWrite;task.started or task.completed when stable task identity exists;task.delta for anonymous Task or SubagentStop with session identity;otherwise agent.running;PostToolUse ExitSpecMode is no-event"],"required_identifiers":["authenticated-pane;session.id for task counters"],"acknowledgement":"exit-0;empty-stdout","failure_behavior":"invalid-todo-no-op;anonymous-task-without-session-retains-running-without-progress;malformed-error"},
       {"aliases":["Notification"],"normalized":["agent.needs-input"],"required_identifiers":["authenticated-pane"],"acknowledgement":"exit-0;empty-stdout","failure_behavior":"unknown-no-op;malformed-error"},
       {"aliases":["Stop"],"normalized":["agent.idle;no-event in spec permission mode"],"required_identifiers":["authenticated-pane"],"acknowledgement":"exit-0;empty-stdout","failure_behavior":"spec-mode-no-op;malformed-error"},
       {"aliases":["SessionEnd"],"normalized":["session.end"],"required_identifiers":["authenticated-pane"],"acknowledgement":"exit-0;empty-stdout","failure_behavior":"unknown-no-op;malformed-error"}

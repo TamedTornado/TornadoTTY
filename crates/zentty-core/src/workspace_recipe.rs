@@ -315,6 +315,10 @@ impl PaneRestoreDraft {
             let session_id = validated_uuid(&self.session_id)?;
             return Some(format!("cursor-agent --resume={session_id}"));
         }
+        if self.tool_name.eq_ignore_ascii_case("droid") {
+            let session_id = validated_droid_session_id(&self.session_id)?;
+            return Some(format!("droid exec -s {session_id}"));
+        }
         if self.tool_name.eq_ignore_ascii_case("opencode") {
             let session_id = validated_opencode_session_id(&self.session_id)?;
             return Some(format!("opencode --session {session_id}"));
@@ -407,6 +411,23 @@ fn validated_amp_thread_id(value: &str) -> Option<String> {
             character.is_ascii_alphanumeric() || character == '_' || character == '-'
         }))
     .then(|| value.to_owned())
+}
+
+fn validated_droid_session_id(value: &str) -> Option<String> {
+    let mut characters = value.chars();
+    if value.starts_with("zentty-placeholder-")
+        || !characters.next()?.is_ascii_alphanumeric()
+        || !characters.all(|character| {
+            character.is_ascii_alphanumeric()
+                || character == '_'
+                || character == '.'
+                || character == ':'
+                || character == '-'
+        })
+    {
+        return None;
+    }
+    Some(value.to_owned())
 }
 
 fn shell_quoted_argument(argument: &str) -> String {

@@ -85,8 +85,8 @@ cleanup() {
 trap cleanup EXIT
 
 case "${scenario}" in
-    full | installed-gemini | copilot-presentation | amp-plugin | cursor-hooks) ;;
-    *) fail "ZENTTY_AGENT_IPC_SCENARIO must be full, installed-gemini, copilot-presentation, amp-plugin, or cursor-hooks" ;;
+    full | installed-gemini | copilot-presentation | amp-plugin | cursor-hooks | droid-hooks) ;;
+    *) fail "ZENTTY_AGENT_IPC_SCENARIO must be full, installed-gemini, copilot-presentation, amp-plugin, cursor-hooks, or droid-hooks" ;;
 esac
 
 case "${backend}" in
@@ -183,11 +183,15 @@ run_adapter() {
     log="$(mktemp)"
     start_receipt="$(mktemp)"
     state_directory="$(mktemp -d)"
-    if [[ "${name}" == cursor ]]; then
+    private_home="$(mktemp -d)"
+    XDG_CONFIG_HOME="${private_home}/xdg-config" \
+        zentty_product_disable_lifecycle_confirmations
+    if [[ "${name}" == cursor || "${name}" == droid ]]; then
         finish_gate="${state_directory}/controlled-agent-finish.fifo"
         mkfifo "${finish_gate}"
     fi
     PATH="${fake_bin}:${PATH}" GDK_SCALE=1 GDK_DPI_SCALE=1 \
+        HOME="${private_home}" XDG_CONFIG_HOME="${private_home}/xdg-config" \
         ZENTTY_CLI_DEBUG=1 \
         ZENTTY_CONTROLLED_AGENT_START_RECEIPT="${start_receipt}" \
         ZENTTY_CONTROLLED_AGENT_FINISH_GATE="${finish_gate}" \
@@ -245,6 +249,18 @@ run_adapter() {
         grep -Fq 'kind=task.snapshot session=123e4567-e89b-12d3-a456-426614174000' "${log}" ||
             fail "Cursor merged TodoWrite snapshot did not cross the authenticated product boundary"
     fi
+    if [[ "${name}" == droid ]]; then
+        grep -Fq 'droid-hooks:8' "${start_receipt}" ||
+            fail "Droid controlled child did not audit all installed hooks"
+        grep -Fq 'droid-negative-control:rejected' "${start_receipt}" ||
+            fail "Droid controlled child did not reject the bad pane token"
+        grep -Fq 'kind=agent.needs-input session=session.safe:droid-42' "${log}" ||
+            fail "Droid decision did not cross the authenticated product boundary"
+        grep -Fq 'kind=task.progress session=session.safe:droid-42' "${log}" ||
+            fail "Droid TodoWrite progress did not cross the authenticated product boundary"
+        grep -Fq 'kind=task.delta session=session.safe:droid-42' "${log}" ||
+            fail "Droid anonymous subagent counter did not cross the authenticated product boundary"
+    fi
 
     socket="$(sed -n 's/^zentty-linux: agent-runtime socket=//p' "${log}" | head -1)"
     [[ -S "${socket}" ]] || fail "private product socket was not live during ${name}"
@@ -252,7 +268,7 @@ run_adapter() {
     [[ "$(stat -c '%a' "$(dirname "${socket}")")" == 700 ]] ||
         fail "product socket directory mode was not 0700"
 
-    if [[ "${name}" == cursor ]]; then
+    if [[ "${name}" == cursor || "${name}" == droid ]]; then
         zentty_product_prepare_input "${backend}" "${log}"
         zentty_product_close_window "${backend}"
     fi
@@ -269,12 +285,22 @@ run_adapter() {
         ' "${state_directory}/restore-snapshot.json" >/dev/null ||
             fail "Cursor UUID and working directory were not durable restore state"
     fi
+    if [[ "${name}" == droid ]]; then
+        jq -e '
+            .restoreDraftWindows[0].paneDrafts[0] |
+            .toolName == "Droid" and
+            .sessionID == "session.safe:droid-42" and
+            (.workingDirectory | type == "string" and length > 0)
+        ' "${state_directory}/restore-snapshot.json" >/dev/null ||
+            fail "Droid session and working directory were not durable restore state"
+    fi
     rm -f -- "${log}"
     rm -f -- "${start_receipt}"
     start_receipt=""
-    rm -rf -- "${state_directory}"
+    rm -rf -- "${state_directory}" "${private_home}"
     log=""
     state_directory=""
+    private_home=""
 }
 
 run_opencode_live_theme() {
@@ -788,9 +814,8 @@ run_adapter \
 run_adapter \
     droid \
     'droid' \
-    droid-adapter \
-    'zentty-linux: sidebar-agent-status pane=pane-1 phase=NeedsInput interaction=Question attention=true' \
-    'Choose the Droid path?'
+    droid-hooks \
+    'zentty-linux: sidebar-agent-status pane=pane-1 phase=Idle interaction=None attention=false progress=1/3'
 run_adapter \
     kimi \
     'kimi' \
@@ -837,6 +862,14 @@ if [[ "${scenario}" == cursor-hooks ]]; then
         'cursor-agent' \
         cursor-hooks \
         'zentty-linux: sidebar-agent-status pane=pane-1 phase=Idle interaction=None attention=false progress=2/4'
+fi
+
+if [[ "${scenario}" == droid-hooks ]]; then
+    run_adapter \
+        droid \
+        'droid' \
+        droid-hooks \
+        'zentty-linux: sidebar-agent-status pane=pane-1 phase=Idle interaction=None attention=false progress=1/3'
 fi
 
 if [[ "${ZENTTY_REQUIRE_REAL_GEMINI:-false}" == true ]]; then
@@ -1000,6 +1033,8 @@ elif [[ "${scenario}" == amp-plugin ]]; then
     adapters="amp-real-plugin"
 elif [[ "${scenario}" == cursor-hooks ]]; then
     adapters="cursor-real-hooks"
+elif [[ "${scenario}" == droid-hooks ]]; then
+    adapters="droid-real-hooks"
 else
     adapters="not-run-in-installed-gemini-scenario"
 fi

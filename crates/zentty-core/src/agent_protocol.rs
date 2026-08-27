@@ -44,6 +44,8 @@ enum AgentEventKind {
     TaskProgress,
     #[serde(rename = "task.snapshot")]
     TaskSnapshot,
+    #[serde(rename = "task.delta")]
+    TaskDelta,
     #[serde(rename = "task.started")]
     TaskStarted,
     #[serde(rename = "task.completed")]
@@ -93,6 +95,12 @@ struct TaskSnapshotDescriptor {
     id: Option<String>,
     #[serde(default)]
     completed: bool,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, Eq, PartialEq)]
+struct TaskDeltaDescriptor {
+    done: u64,
+    total: u64,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, Eq, PartialEq)]
@@ -157,6 +165,7 @@ pub struct AgentEvent {
     progress: Option<ProgressDescriptor>,
     task: Option<TaskDescriptor>,
     tasks: Option<Vec<TaskSnapshotDescriptor>>,
+    delta: Option<TaskDeltaDescriptor>,
     #[serde(default)]
     merge: bool,
     artifact: Option<ArtifactDescriptor>,
@@ -171,6 +180,7 @@ pub enum AgentProtocolError {
     InvalidJson(String),
     UnsupportedVersion(u32),
     InvalidProgress,
+    InvalidTaskDelta,
     MissingTaskIdentity,
 }
 
@@ -185,6 +195,8 @@ impl fmt::Display for AgentProtocolError {
             Self::InvalidProgress => {
                 formatter.write_str("task progress total must be greater than zero")
             }
+            Self::InvalidTaskDelta => formatter
+                .write_str("task delta requires a non-empty session.id and a non-zero delta"),
             Self::MissingTaskIdentity => formatter
                 .write_str("task lifecycle events require non-empty session.id and task.id"),
         }
@@ -234,6 +246,14 @@ impl AgentEvent {
         {
             return Err(AgentProtocolError::MissingTaskIdentity);
         }
+        if event.event == AgentEventKind::TaskDelta
+            && (event.session_id().is_none_or(|id| id.trim().is_empty())
+                || event
+                    .delta
+                    .is_none_or(|delta| delta.done == 0 && delta.total == 0))
+        {
+            return Err(AgentProtocolError::InvalidTaskDelta);
+        }
         Ok(event)
     }
 
@@ -251,6 +271,7 @@ impl AgentEvent {
             progress: None,
             task: None,
             tasks: None,
+            delta: None,
             merge: false,
             artifact: None,
             context: None,
@@ -271,6 +292,7 @@ impl AgentEvent {
             AgentEventKind::Failed => "agent.failed",
             AgentEventKind::TaskProgress => "task.progress",
             AgentEventKind::TaskSnapshot => "task.snapshot",
+            AgentEventKind::TaskDelta => "task.delta",
             AgentEventKind::TaskStarted => "task.started",
             AgentEventKind::TaskCompleted => "task.completed",
         }
@@ -297,6 +319,10 @@ impl AgentEvent {
                 .filter_map(|task| Some((task.id.as_deref()?, task.completed)))
                 .collect(),
         ))
+    }
+
+    pub(crate) fn task_delta(&self) -> Option<(u64, u64)> {
+        self.delta.map(|delta| (delta.done, delta.total))
     }
 
     pub(crate) fn agent_name(&self) -> Option<&str> {

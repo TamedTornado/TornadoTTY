@@ -900,7 +900,7 @@ fn cursor_and_droid_todo_hooks_emit_observable_progress() {
         ),
         (
             adapt_droid_hook(
-                br#"{"hook_event_name":"PostToolUse","session_id":"droid-tasks","tool_name":"TodoWrite","tool_input":{"todos":[{"status":"done"},{"status":"cancelled"},{"status":"pending"}]}}"#,
+                br#"{"hook_event_name":"PostToolUse","session_id":"droid-tasks","tool_name":"TodoWrite","tool_input":{"todos":[{"status":"done"},{"status":"complete"},{"status":"pending"}]}}"#,
                 None,
             )
             .unwrap(),
@@ -914,6 +914,129 @@ fn cursor_and_droid_todo_hooks_emit_observable_progress() {
             Some(if expected_agent == "Cursor" { (1, 3) } else { (2, 3) })
         );
     }
+}
+
+#[test]
+fn droid_source_interactions_and_cwd_are_preserved() {
+    let decision = reduce(
+        adapt_droid_hook(
+            br#"{"hook_event_name":"PreToolUse","session_id":"droid-source","tool_name":"AskUser","workingDirectory":"/tmp","toolInput":{"question":"Choose a target?","options":["Staging",{"label":"Production"}]}}"#,
+            Some(6262),
+        )
+        .unwrap(),
+    );
+    assert_eq!(decision.phase, AgentPhase::NeedsInput);
+    assert_eq!(
+        decision.interaction,
+        zentty_core::AgentInteractionKind::Decision
+    );
+    assert_eq!(
+        decision.text.as_deref(),
+        Some("Choose a target?\n- Staging\n- Production")
+    );
+    assert_eq!(decision.working_directory.as_deref(), Some("/tmp"));
+
+    let spec = reduce(
+        adapt_droid_hook(
+            br#"{"hook_event_name":"PreToolUse","session_id":"droid-source","tool_name":"ExitSpecMode","project_dir":"/tmp","tool_input":{"plan":"Add the Droid feature\n\nDetails follow"}}"#,
+            None,
+        )
+        .unwrap(),
+    );
+    assert_eq!(spec.phase, AgentPhase::NeedsInput);
+    assert_eq!(
+        spec.text.as_deref(),
+        Some("Droid proposed a spec: Add the Droid feature")
+    );
+}
+
+#[test]
+fn droid_anonymous_counters_yield_to_authoritative_todos() {
+    let fallback_target = AgentTarget::new("window", "lane", "droid-fallback-pane");
+    let mut fallback_store = AgentStatusStore::default();
+    let mut fallback_now = 0;
+    for payload in [
+        br#"{"hook_event_name":"PreToolUse","session_id":"droid-fallback","tool_name":"Task"}"#
+            .as_slice(),
+        br#"{"hook_event_name":"SubagentStop","session_id":"droid-fallback"}"#.as_slice(),
+    ] {
+        for event in adapt_droid_hook(payload, Some(6262)).unwrap() {
+            fallback_store.apply(
+                AuthenticatedAgentEvent {
+                    target: fallback_target.clone(),
+                    pane_token: "token".to_owned(),
+                    event,
+                },
+                fallback_now,
+            );
+            fallback_now += 1;
+        }
+    }
+    assert_eq!(
+        fallback_store
+            .status_for(&fallback_target)
+            .unwrap()
+            .progress
+            .map(|progress| (progress.done, progress.total)),
+        Some((1, 1)),
+        "anonymous Droid subagents must retain source counter semantics"
+    );
+
+    let target = AgentTarget::new("window", "lane", "droid-pane");
+    let mut store = AgentStatusStore::default();
+    let mut now = 0;
+    for payload in [
+        br#"{"hook_event_name":"PreToolUse","session_id":"droid-source","tool_name":"TodoWrite","tool_input":{"todos":"1. [completed] Review logs\n2. [in_progress] Patch adapter\n3. [pending] Run tests"}}"#.as_slice(),
+        br#"{"hook_event_name":"PreToolUse","session_id":"droid-source","tool_name":"Task","tool_use_id":"subtask-late"}"#.as_slice(),
+        br#"{"hook_event_name":"SubagentStop","session_id":"droid-source","tool_use_id":"subtask-late"}"#.as_slice(),
+    ] {
+        for event in adapt_droid_hook(payload, Some(6262)).unwrap() {
+            store.apply(
+                AuthenticatedAgentEvent {
+                    target: target.clone(),
+                    pane_token: "token".to_owned(),
+                    event,
+                },
+                now,
+            );
+            now += 1;
+        }
+    }
+    assert_eq!(
+        store
+            .status_for(&target)
+            .unwrap()
+            .progress
+            .map(|progress| (progress.done, progress.total)),
+        Some((1, 3)),
+        "subagent events must not replace an authoritative TodoWrite snapshot"
+    );
+
+    for event in adapt_droid_hook(
+        br#"{"hook_event_name":"PostToolUse","session_id":"droid-source","tool_name":"TodoWrite","tool_input":{"todos":[]}}"#,
+        Some(6262),
+    )
+    .unwrap()
+    {
+        store.apply(
+            AuthenticatedAgentEvent {
+                target: target.clone(),
+                pane_token: "token".to_owned(),
+                event,
+            },
+            now,
+        );
+        now += 1;
+    }
+    assert_eq!(
+        store
+            .status_for(&target)
+            .unwrap()
+            .progress
+            .map(|progress| (progress.done, progress.total)),
+        Some((1, 1)),
+        "the source-compatible complete sentinel must clear stale visible work"
+    );
 }
 
 #[test]

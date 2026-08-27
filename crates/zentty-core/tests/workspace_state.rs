@@ -692,6 +692,11 @@ fn remaining_managed_agents_produce_their_source_resume_invocations() {
             "123e4567-e89b-12d3-a456-426614174002",
             "cursor-agent --resume=123e4567-e89b-12d3-a456-426614174002",
         ),
+        (
+            "Droid",
+            "session.safe:opaque-42",
+            "droid exec -s session.safe:opaque-42",
+        ),
         ("OpenCode", "ses_AbC123", "opencode --session ses_AbC123"),
         ("Pi", "project-session", "pi -c"),
         ("OMP", "project-session", "omp -c"),
@@ -767,6 +772,58 @@ fn restored_explicit_task_progress_remains_authoritative() {
             .unwrap()
             .progress,
         Some(zentty_core::AgentProgress { done: 3, total: 4 })
+    );
+}
+
+#[test]
+fn restored_anonymous_task_progress_retains_counter_authority() {
+    let envelope = SessionRestoreEnvelope::from_json(V3_ENVELOPE).unwrap();
+    let mut state = WorkspaceState::from_window_recipe(&envelope.workspace.windows[0]).unwrap();
+    let event = |payload: &[u8]| AuthenticatedAgentEvent {
+        target: AgentTarget::new("window-main", "worklane-main", "pane-agent"),
+        pane_token: "token-pane-agent".to_owned(),
+        event: AgentEvent::parse(payload).unwrap(),
+    };
+    let draft = zentty_core::PaneRestoreDraft {
+        pane_id: "pane-agent".to_owned(),
+        kind: zentty_core::RestoreDraftKind::AgentResume,
+        tool_name: "Droid".to_owned(),
+        session_id: "session.safe:droid-42".to_owned(),
+        working_directory: Some("/tmp".to_owned()),
+        tracked_pid: 0,
+        agent_launch_snapshot: Some(zentty_core::AgentLaunchSnapshot {
+            arguments: vec![
+                "droid".to_owned(),
+                "exec".to_owned(),
+                "-s".to_owned(),
+                "session.safe:droid-42".to_owned(),
+            ],
+            environment: None,
+        }),
+        task_progress: Some(zentty_core::AgentProgress { done: 1, total: 2 }),
+        tasks: std::collections::BTreeMap::default(),
+        task_progress_authoritative: false,
+    };
+    assert!(state.seed_restored_agent(&draft, 18));
+    for (now, payload) in [
+        (
+            19,
+            br#"{"version":1,"event":"task.started","session":{"id":"session.safe:droid-42"},"task":{"id":"late-identity"}}"#.as_slice(),
+        ),
+        (
+            20,
+            br#"{"version":1,"event":"task.delta","session":{"id":"session.safe:droid-42"},"delta":{"done":1,"total":0}}"#.as_slice(),
+        ),
+    ] {
+        state.apply_agent_event(event(payload), now);
+    }
+    assert_eq!(
+        state.sidebar_summaries()[0].pane_rows[0]
+            .agent_status
+            .as_ref()
+            .unwrap()
+            .progress,
+        Some(zentty_core::AgentProgress { done: 2, total: 2 })
     );
 }
 

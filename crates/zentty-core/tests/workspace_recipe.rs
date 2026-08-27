@@ -157,6 +157,29 @@ fn supported_agent_restore_commands_are_source_compatible_and_injection_safe() {
 }
 
 #[test]
+fn droid_restore_accepts_only_one_safe_opaque_session_argument() {
+    let mut envelope = SessionRestoreEnvelope::from_json(V3_ENVELOPE).unwrap();
+    let draft = &mut envelope.restore_draft_windows[0].pane_drafts[0];
+    draft.tool_name = "Droid".to_owned();
+    draft.session_id = "session.safe:opaque-42".to_owned();
+    assert_eq!(
+        draft.resume_command().as_deref(),
+        Some("droid exec -s session.safe:opaque-42")
+    );
+    for session_id in [
+        "",
+        "-starts-like-an-option",
+        "session with spaces",
+        "session;touch",
+        "$(touch /tmp/no)",
+        "zentty-placeholder-unsafe",
+    ] {
+        draft.session_id = session_id.to_owned();
+        assert_eq!(draft.resume_command(), None, "session_id={session_id}");
+    }
+}
+
+#[test]
 fn unversioned_migration_only_sanitizes_legacy_generated_titles() {
     let recipe = WorkspaceRecipe::from_json(UNVERSIONED_RECIPE).unwrap();
     assert_eq!(recipe.schema_version, None);

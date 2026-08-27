@@ -3088,6 +3088,13 @@ impl WorkspaceState {
                 "cursor-agent".to_owned(),
                 format!("--resume={}", status.session_id),
             ]
+        } else if status.agent_name.eq_ignore_ascii_case("droid") {
+            vec![
+                "droid".to_owned(),
+                "exec".to_owned(),
+                "-s".to_owned(),
+                status.session_id.clone(),
+            ]
         } else if status.agent_name.eq_ignore_ascii_case("opencode") {
             vec![
                 "opencode".to_owned(),

@@ -164,6 +164,7 @@ struct SessionBookkeeping {
 enum TaskProgressAuthority {
     #[default]
     IdentityEvents,
+    CounterEvents,
     ExplicitSnapshot,
 }
 
@@ -212,13 +213,16 @@ impl AgentStatusStore {
                 updated_at: now,
             },
         );
-        if !task_state.tasks.is_empty() || task_state.authoritative {
+        if !task_state.tasks.is_empty() || task_state.authoritative || task_state.progress.is_some()
+        {
             self.session_bookkeeping.insert(
                 SessionKey::new(pane_id, session_id),
                 SessionBookkeeping {
                     tasks: task_state.tasks.clone().into_iter().collect(),
                     task_progress_authority: if task_state.authoritative {
                         TaskProgressAuthority::ExplicitSnapshot
+                    } else if task_state.tasks.is_empty() && task_state.progress.is_some() {
+                        TaskProgressAuthority::CounterEvents
                     } else {
                         TaskProgressAuthority::IdentityEvents
                     },
@@ -739,7 +743,8 @@ impl AgentStatusStore {
                 lifecycle.unresolved_stop_visible_until =
                     Some(now.saturating_add(UNRESOLVED_STOP_VISIBILITY_MS));
             }
-            "task.progress" | "task.snapshot" | "task.started" | "task.completed" => {
+            "task.progress" | "task.snapshot" | "task.delta" | "task.started"
+            | "task.completed" => {
                 if !apply_task_projection(status, event, lifecycle) {
                     return;
                 }
@@ -1230,6 +1235,23 @@ fn apply_task_projection(
     event: &crate::AgentEvent,
     bookkeeping: &mut SessionBookkeeping,
 ) -> bool {
+    if event.kind() == "task.delta" {
+        if bookkeeping.task_progress_authority == TaskProgressAuthority::ExplicitSnapshot {
+            return false;
+        }
+        let Some((done_delta, total_delta)) = event.task_delta() else {
+            return false;
+        };
+        let current = status
+            .progress
+            .unwrap_or(AgentProgress { done: 0, total: 0 });
+        let total = current.total.saturating_add(total_delta);
+        let done = current.done.saturating_add(done_delta).min(total);
+        status.progress = (total > 0).then_some(AgentProgress { done, total });
+        bookkeeping.tasks.clear();
+        bookkeeping.task_progress_authority = TaskProgressAuthority::CounterEvents;
+        return true;
+    }
     if event.kind() == "task.snapshot" {
         let Some((merge, tasks)) = event.task_snapshot() else {
             return false;
@@ -1259,7 +1281,7 @@ fn apply_task_projection(
     let Some(task_id) = event.task_id().map(str::trim).filter(|id| !id.is_empty()) else {
         return false;
     };
-    if bookkeeping.task_progress_authority == TaskProgressAuthority::ExplicitSnapshot {
+    if bookkeeping.task_progress_authority != TaskProgressAuthority::IdentityEvents {
         return false;
     }
     let completed = event.kind() == "task.completed";

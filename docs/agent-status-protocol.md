@@ -216,6 +216,24 @@ The sidebar displays progress as "Running (3/7)".
 }
 ```
 
+### `task.delta`
+
+Adds anonymous task-counter changes to the current session projection. This is
+for source hooks that report task creation and completion without stable task
+identities. `session.id` is required, and at least one of `delta.done` or
+`delta.total` must be greater than zero. The reducer uses saturating arithmetic
+and clamps the resulting completed count to the resulting total.
+
+An explicit `task.progress` or `task.snapshot` remains authoritative and
+rejects later deltas. Identity-bearing `task.started` and `task.completed`
+events cannot be mixed into a delta-owned projection. This keeps all task
+authority in the canonical store without an adapter-specific counter file.
+
+```json
+{"version":1,"event":"task.delta","session":{"id":"session-1"},"delta":{"done":0,"total":1}}
+{"version":1,"event":"task.delta","session":{"id":"session-1"},"delta":{"done":1,"total":0}}
+```
+
 ### `task.started` / `task.completed`
 
 Built-in adapters use these identity-bearing events for source task and
@@ -256,6 +274,7 @@ Every event uses the same JSON envelope. Only `version` and `event` are required
   "session": { ... },
   "state": { ... },
   "progress": { ... },
+  "delta": { ... },
   "task": { ... },
   "tasks": [ ... ],
   "merge": false,
@@ -269,7 +288,7 @@ Every event uses the same JSON envelope. Only `version` and `event` are required
 | Field | Type | Required | Description |
 |---|---|---|---|
 | `version` | integer | yes | Protocol version. Must be `1`. |
-| `event` | string | yes | One of: `session.start`, `session.end`, `agent.running`, `agent.compacting`, `agent.compacted`, `agent.idle`, `agent.needs-input`, `agent.input-resolved`, `agent.failed`, `task.progress`, `task.snapshot`, `task.started`, `task.completed`. |
+| `event` | string | yes | One of: `session.start`, `session.end`, `agent.running`, `agent.compacting`, `agent.compacted`, `agent.idle`, `agent.needs-input`, `agent.input-resolved`, `agent.failed`, `task.progress`, `task.delta`, `task.snapshot`, `task.started`, `task.completed`. |
 
 ### `agent` Object
 
@@ -314,6 +333,16 @@ Task progress counters. Can be sent with any event but is primarily intended for
 |---|---|---|---|
 | `done` | integer | yes | Number of completed tasks. Clamped to `[0, total]`. |
 | `total` | integer | yes | Total number of tasks. Must be greater than 0. |
+
+### `delta` Object
+
+Anonymous task-counter changes carried by `task.delta`. `session.id` is
+required. Both fields are required; at least one must be non-zero.
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `done` | integer | yes | Number of completed tasks to add. |
+| `total` | integer | yes | Number of total tasks to add. |
 
 ### `tasks` Array and `merge`
 

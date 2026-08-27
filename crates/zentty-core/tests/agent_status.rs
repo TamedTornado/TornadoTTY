@@ -642,6 +642,47 @@ fn task_snapshot_requires_session_and_valid_task_identities() {
 }
 
 #[test]
+fn task_delta_requires_a_session_and_updates_only_counter_owned_progress() {
+    for payload in [
+        br#"{"version":1,"event":"task.delta","delta":{"done":0,"total":1}}"#.as_slice(),
+        br#"{"version":1,"event":"task.delta","session":{"id":"session"},"delta":{"done":0,"total":0}}"#.as_slice(),
+    ] {
+        assert!(AgentEvent::parse(payload).is_err());
+    }
+    let mut store = AgentStatusStore::default();
+    for (now, payload) in [
+        (1, br#"{"version":1,"event":"task.delta","session":{"id":"counter"},"delta":{"done":0,"total":1}}"#.as_slice()),
+        (2, br#"{"version":1,"event":"task.delta","session":{"id":"counter"},"delta":{"done":1,"total":0}}"#.as_slice()),
+        (3, br#"{"version":1,"event":"task.started","session":{"id":"counter"},"task":{"id":"late-identity"}}"#.as_slice()),
+    ] {
+        store.apply(event_for("pane-counter", payload), now);
+    }
+    assert_eq!(
+        store.status_for_pane("pane-counter").unwrap().progress,
+        Some(AgentProgress { done: 1, total: 1 })
+    );
+    store.apply(
+        event_for(
+            "pane-counter",
+            br#"{"version":1,"event":"task.progress","session":{"id":"counter"},"progress":{"done":2,"total":4}}"#,
+        ),
+        4,
+    );
+    store.apply(
+        event_for(
+            "pane-counter",
+            br#"{"version":1,"event":"task.delta","session":{"id":"counter"},"delta":{"done":1,"total":0}}"#,
+        ),
+        5,
+    );
+    assert_eq!(
+        store.status_for_pane("pane-counter").unwrap().progress,
+        Some(AgentProgress { done: 2, total: 4 }),
+        "an explicit task snapshot must remain authoritative over counter deltas"
+    );
+}
+
+#[test]
 fn attention_requires_both_the_needs_input_phase_and_a_real_interaction() {
     let status = |phase, interaction| PaneAgentStatus {
         session_id: "session".to_owned(),

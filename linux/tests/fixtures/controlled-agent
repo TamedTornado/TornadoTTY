@@ -413,11 +413,52 @@ case "${profile}" in
             printf 'cursor-negative-control:rejected\n'
         } >>"${ZENTTY_CONTROLLED_AGENT_START_RECEIPT}"
         ;;
-    droid-adapter)
+    droid-hooks)
         require_helper
-        printf '%s' \
-            '{"hook_event_name":"PreToolUse","session_id":"droid-e2e","tool_name":"AskUser","tool_input":{"question":"Choose the Droid path?"}}' |
-            "${helper}" ipc agent-event --adapter=droid
+        droid_settings="${HOME}/.factory/settings.local.json"
+        droid_output="${HOME}/.factory/hooks/hooks.json"
+        session_id="session.safe:droid-42"
+        [[ -f "${droid_settings}" ]] || fail "Droid managed settings are missing"
+        jq -e '(.hooks | length) == 8' "${droid_settings}" >/dev/null ||
+            fail "Droid installed hook groups are incomplete"
+        jq -e '.showHookOutput == false' "${droid_output}" >/dev/null ||
+            fail "Droid hook output default was not suppressed"
+        droid_hook() {
+            local event="$1"
+            local payload="$2"
+            local command
+            command="$(jq -er --arg event "${event}" '
+                .hooks[$event][] | .hooks[] |
+                select(.command | contains("ipc agent-event --adapter=droid")) |
+                .command
+            ' "${droid_settings}" | head -1)" ||
+                fail "Droid managed hook command is missing for ${event}"
+            printf '%s' "${payload}" | /bin/sh -c "${command}"
+        }
+        droid_hook SessionStart \
+            "{\"hook_event_name\":\"SessionStart\",\"session_id\":\"${session_id}\",\"cwd\":\"${PWD}\"}"
+        droid_hook UserPromptSubmit \
+            "{\"hook_event_name\":\"UserPromptSubmit\",\"session_id\":\"${session_id}\",\"cwd\":\"${PWD}\"}"
+        droid_hook PreToolUse \
+            "{\"hook_event_name\":\"PreToolUse\",\"session_id\":\"${session_id}\",\"tool_name\":\"Task\",\"cwd\":\"${PWD}\"}"
+        droid_hook SubagentStop \
+            "{\"hook_event_name\":\"SubagentStop\",\"session_id\":\"${session_id}\",\"cwd\":\"${PWD}\"}"
+        droid_hook PreToolUse \
+            "{\"hook_event_name\":\"PreToolUse\",\"session_id\":\"${session_id}\",\"tool_name\":\"TodoWrite\",\"cwd\":\"${PWD}\",\"tool_input\":{\"todos\":\"1. [completed] Audit hooks\\n2. [in_progress] Exercise UI\\n3. [pending] Persist restore\"}}"
+        droid_hook PreToolUse \
+            "{\"hook_event_name\":\"PreToolUse\",\"session_id\":\"${session_id}\",\"tool_name\":\"AskUser\",\"cwd\":\"${PWD}\",\"tool_input\":{\"question\":\"Choose the Droid path?\",\"options\":[\"Safe\",\"Fast\"]}}"
+        if printf '%s' \
+            "{\"hook_event_name\":\"Stop\",\"session_id\":\"${session_id}\"}" |
+            ZENTTY_PANE_TOKEN=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb \
+                "${helper}" ipc agent-event --adapter=droid >/dev/null 2>&1; then
+            fail "Droid bad-token negative control was accepted"
+        fi
+        droid_hook Stop \
+            "{\"hook_event_name\":\"Stop\",\"session_id\":\"${session_id}\",\"cwd\":\"${PWD}\"}"
+        {
+            printf 'droid-hooks:%s\n' "$(jq '.hooks | length' "${droid_settings}")"
+            printf 'droid-negative-control:rejected\n'
+        } >>"${ZENTTY_CONTROLLED_AGENT_START_RECEIPT}"
         ;;
     kimi-adapter)
         require_helper

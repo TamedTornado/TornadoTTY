@@ -899,12 +899,21 @@
       "swift_tests": ["ZenttyLogicTests/AgentStatusSupportTests.swift"],
       "classification": "REQUIRED_LATER",
       "origin": "PORT_PARITY",
-      "user_impact": "Droid remains usable, but task and hook state is deferred.",
-      "linux_owner_issue": 7,
-      "implementation_status": "NOT_IMPLEMENTED",
-      "focused_tests": [],
-      "product_scenarios": [],
-      "test_plan": "Run Droid's real hook installer, task store, PTY, adapter, and visible status path.",
+      "user_impact": "Droid launches receive owned hooks, visible lifecycle, decision and exact task state, attention, and safe opaque-session restoration.",
+      "linux_owner_issue": 129,
+      "implementation_status": "IMPLEMENTED",
+      "focused_tests": [
+        "crates/zentty-agent-ipc/tests/integration_cli.rs",
+        "crates/zentty-agent-ipc/tests/launch_cli.rs",
+        "crates/zentty-core/tests/agent_adapters.rs",
+        "crates/zentty-core/tests/agent_status.rs",
+        "crates/zentty-core/tests/workspace_recipe.rs",
+        "crates/zentty-core/tests/workspace_state.rs"
+      ],
+      "product_scenarios": [
+        "linux/tests/rust-agent-ipc"
+      ],
+      "test_plan": "Keep bounded atomic nested-hook install/uninstall, user hook and explicit showHookOutput preservation, wrapper argument/PID projection, snake/camel CWD aliases, source lifecycle and permission modes, AskUser decision options, ExitSpecMode approval behavior, anonymous Task/SubagentStop deltas, exact TodoWrite array/string/empty progress, authoritative Todo-over-subagent projection in the canonical store, strict opaque-ID droid exec -s restore, and restore-draft capture green. The focused nested-X11 journey executes the actual privately installed hook commands through /bin/sh, the staged wrapper, real PTY child, helper, authenticated Unix socket, Linux product, Ghostty surface, and sidebar; it rejects a bad token, proves final Idle 1/3, and closes the real window while Droid remains live to verify durable session/CWD state. A live Droid account/model request remains the controlled external boundary.",
       "alternative_or_blocker": null
     },
     {
