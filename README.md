@@ -1,196 +1,236 @@
-<!-- LOGO -->
-<h1>
-<p align="center">
-  <img src="assets/icon.png" alt="Zentty" width="128">
-  <br>Zentty
+<h1 align="center">
+  <img src="assets/icon.png" alt="Zentty" width="128"><br>
+  Zentty for Linux
 </h1>
-  <p align="center">
-    A native macOS terminal for agent-driven development, built on Ghostty.
-    <br />
-    Zentty gets out of the way. Minimal friction, maximum focus.
-    <br />
-    <a href="https://github.com/dedene/zentty/releases/latest/download/Zentty.dmg">Download</a>
-    ·
-    <a href="#install">Install</a>
-    ·
-    <a href="#status">Status</a>
-    ·
-    <a href="#build">Build</a>
-    ·
-    <a href="CONTRIBUTING.md">Contributing</a>
-  </p>
+
+<p align="center">
+  <strong>An unofficial Linux port of Zentty, built with Rust, GTK 4, and Ghostty.</strong><br>
+  Worklanes, real terminal panes, workspace restoration, and coding-agent awareness
+  in a native Linux application—without Electron or a web view.
 </p>
 
 <p align="center">
-  <img src="assets/screenshot.png" alt="Zentty screenshot" width="880">
+  <a href="#install-on-ubuntu-2404">Install</a> ·
+  <a href="#build-and-run-for-development">Build</a> ·
+  <a href="#project-status">Status</a> ·
+  <a href="docs/cli.md">CLI</a> ·
+  <a href="CONTRIBUTING.md">Contributing</a>
 </p>
 
-## Features
+> [!IMPORTANT]
+> This is a community Linux port maintained in Jason Maskell's public fork.
+> The original Zentty project is created and maintained by
+> [dedene](https://github.com/dedene/zentty) for macOS. This fork is not an
+> official Linux release from the upstream project.
 
-- **Worklanes, not just tabs.** Borrowed from niri and Hyprland: a horizontally-scrolling strip of columns, each column a vertical stack of panes. Rearrange (via mouse drag or keyboard shortcuts), resize, and navigate without losing your place.
-- **Keyboard-first, top to bottom.** Every action is a command. Every command is bindable. Rebind anything in settings, or fall back to the command palette when your muscle memory runs out.
-- **Resume your workspace** Zentty restores your worklanes on relaunch and can reopen agent sessions that were closed without finishing.
-- **Command palette** A fuzzy-searchable list of every action in the app, with your recent commands on top.
-- **Global search** Search inside the current pane or across every worklane with a single shortcut. Search without losing flow.
-- **Agent-aware.** Claude Code, Codex, Copilot CLI, Cursor, Droid CLI, Gemini CLI, Hermes Agent, Kimi CLI, OpenCode, and Pi report their status into the sidebar, so you see what they're doing, what they're asking, and when they need you, without switching panes.
-- **Native Ghostty themes.** Zentty reads Ghostty themes directly, with a built-in picker, live preview, opacity, and blur. And if you've never installed
-   Ghostty, the default experience is polished out of the box.
-- **Scriptable control** Interaction with worklanes or panes is scriptable via the embedded zentty CLI.
-- **Built on Ghostty.** GPU-accelerated rendering via `libghostty`, wrapped in a native Swift and AppKit shell. No Electron, no web views. It feels like a Mac app because it is one.
+![Zentty Linux running pane search](assets/zentty-linux-search.png)
 
-See [Zentty CLI](docs/cli.md) for command-line usage.
+## What works
 
-## Agent Skill
+- **Worklanes and panes.** Create, rename, reorder, color, navigate, move,
+  split, close, restore, and arrange real Ghostty terminals with independent
+  PTYs.
+- **Durable workspaces.** Window, worklane, pane, layout, working-directory,
+  scrollback, and supported coding-agent restore state survive ordinary
+  relaunches and crash recovery.
+- **Keyboard-first control.** Bindable commands, command palette, pane and
+  worklane navigation, Worklane Peek, pane-local search, and Global Find.
+- **Agent awareness.** Managed hooks, authenticated local IPC, sidebar status,
+  attention routing, notifications, and safe resume behavior for supported
+  coding agents including Codex, Claude Code, Gemini CLI, GitHub Copilot CLI,
+  OpenCode, Amp, Cursor, Droid, Kimi, Grok, Antigravity, Hermes Agent, Mistral
+  Vibe, Pi, OMP, and Small Harness. Explicit custom-agent status is supported
+  through the same protocol.
+- **Project context.** Git branch and pull-request state, bookmarks and
+  workspace presets, Open With actions, development-server discovery, task
+  runners, and a process Task Manager.
+- **Terminal workflows.** Ghostty themes, light and dark appearance, clean/raw
+  and Markdown copy, URL activation, local and SSH file transfer, scrolling,
+  selection, IME input, and Wayland/X11 support.
+- **Scriptable automation.** The packaged `zentty` CLI uses the same
+  authenticated command API as the GUI. See [`docs/cli.md`](docs/cli.md).
 
-Agents can install the Zentty CLI skill to discover pane-aware commands while running inside Zentty:
+The source-backed feature inventory is
+[`docs/design/zentty-linux-feature-inventory.json`](docs/design/zentty-linux-feature-inventory.json).
+
+## Project status
+
+The Linux port is in **daily-dogfood / pre-release** status. It is useful now,
+but it has not yet published a signed stable Linux release.
+
+- The initial product feature inventory is implemented.
+- The currently qualified package target is **Ubuntu 24.04 LTS (Noble),
+  amd64**.
+- Both GTK Wayland and X11 paths are exercised by controlled real-product
+  integration journeys. Desktop- and GPU-specific defects may still exist.
+- Linux update discovery and installation UI is intentionally deferred until
+  release preparation. Install upgrades explicitly with a newer `.deb`.
+- The optional terminal performance diagnostics overlay is deferred.
+- Task Manager network/container telemetry is a future enhancement.
+- The qualification matrix still contains explicit blocked, expected-failure,
+  and deferred cells. This README does **not** claim exhaustive or full Linux
+  qualification.
+
+Open work is tracked in the fork's
+[GitHub issues](https://github.com/TamedTornado/zentty/issues). The machine-readable
+qualification authority is
+[`linux/qualification-matrix.json`](linux/qualification-matrix.json).
+
+## Install on Ubuntu 24.04
+
+There is no public release download yet. Build the native Debian package from
+the exact checked-out revision, then install it with APT.
+
+### 1. Install the reviewed build environment
+
+The repository owns a pinned Ubuntu environment manifest and bootstrap. Run
+the package installation as root, but install the pinned language tools as
+your normal user:
 
 ```bash
-npx skills add dedene/zentty
+sudo apt-get update
+sudo apt-get install -y jq
+mapfile -t packages < <(linux/ci/bootstrap-ubuntu-24.04 --print-apt)
+sudo apt-get install -y "${packages[@]}"
+linux/ci/bootstrap-ubuntu-24.04 --no-system-install
 ```
 
-## Install
+The bootstrap downloads content-pinned toolchains and verifies their hashes.
+It includes qualification dependencies as well as the smaller build-time set,
+so it is intentionally substantial and reviewable rather than minimal.
 
-Download the latest `.dmg` from the [releases page](https://github.com/dedene/zentty/releases/latest), open it, and drag Zentty to your Applications folder.
+### 2. Build the Debian package
 
-Zentty updates itself in place via [Sparkle](https://sparkle-project.org) once installed. No need to check back here for new versions.
+Package construction requires a clean checkout:
 
-Builds are signed and notarized by Zenjoy BV. Requires macOS 14 (Sonoma) or later.
+```bash
+linux/scripts/prepare-ghostty-source
+ZENTTY_GHOSTTY_PREPARED=true linux/scripts/build-deb
+```
 
-## Status
+Verify and install the resulting artifact:
 
-Zentty is in active development. Expect rapid iteration, rough edges, and occasional breaking changes while the project is opened up.
+```bash
+cd build/linux-package
+sha256sum --check --strict SHA256SUMS
+dpkg-deb --info ./zentty_*_amd64.deb
+cd ../..
+sudo apt install ./build/linux-package/zentty_*_amd64.deb
+```
 
-## Requirements
+Launch Zentty from the desktop application menu or run:
 
-- macOS 14 (Sonoma) or later
-- Xcode
-- `zig` on `PATH`
-- `gettext` on `PATH`
+```bash
+zentty-linux
+```
 
-## Build
+The command API is available as:
 
-### Linux port
+```bash
+zentty --help
+```
 
-The Linux port is under active development on the `linux/port` branch. Build
-the staged Rust/GTK application and its pinned Ghostty library, then launch that
-same staged artifact:
+The complete package ownership, upgrade, removal, and retained-user-data
+contract is documented in
+[`linux/packaging/README.md`](linux/packaging/README.md).
+
+## Build and run for development
+
+After completing the reviewed environment bootstrap above:
 
 ```bash
 linux/scripts/build-local
 linux/scripts/run-local
 ```
 
-`run-local` uses the executable's packaged-style `$ORIGIN/../lib` RPATH. It does
-not require a hand-written `LD_LIBRARY_PATH` or a path into Ghostty's build
-cache. Arguments are forwarded to the product; for example, an isolated test
-workspace can be launched with:
+`build-local` prepares the pinned Ghostty fork and builds a ReleaseSafe Rust/GTK
+application bundle under `build/linux/`. `run-local` launches that exact staged
+bundle using its packaged-style relative library paths.
+
+Use an isolated state directory when experimenting without your normal
+workspace:
 
 ```bash
-linux/scripts/run-local --state-directory /tmp/zentty-state --no-session-restore
+linux/scripts/run-local \
+  --state-directory /tmp/zentty-state \
+  --no-session-restore
 ```
 
-The staged and installed Linux binaries expose their launch options and exact
-build identity without starting GTK or Ghostty:
+The binary exposes launch options and exact build provenance without starting
+GTK:
 
 ```bash
 build/linux/bin/zentty-linux --help
 build/linux/bin/zentty-linux --version
 ```
 
-`--version` reports the application version, build profile/tree state, and the
-Zentty commit compiled into that artifact. Direct Cargo builds report unknown
-provenance rather than inventing a release identity.
-
-Current Linux pane navigation uses the duration of the **Tab key itself**:
-
-- Tap `Ctrl+Tab` / `Ctrl+Shift+Tab`: select the next/previous pane as soon as
-  Tab is released. Keeping Control held afterward does not open anything.
-- Hold Tab in either chord for 200ms: open Worklane Peek. Release Control to
-  commit the preview or press `Escape` to cancel.
-
-Linux Global Find uses `Ctrl+Alt+Shift+F`; `Ctrl+Shift+F` remains Find in the
-focused pane. The sidebar search aggregates Ghostty's real matches across all
-panes and worklanes in the current window. `Enter` / `Shift+Enter` move to the
-next / previous match, the clear button ends the query without closing the
-sidebar row, and `Escape` closes Global Find and returns focus to the terminal.
-
-When `codex` or `claude` is already installed on the inherited `PATH`, new
-Linux panes automatically select Zentty's staged wrapper for that command. The
-wrapper executes the real installed agent with per-launch status hooks; it does
-not modify the user's Codex or Claude configuration. Set
-`ZENTTY_CODEX_HOOKS_DISABLED=1` or `ZENTTY_CLAUDE_HOOKS_DISABLED=1` before
-starting Zentty to bypass the corresponding integration.
-
-This is currently a development build, not a supported Linux package. The
-public feature inventory and remaining parity work live in issues #1 and
-#16–#23.
-
-Linux product configuration lives at `$XDG_CONFIG_HOME/zentty/config.toml`
-(falling back to `~/.config/zentty/config.toml`). Its validation, live-reload,
-symlink, concurrency, permissions, and recovery behavior is documented in
+Linux configuration lives at `$XDG_CONFIG_HOME/zentty/config.toml`, falling
+back to `~/.config/zentty/config.toml`. See
 [`docs/configuration.md`](docs/configuration.md).
 
-The development build supports the source-named **Move Pane to New Window**
-command without recreating the live Ghostty surface or PTY. Agent and tmux IPC
-use one process-wide authenticated transport; each GTK window owns only its
-window-local event projection, so a moved pane keeps its capability while its
-canonical window/worklane route changes. Moving into an existing window and
-cross-window drag/drop remain tracked parity work rather than implied support.
+## Architecture and testing
 
-### macOS
+The Linux application is not a re-skinned web terminal:
 
-Zentty requires a local `GhosttyKit.xcframework` before the app can build normally.
+- product and portable model code are written in Rust;
+- the native shell uses `gtk4-rs`;
+- terminal rendering and PTY behavior come from a narrow embedding API in a
+  maintained Ghostty GTK fork;
+- Zentty-specific worklane, agent, settings, and persistence policy stays out
+  of Ghostty; and
+- the macOS Swift implementation and tests remain the behavioral source for
+  port parity.
 
-Build the framework:
+Real-product integration tests launch the delivered executable with real GTK,
+Ghostty surfaces, PTYs, processes, filesystems, local IPC, and controlled X11
+or Wayland environments. External coding-model responses are controlled where
+necessary. Focused tests cover deterministic models and parsers.
 
-```bash
-./scripts/build_ghosttykit.sh
-```
+For the architecture decision, test policy, and chronological field evidence,
+see:
 
-Then build the app:
+- [`docs/architecture/0001-rust-gtk4-linux-product.md`](docs/architecture/0001-rust-gtk4-linux-product.md)
+- [`linux/test-policy/README.md`](linux/test-policy/README.md)
+- [`linux/README.md`](linux/README.md)
+- [`docs/design/zentty-linux-dogfood-2026-08-01.md`](docs/design/zentty-linux-dogfood-2026-08-01.md)
 
-```bash
-xcodebuild -project Zentty.xcodeproj -scheme Zentty -destination 'platform=macOS' build
-```
-
-If you need to regenerate the Xcode project from [`project.yml`](project.yml):
-
-```bash
-bundle exec fastlane mac generate_project
-```
-
-More detail about the Ghostty bootstrap flow lives in [`docs/ghosttykit-setup.md`](docs/ghosttykit-setup.md).
-
-## Test
-
-Run the full test suite:
+The full local qualification entry point is available for release work, but is
+not required for ordinary development or every bug fix:
 
 ```bash
-ZENTTY_TEST_DISPLAY_PROVIDER=betterdisplay scripts/test-on-virtual-display
+linux/tests/qualify-local
 ```
 
-## Agent Hooks
+## macOS and upstream Zentty
 
-Zentty bundles helper commands and environment variables for agent-aware workflows inside terminal panes.
+For the official macOS application, signed `.dmg`, Sparkle updates, macOS build
+instructions, and upstream feature development, visit
+[`dedene/zentty`](https://github.com/dedene/zentty).
 
-Hook configuration details are documented in [`docs/agent-hooks.md`](docs/agent-hooks.md).
-
-For Kimi specifically: do first-time auth with `kimi login` before using wrapped `kimi` inside Zentty. Zentty passthroughs Kimi's management commands directly to the real Kimi binary so login/logout keep using the default Kimi config. If you want a specific model, prefer `kimi --model <model-id>` or set `default_model` in `~/.kimi/config.toml` (or `~/.kimi-code/config.toml` for modern Kimi Code CLI).
+This fork keeps its `main` branch as an upstream/macOS tracking branch. The
+Linux product is developed on `linux/port`, which is the intended default
+landing branch for this fork.
 
 ## Contributing
 
 Contributions are welcome. Start with [`CONTRIBUTING.md`](CONTRIBUTING.md).
+Before a non-trivial contribution can be merged, contributors must agree to
+[`CLA.md`](CLA.md).
 
-Before a non-trivial contribution can be merged, contributors must agree to [`CLA.md`](CLA.md).
+Please keep Linux product policy in Zentty unless Ghostty itself owns the
+behavior. Changes to the maintained Ghostty fork should remain minimal,
+independently tested, and suitable for upstream review.
 
-## License
+## License, attribution, and trademarks
 
-Zentty is available under the GNU General Public License v3.0 only (`GPL-3.0-only`). See [`LICENSE`](LICENSE).
+Zentty is available under the GNU General Public License v3.0 only
+(`GPL-3.0-only`). See [`LICENSE`](LICENSE).
 
-If your organization cannot or does not want to comply with GPLv3, alternative commercial licensing may be available from Zenjoy BV. Contact `hallo@zenjoy.be`.
+The original Zentty design and macOS implementation are by
+[dedene](https://github.com/dedene/zentty) and its contributors. Ghostty is by
+Mitchell Hashimoto and the Ghostty contributors. Third-party notices for the
+packaged Linux artifact are generated and verified during packaging.
 
-## Trademarks
-
-The GPL license covers the code. It does not grant rights to use the Zentty name, logos, icons, or other branding for your own distribution.
-
-See [`TRADEMARKS.md`](TRADEMARKS.md) for branding rules.
+The GPL license covers the code. It does not grant rights to use the Zentty
+name, logos, icons, or other branding for unrelated distributions. See
+[`TRADEMARKS.md`](TRADEMARKS.md).
