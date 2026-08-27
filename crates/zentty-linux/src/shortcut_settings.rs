@@ -335,7 +335,7 @@ pub(crate) fn show(
     connect_detail_controls(&state);
     connect_preview(&keyboard, &state);
     connect_header(&header_actions, &window, &state);
-    install_window_shortcuts(&window, parent, &search, Rc::clone(restore_parent_focus));
+    install_window_shortcuts(&window);
     install_recorder(&window, &state);
     let initial_search = search.clone();
     let initial_focus = settings.initial_focus.clone();
@@ -407,27 +407,29 @@ pub(crate) fn show(
     }
 }
 
-fn install_window_shortcuts(
-    window: &gtk::Window,
-    parent: &gtk::Window,
-    _search: &gtk::SearchEntry,
-    restore_parent_focus: Rc<dyn Fn()>,
-) {
+fn is_settings_close_shortcut(key: gdk::Key, modifiers: gdk::ModifierType) -> bool {
+    let relevant = modifiers
+        & (gdk::ModifierType::CONTROL_MASK
+            | gdk::ModifierType::ALT_MASK
+            | gdk::ModifierType::SHIFT_MASK
+            | gdk::ModifierType::SUPER_MASK);
+    matches!(key, gdk::Key::w | gdk::Key::W) && relevant == gdk::ModifierType::CONTROL_MASK
+}
+
+fn install_window_shortcuts(window: &gtk::Window) {
     let controller = gtk::EventControllerKey::new();
     controller.set_propagation_phase(gtk::PropagationPhase::Capture);
     let settings = window.clone();
-    let parent = parent.clone();
     controller.connect_key_pressed(move |_, key, _, modifiers| {
         let relevant = modifiers
             & (gdk::ModifierType::CONTROL_MASK
                 | gdk::ModifierType::ALT_MASK
                 | gdk::ModifierType::SHIFT_MASK
                 | gdk::ModifierType::SUPER_MASK);
-        if key == gdk::Key::Escape && relevant.is_empty() {
-            settings.set_visible(false);
-            parent.present();
-            restore_parent_focus();
-            eprintln!("zentty-linux: shortcut-settings hidden parent-presented=true");
+        if (key == gdk::Key::Escape && relevant.is_empty())
+            || is_settings_close_shortcut(key, modifiers)
+        {
+            settings.close();
             glib::Propagation::Stop
         } else {
             glib::Propagation::Proceed
@@ -1281,6 +1283,38 @@ fn install_styles() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn settings_close_shortcut_requires_exact_ctrl_w() {
+        assert!(is_settings_close_shortcut(
+            gdk::Key::w,
+            gdk::ModifierType::CONTROL_MASK
+        ));
+        assert!(is_settings_close_shortcut(
+            gdk::Key::w,
+            gdk::ModifierType::CONTROL_MASK | gdk::ModifierType::LOCK_MASK
+        ));
+        assert!(!is_settings_close_shortcut(
+            gdk::Key::W,
+            gdk::ModifierType::CONTROL_MASK | gdk::ModifierType::SHIFT_MASK
+        ));
+        assert!(!is_settings_close_shortcut(
+            gdk::Key::w,
+            gdk::ModifierType::CONTROL_MASK | gdk::ModifierType::ALT_MASK
+        ));
+        assert!(!is_settings_close_shortcut(
+            gdk::Key::w,
+            gdk::ModifierType::CONTROL_MASK | gdk::ModifierType::SUPER_MASK
+        ));
+        assert!(!is_settings_close_shortcut(
+            gdk::Key::w,
+            gdk::ModifierType::empty()
+        ));
+        assert!(!is_settings_close_shortcut(
+            gdk::Key::q,
+            gdk::ModifierType::CONTROL_MASK
+        ));
+    }
 
     #[test]
     fn compact_keyboard_glyphs_preserve_physical_key_meaning() {

@@ -119,10 +119,11 @@ main_type() {
 }
 
 open_command_palette() {
+    local chord="${1:-ctrl+shift+p}"
     local shown_count focus_count
     shown_count="$(grep -Fc 'zentty-linux: command-palette=shown' "${log}" 2>/dev/null || true)"
     focus_count="$(grep -Fc 'zentty-linux: command-palette-focus=confirmed result=true' "${log}" 2>/dev/null || true)"
-    main_key ctrl+shift+p
+    main_key "${chord}"
     zentty_product_wait_for_log_count "${log}" \
         'zentty-linux: command-palette=shown' "$((shown_count + 1))" \
         "command palette did not open from physical input" ||
@@ -166,6 +167,7 @@ settings_key() {
     else
         case "${chord}" in
             ctrl+alt+*) zentty_product_ctrl_alt_key "${backend}" "${chord#ctrl+alt+}" ;;
+            ctrl+shift+*) zentty_product_ctrl_shift_key "${backend}" "${chord#ctrl+shift+}" ;;
             ctrl+*) zentty_product_ctrl_key "${backend}" "${chord#ctrl+}" ;;
             shift+*) zentty_product_shift_key "${backend}" "${chord#shift+}" ;;
             alt+*) zentty_product_alt_key "${backend}" "${chord#alt+}" ;;
@@ -327,10 +329,66 @@ zentty_product_wait_for_log "${log}" \
     "left-hand preset did not cross the real settings action" || fail "shortcut preset failed"
 grep -Fq 'command_id = "pane.focus.up"' "${config}" || fail "left preset was not persisted"
 grep -Fq 'shortcut = "command+w"' "${config}" || fail "left preset value was not persisted"
+
+# Settings owns exact Ctrl+W locally, even when its focused control is the
+# shortcut search and the live main-window preset binds Ctrl+W to a pane
+# command. Modified chords remain available to the focused Settings control.
+settings_search_before="$(grep -Fc 'zentty-linux: settings-search shortcut section=shortcuts' "${log}" 2>/dev/null || true)"
+settings_key ctrl+shift+w
+settings_key ctrl+f
+zentty_product_wait_for_log_count "${log}" \
+    'zentty-linux: settings-search shortcut section=shortcuts' "$((settings_search_before + 1))" \
+    "Ctrl+Shift+W incorrectly closed Settings" || fail "modified Settings close chord was intercepted"
+
+settings_hidden_before="$(grep -Fc 'zentty-linux: shortcut-settings hidden parent-presented=true' "${log}" 2>/dev/null || true)"
+focus_count="$(grep -Fc 'zentty-linux: focus-pane pane=pane-1' "${log}" 2>/dev/null || true)"
+settings_key ctrl+w
+zentty_product_wait_for_log_count "${log}" \
+    'zentty-linux: shortcut-settings hidden parent-presented=true' "$((settings_hidden_before + 1))" \
+    "Ctrl+W did not close Settings" || fail "Settings close chord failed"
+if [[ "${backend}" == wayland && "${ZENTTY_NESTED_WAYLAND_OUTER_X11_INPUT:-}" == 1 ]]; then
+    xdotool mousemove --sync --window "${ZENTTY_PRODUCT_WINDOW_ID}" 700 400 click 1
+fi
+zentty_product_prepare_input "${backend}" "${log}" || fail "main window could not regain focus after Ctrl+W"
+zentty_product_wait_for_log_count "${log}" 'zentty-linux: focus-pane pane=pane-1' "$((focus_count + 1))" \
+    "terminal surface did not regain focus after Ctrl+W" || fail "Ctrl+W focus restoration failed"
+
+focus_up_before="$(grep -Fc 'zentty-linux: action=focus-pane-up result=unchanged' "${log}" 2>/dev/null || true)"
+main_key ctrl+w
+zentty_product_wait_for_log_count "${log}" \
+    'zentty-linux: action=focus-pane-up result=unchanged' "$((focus_up_before + 1))" \
+    "main-window Ctrl+W did not retain its configured pane command" || fail "main Ctrl+W routing regressed"
+
+settings_visible_before="$(grep -Fc 'zentty-linux: shortcut-settings visible commands=' "${log}" 2>/dev/null || true)"
+settings_active_before="$(grep -Fc 'zentty-linux: shortcut-settings active ' "${log}" 2>/dev/null || true)"
+if [[ "${backend}" == wayland ]]; then
+    open_command_palette ctrl+x
+    main_type 'Settings'
+    zentty_product_wait_for_log "${log}" 'command-palette=query value="Settings" results=1' \
+        "Settings did not resolve uniquely after Ctrl+W" || fail "Settings reopen palette route failed"
+    main_key Down
+    main_key Return
+else
+    main_key ctrl+comma
+fi
+zentty_product_wait_for_log_count "${log}" \
+    'zentty-linux: shortcut-settings visible commands=' "$((settings_visible_before + 1))" \
+    "Settings did not reopen after Ctrl+W" || fail "Settings repeated lifecycle failed"
+prepare_settings_input
+zentty_product_wait_for_log_count "${log}" \
+    'zentty-linux: shortcut-settings active ' "$((settings_active_before + 1))" \
+    "reopened Settings did not receive compositor activation" || fail "Settings reactivation failed"
+shortcuts_section_before="$(grep -Fc 'zentty-linux: settings-section selected=shortcuts' "${log}" 2>/dev/null || true)"
+settings_key ctrl+2
+zentty_product_wait_for_log_count "${log}" \
+    'zentty-linux: settings-section selected=shortcuts' "$((shortcuts_section_before + 1))" \
+    "reopened Settings did not return to Shortcuts" || fail "Settings section restoration setup failed"
+settings_key ctrl+f
+
 # Apply the dedicated Ghostty preset through its real destructive-replacement
 # confirmation. The active transient, not its parent Settings window, owns the
 # confirmation key event.
-for _ in {1..2}; do settings_key Tab; done
+for _ in {1..3}; do settings_key Tab; done
 settings_key space
 zentty_product_wait_for_log "${log}" \
     'zentty-linux: shortcut-settings action=shortcut-preset-ghostty confirmation=shown revision=80054768edbffd5df8568782e528363033a49192' \

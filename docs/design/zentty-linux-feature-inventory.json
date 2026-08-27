@@ -511,10 +511,10 @@
       "origin": "PORT_PARITY",
       "user_impact": "A standard close-window command silently failing in Settings makes window ownership feel broken and can route destructive commands to the wrong toplevel.",
       "linux_owner_issue": 121,
-      "implementation_status": "PARTIAL",
-      "focused_tests": ["crates/zentty-linux/src/settings_shell.rs"],
+      "implementation_status": "IMPLEMENTED",
+      "focused_tests": ["crates/zentty-linux/src/settings_shell.rs", "crates/zentty-linux/src/shortcut_settings.rs"],
       "product_scenarios": ["linux/tests/rust-shortcuts-settings"],
-      "test_plan": "Add a focused action-routing test and a controlled real-GTK journey that opens Settings from a live terminal window, sends physical Ctrl+W while Settings owns focus, proves only Settings closes, proves the PTY and terminal window remain alive, and checks the same command against terminal-window focus and repeated Settings opens.",
+      "test_plan": "Focused routing tests require exact Ctrl+W while allowing lock-state noise and rejecting bare, shifted, Alt-modified, Super-modified, and unrelated chords. The controlled real-GTK Wayland journey opens Settings from a live terminal window, proves Ctrl+Shift+W leaves a focused Settings control alive, sends physical Ctrl+W while Settings owns focus, proves only Settings closes, proves the PTY and terminal window remain alive and regain focus, checks Ctrl+W against the live main-window preset, and reopens and continues using the same Settings toplevel.",
       "alternative_or_blocker": null
     },
     {

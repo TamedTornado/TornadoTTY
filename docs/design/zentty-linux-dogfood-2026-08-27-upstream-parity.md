@@ -280,3 +280,37 @@ exact row, and proves the live source PTY moved to the stable destination ID.
 Feature inventory after reconciliation: 63 entries, 46 IMPLEMENTED, 5 PARTIAL,
 and 12 NOT_IMPLEMENTED. The installed dogfood application was not replaced or
 restarted; this feature remains queued for the next explicit batch QA stop.
+
+## GH-121 Settings-local Ctrl+W lifecycle
+
+The current source handles Close Window against the active Settings toplevel.
+Linux already had one capture-phase controller owned only by Settings, but it
+handled Escape alone. Exact Ctrl+W now enters that controller and calls the
+window's existing `close()` path, so the established close-request handler
+remains the single owner of hiding Settings, presenting the parent, and
+restoring terminal focus. The global shortcut registry and main-window router
+were not changed, and no timer was added.
+
+The focused test was written first and failed because the Settings-local chord
+predicate did not exist. It now accepts Ctrl+W with lock-state noise and rejects
+bare W, Ctrl+Shift+W, Ctrl+Alt+W, Ctrl+Super+W, and Ctrl+Q. Focused rustfmt,
+Clippy with warnings denied, and ShellCheck pass. The staged ReleaseSafe build
+also passed the Cargo publish-age audit before the real journey.
+
+The controlled Wayland journey exposed three orchestration assumptions after
+the product behavior itself passed. Reopening through the command palette had
+to use the live left-preset Ctrl+X binding rather than the default Ctrl+Shift+P;
+the reopened window starts on General rather than retaining Shortcuts; and GTK
+visibility precedes compositor activation, so sending Ctrl+2 too early reached
+the main window. The repaired journey accepts the current palette chord,
+selects Shortcuts from an explicit focus anchor, and waits for the real GTK
+activation receipt instead of sleeping.
+
+The final journey physically proves Ctrl+Shift+W leaves the focused Settings
+search control alive, Ctrl+W closes only Settings, the main window and child PTY
+survive and regain focus, main-window Ctrl+W still invokes the configured
+`pane.focus.up` action, and the same Settings toplevel reopens and completes the
+existing preset, chooser, theme, reload, persistence, and raw-byte journey.
+Feature inventory after reconciliation: 63 entries, 47 IMPLEMENTED, 4 PARTIAL,
+and 12 NOT_IMPLEMENTED. The installed dogfood application was not replaced or
+restarted; operator QA remains queued for the next explicit batch stop.
