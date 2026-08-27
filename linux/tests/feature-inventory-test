@@ -60,8 +60,8 @@ jq -e '
     .result == "PASS" and
     .entry_count == 63 and
     .classifications.REQUIRED_INITIAL_RELEASE == 37 and
-    .implementation_statuses.IMPLEMENTED == 42 and
-    .implementation_statuses.PARTIAL == 9 and
+    .implementation_statuses.IMPLEMENTED == 43 and
+    .implementation_statuses.PARTIAL == 8 and
     .implementation_statuses.NOT_IMPLEMENTED == 12 and
     .evidence.app_commands == 70 and
     .evidence.pane_commands == 33 and
@@ -145,7 +145,7 @@ jq -e '
 jq -e '
     .entries[] | select(.id == "agent.claude-teams-tmux-compat") |
     .linux_owner_issue == 117 and
-    .implementation_status == "PARTIAL" and
+    .implementation_status == "IMPLEMENTED" and
     (.test_plan | contains("two real GTK windows")) and
     (.test_plan | contains("reject cross-window explicit pane targets")) and
     (.test_plan | contains("application-instance scope"))

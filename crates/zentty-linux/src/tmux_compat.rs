@@ -414,6 +414,7 @@ impl TmuxCompatProduct {
             &["-F", "-c", "-l", "-t"],
             &["-P", "-b", "-d", "-h", "-v"],
         );
+        let is_claude_bootstrap = is_claude_bootstrap_split(request.arguments(), &parsed);
         validate_explicit_pane_target(parsed.value("-t"), &pane_ids)?;
         validate_explicit_pane_target(Some(&target.pane_id), &pane_ids)?;
         if parsed
@@ -461,7 +462,7 @@ impl TmuxCompatProduct {
                 .has_flag("-P")
                 .then(|| parsed.value("-F").unwrap_or(DEFAULT_SPLIT_PRINT).to_owned()),
             working_directory: parsed.value("-c").map(str::to_owned),
-            launch_command: (!parsed.positionals().is_empty())
+            launch_command: (!is_claude_bootstrap && !parsed.positionals().is_empty())
                 .then(|| tmux_shell_command(parsed.positionals())),
         })
     }
@@ -764,6 +765,18 @@ impl TmuxCompatProduct {
 
 fn parsed(arguments: &[String], values: &[&str], flags: &[&str]) -> ParsedArguments {
     ParsedArguments::parse(arguments, &strings(values), &strings(flags))
+}
+
+fn is_claude_bootstrap_split(arguments: &[String], parsed: &ParsedArguments) -> bool {
+    arguments
+        .iter()
+        .position(|argument| argument == "--")
+        .is_some_and(|delimiter| arguments[delimiter + 1..] == ["cat"])
+        && parsed.positionals() == ["cat"]
+        && parsed.has_flag("-d")
+        && parsed.has_flag("-P")
+        && parsed.value("-t").is_some()
+        && parsed.value("-F") == Some("#{pane_id}")
 }
 
 fn tmux_shell_command(arguments: &[String]) -> String {
@@ -1816,6 +1829,59 @@ mod tests {
             );
             assert_eq!(invalid.unwrap_err().0, "invalid_arguments");
         }
+    }
+
+    #[test]
+    fn split_distinguishes_exact_claude_bootstrap_from_immediate_commands() {
+        let product = TmuxCompatProduct::default();
+        let state = workspace();
+        let claude_bootstrap = product
+            .prepare_split(
+                &state,
+                &target("pane-1"),
+                &request(
+                    "split-window",
+                    &[
+                        "-h",
+                        "-d",
+                        "-P",
+                        "-F",
+                        "#{pane_id}",
+                        "-t",
+                        "%pane-2",
+                        "--",
+                        "cat",
+                    ],
+                ),
+            )
+            .unwrap();
+        assert!(claude_bootstrap.detached);
+        assert_eq!(claude_bootstrap.print_format.as_deref(), Some("#{pane_id}"));
+        assert_eq!(claude_bootstrap.launch_command, None);
+
+        let ordinary_cat = product
+            .prepare_split(
+                &state,
+                &target("pane-1"),
+                &request(
+                    "split-window",
+                    &["-d", "-P", "-F", "#{pane_id}", "-t", "%pane-2", "cat"],
+                ),
+            )
+            .unwrap();
+        assert_eq!(ordinary_cat.launch_command.as_deref(), Some("cat"));
+
+        let delimited_non_bootstrap = product
+            .prepare_split(
+                &state,
+                &target("pane-1"),
+                &request("split-window", &["--", "cat", "-n"]),
+            )
+            .unwrap();
+        assert_eq!(
+            delimited_non_bootstrap.launch_command.as_deref(),
+            Some("'cat' '-n'")
+        );
     }
 
     #[test]

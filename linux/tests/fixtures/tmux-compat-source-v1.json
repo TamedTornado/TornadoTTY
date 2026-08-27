@@ -5,6 +5,8 @@
     {"id":"parse.clustered-bools","kind":"arguments","arguments":["-dPh","-F","#{pane_id}"],"value_options":["-F"],"boolean_options":["-d","-P","-h"],"expected":{"values":{"-F":"#{pane_id}"},"flags":["-P","-d","-h"],"positionals":[]}},
     {"id":"parse.clustered-value","kind":"arguments","arguments":["-l70%","-P"],"value_options":["-l"],"boolean_options":["-P"],"expected":{"values":{"-l":"70%"},"flags":["-P"],"positionals":[]}},
     {"id":"parse.display-template","kind":"arguments","arguments":["-t","%pane-1","-p","#{session_name}:#{window_index}"],"value_options":["-F","-t"],"boolean_options":["-p"],"expected":{"values":{"-t":"%pane-1"},"flags":["-p"],"positionals":["#{session_name}:#{window_index}"]}},
+    {"id":"parse.end-of-options","kind":"arguments","arguments":["-d","--","cat"],"value_options":["-c","-F","-l","-t"],"boolean_options":["-P","-b","-d","-h","-v"],"expected":{"values":{},"flags":["-d"],"positionals":["cat"]}},
+    {"id":"parse.end-of-options-verbatim","kind":"arguments","arguments":["--","-c","value","-d"],"value_options":["-c","-F","-l","-t"],"boolean_options":["-P","-b","-d","-h","-v"],"expected":{"values":{},"flags":[],"positionals":["-c","value","-d"]}},
     {"id":"send.named-keys","kind":"send_keys","arguments":["-t","%pane-2","claude","Enter","C-c"],"standard_input":null,"expected_text":"claude\r\u0003"},
     {"id":"send.literal","kind":"send_keys","arguments":["-l","-t","%pane-2","claude","Enter"],"standard_input":null,"expected_text":"claude Enter"},
     {"id":"target.explicit-pane","kind":"target","selector":"%pane-2","available":["pane-1","pane-2"],"fallback":"pane-1","expected":"pane-2"},

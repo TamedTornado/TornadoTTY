@@ -231,6 +231,16 @@ impl ApplicationShell {
                     .expect("bounded product diagnostic fits protocol limits");
             }
         };
+        if !shell.borrow().pane_runtime.is_deferred(&plan.pane_id) {
+            return TmuxCompatReply::failure(
+                "target_not_deferred",
+                format!(
+                    "pane {} is not awaiting a tmux launch command",
+                    plan.pane_id
+                ),
+            )
+            .expect("bounded product diagnostic fits protocol limits");
+        }
         match Self::respawn_tmux_surface(shell, &plan) {
             Ok(()) => TmuxCompatReply::success(String::new())
                 .expect("empty compatibility output fits protocol limits"),

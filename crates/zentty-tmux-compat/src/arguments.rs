@@ -21,7 +21,10 @@ impl ParsedArguments {
         let mut positionals = Vec::new();
         let mut arguments = arguments.iter();
         while let Some(argument) = arguments.next() {
-            if value_options.contains(argument.as_str()) {
+            if argument == "--" {
+                positionals.extend(arguments.cloned());
+                break;
+            } else if value_options.contains(argument.as_str()) {
                 if let Some(value) = arguments.next() {
                     values.insert(argument.clone(), value.clone());
                 }

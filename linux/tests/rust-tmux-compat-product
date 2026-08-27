@@ -270,7 +270,8 @@ grep -Fxq "zentty: tmux wait-for: timed out waiting for 'product-never-signalled
 rm -f -- "${TMPDIR:-/tmp}/zentty-wait-timeout.$$"
 first="$(${ZENTTY_CLI_BIN} __tmux-compat split-window -h -c "${ZENTTY_TMUX_SPLIT_CWD}" \
     -P -F '#{pane_id}' "env ZENTTY_SPLIT_PROBE=1 $0")"
-second="$(${ZENTTY_CLI_BIN} __tmux-compat split-window -v -d -P -F '#{pane_id}')"
+second="$(${ZENTTY_CLI_BIN} __tmux-compat split-window -v -d -P -F '#{pane_id}' \
+    -t "%${ZENTTY_PANE_ID}" -- cat)"
 first_id="${first#%}"
 second_id="${second#%}"
 [[ "${first_id}" != "${first}" && "${second_id}" != "${second}" ]]
@@ -290,7 +291,10 @@ if ${ZENTTY_CLI_BIN} __tmux-compat respawn-pane -k -t "%${first_id}"; then
 fi
 listed="$(${ZENTTY_CLI_BIN} __tmux-compat list-panes -F '#{pane_id}')"
 [[ "${listed}" == $'%pane-1\n%'"${first_id}"$'\n%'"${second_id}" ]]
-${ZENTTY_CLI_BIN} __tmux-compat respawn-pane -k -t "%${first_id}" \
+if ${ZENTTY_CLI_BIN} __tmux-compat respawn-pane -k -t "%${first_id}" -- true; then
+    exit 1
+fi
+${ZENTTY_CLI_BIN} __tmux-compat respawn-pane -k -t "%${second_id}" \
     -- "env ZENTTY_RESPAWN_PROBE=1 $0"
 for _ in {1..100}; do
     listed="$(${ZENTTY_CLI_BIN} __tmux-compat list-panes -F '#{pane_id}')"
@@ -304,15 +308,20 @@ ${ZENTTY_CLI_BIN} __tmux-compat select-layout tiled
 ${ZENTTY_CLI_BIN} __tmux-compat resize-pane -t "%${second_id}" -x 30%
 ${ZENTTY_CLI_BIN} __tmux-compat resize-pane -t "%${second_id}" -x 30
 sleep 0.2
+third="$(${ZENTTY_CLI_BIN} __tmux-compat split-window -v -d -P -F '#{pane_id}')"
+third_id="${third#%}"
+[[ "${third_id}" != "${third}" && "${third_id}" != "${first_id}" && \
+    "${third_id}" != "${second_id}" ]]
 ${ZENTTY_CLI_BIN} __tmux-compat send-keys -t "%${first_id}" team-ready Enter
-${ZENTTY_CLI_BIN} __tmux-compat send-keys -t "%${second_id}" \
+${ZENTTY_CLI_BIN} __tmux-compat send-keys -t "%${second_id}" team-ready Enter
+${ZENTTY_CLI_BIN} __tmux-compat send-keys -t "%${third_id}" \
     "env ZENTTY_DEFERRED_PROBE=1 $0" Enter
 for _ in {1..100}; do
-    grep -Fxq "deferred-started=${second_id} cwd=${ZENTTY_TMUX_SPLIT_CWD}" \
+    grep -Fxq "deferred-started=${third_id} cwd=${ZENTTY_TMUX_SPLIT_CWD}" \
         "${ZENTTY_TMUX_PRODUCT_PROBE}" 2>/dev/null && break
     sleep 0.02
 done
-grep -Fxq "deferred-started=${second_id} cwd=${ZENTTY_TMUX_SPLIT_CWD}" \
+grep -Fxq "deferred-started=${third_id} cwd=${ZENTTY_TMUX_SPLIT_CWD}" \
     "${ZENTTY_TMUX_PRODUCT_PROBE}"
 ${ZENTTY_CLI_BIN} __tmux-compat send-keys \
     -t "%${ZENTTY_PANE_ID}" agent-real-input Enter
@@ -333,8 +342,11 @@ printf loaded-buffer-real | ${ZENTTY_CLI_BIN} __tmux-compat load-buffer -b loade
 [[ "$(${ZENTTY_CLI_BIN} __tmux-compat show-buffer -b loaded)" == loaded-buffer-real ]]
 ${ZENTTY_CLI_BIN} __tmux-compat kill-pane -t "%${first_id}"
 listed="$(${ZENTTY_CLI_BIN} __tmux-compat list-panes -F '#{pane_id}')"
-[[ "${listed}" == $'%pane-1\n%'"${second_id}" ]]
+[[ "${listed}" == $'%pane-1\n%'"${second_id}"$'\n%'"${third_id}" ]]
 ${ZENTTY_CLI_BIN} __tmux-compat kill-pane -t "%${second_id}"
+listed="$(${ZENTTY_CLI_BIN} __tmux-compat list-panes -F '#{pane_id}')"
+[[ "${listed}" == $'%pane-1\n%'"${third_id}" ]]
+${ZENTTY_CLI_BIN} __tmux-compat kill-pane -t "%${third_id}"
 listed="$(${ZENTTY_CLI_BIN} __tmux-compat list-panes -F '#{pane_id}')"
 [[ "${listed}" == '%pane-1' ]]
 [[ "$(${ZENTTY_CLI_BIN} version)" == zentty\ * ]]
@@ -1083,13 +1095,13 @@ awk '
     cat "${log}" >&2
     fail "pending wait probe did not precede the independent display command"
 }
-[[ "$(grep -Fxc 'zentty-linux: tmux-command pane=pane-1 worklane=worklane-1 command=ListPanes' "${log}" || true)" -eq 7 ]] || {
+[[ "$(grep -Fxc 'zentty-linux: tmux-command pane=pane-1 worklane=worklane-1 command=ListPanes' "${log}" || true)" -eq 8 ]] || {
     cat "${log}" >&2
     fail "real list-panes did not cross the product handler"
 }
-[[ "$(grep -Fxc 'zentty-linux: tmux-command pane=pane-1 worklane=worklane-1 command=KillPane' "${log}" || true)" -eq 2 ]] || {
+[[ "$(grep -Fxc 'zentty-linux: tmux-command pane=pane-1 worklane=worklane-1 command=KillPane' "${log}" || true)" -eq 3 ]] || {
     cat "${log}" >&2
-    fail "two real kill-pane commands did not cross the product handler"
+    fail "three real kill-pane commands did not cross the product handler"
 }
 [[ "$(grep -Fxc 'zentty-linux: tmux-command pane=pane-1 worklane=worklane-1 command=SelectLayout' "${log}" || true)" -eq 3 ]] || {
     cat "${log}" >&2
@@ -1099,19 +1111,19 @@ awk '
     cat "${log}" >&2
     fail "two real resize-pane commands did not cross the product handler"
 }
-[[ "$(grep -Fxc 'zentty-linux: tmux-command pane=pane-1 worklane=worklane-1 command=SendKeys' "${log}" || true)" -eq 3 ]] || {
+[[ "$(grep -Fxc 'zentty-linux: tmux-command pane=pane-1 worklane=worklane-1 command=SendKeys' "${log}" || true)" -eq 4 ]] || {
     cat "${log}" >&2
     fail "real send-keys did not cross the product handler"
 }
-[[ "$(grep -Fxc 'zentty-linux: tmux-command pane=pane-1 worklane=worklane-1 command=SplitWindow' "${log}" || true)" -eq 4 ]] || {
+[[ "$(grep -Fxc 'zentty-linux: tmux-command pane=pane-1 worklane=worklane-1 command=SplitWindow' "${log}" || true)" -eq 5 ]] || {
     cat "${log}" >&2
-    fail "four real split-window commands did not cross the product handler"
+    fail "five real split-window commands did not cross the product handler"
 }
-[[ "$(grep -Fxc 'zentty-linux: tmux-command pane=pane-1 worklane=worklane-1 command=RespawnPane' "${log}" || true)" -eq 2 ]] || {
+[[ "$(grep -Fxc 'zentty-linux: tmux-command pane=pane-1 worklane=worklane-1 command=RespawnPane' "${log}" || true)" -eq 3 ]] || {
     cat "${log}" >&2
-    fail "valid and rejected real respawn-pane commands did not cross the product handler"
+    fail "valid, malformed, and non-deferred real respawn-pane commands did not cross the product handler"
 }
-grep -Fxq 'zentty-linux: tmux-respawn pane=pane-2' "${log}" || {
+grep -Fxq 'zentty-linux: tmux-respawn pane=pane-3' "${log}" || {
     cat "${log}" >&2
     fail "real respawn-pane did not replace the targeted Ghostty PTY child"
 }
@@ -1135,22 +1147,26 @@ grep -Eq 'zentty-linux: cli-notification inbox=false pane=pane-1 title-bytes=9 b
     fail "public CLI --no-inbox notification did not bypass inbox persistence"
 grep -Fxq 'zentty-linux: tmux-deferred pane=pane-3' "${log}" || {
     cat "${log}" >&2
+    fail "exact Claude -- cat bootstrap did not remain launch-deferred"
+}
+grep -Fxq 'zentty-linux: tmux-deferred pane=pane-4' "${log}" || {
+    cat "${log}" >&2
     fail "commandless split did not remain launch-deferred"
 }
-grep -Fxq 'zentty-linux: tmux-deferred-launch pane=pane-3' "${log}" || {
+grep -Fxq 'zentty-linux: tmux-deferred-launch pane=pane-4' "${log}" || {
     cat "${log}" >&2
     fail "submitted send-keys command did not launch the deferred pane"
 }
 awk '
-    /zentty-linux: tmux-deferred pane=pane-3$/ { deferred = NR }
-    /zentty-linux: surface-owned pane=pane-3 / { surface = NR }
-    /zentty-linux: tmux-deferred-launch pane=pane-3$/ { launched = NR }
+    /zentty-linux: tmux-deferred pane=pane-4$/ { deferred = NR }
+    /zentty-linux: surface-owned pane=pane-4 / { surface = NR }
+    /zentty-linux: tmux-deferred-launch pane=pane-4$/ { launched = NR }
     END { exit !(deferred > 0 && surface > deferred && launched >= surface) }
 ' "${log}" || {
     cat "${log}" >&2
     fail "deferred pane acquired a surface before its submitted launch command"
 }
-grep -Fxq 'respawned=pane-2' "${fixture_root}/child-probe.log" || {
+grep -Fxq 'respawned=pane-3' "${fixture_root}/child-probe.log" || {
     cat "${log}" >&2
     fail "respawned command did not run in the targeted real pane"
 }
@@ -1184,7 +1200,7 @@ grep -Fxq 'zentty-linux: tmux-layout equalize=none golden=pane-1 changed=false' 
     cat "${log}" >&2
     fail "percentage resize did not preserve the real golden leader column"
 }
-grep -Fq 'zentty-linux: geometry=worklane-1:column-worklane-1[pane-1],column-pane-2[pane-2,pane-3]' "${log}" || {
+grep -Fq 'zentty-linux: geometry=worklane-1:column-worklane-1[pane-1],column-pane-2[pane-2,pane-3,pane-4]' "${log}" || {
     cat "${log}" >&2
     fail "team topology was not one right column with stacked teammates"
 }
@@ -1200,17 +1216,22 @@ leader_percent=$((100 * leader_width / (leader_width + team_width)))
     cat "${log}" >&2
     fail "leader column is not golden-wide: ${leader_percent}%"
 }
-heights="$(grep -E 'zentty-linux: pane-height-layout column=column-pane-2 .*panes=pane-2:[0-9]+,pane-3:[0-9]+' "${log}" | tail -1)"
-if [[ ! "${heights}" =~ pane-2:([0-9]+),pane-3:([0-9]+) ]]; then
+heights="$(grep -E 'zentty-linux: pane-height-layout column=column-pane-2 .*panes=pane-2:[0-9]+,pane-3:[0-9]+,pane-4:[0-9]+' "${log}" | tail -1)"
+if [[ ! "${heights}" =~ pane-2:([0-9]+),pane-3:([0-9]+),pane-4:([0-9]+) ]]; then
     cat "${log}" >&2
     fail "stacked teammate heights were not observable"
 fi
-height_difference=$((BASH_REMATCH[1] - BASH_REMATCH[2]))
-((height_difference >= -1 && height_difference <= 1)) || {
+height_two="${BASH_REMATCH[1]}"
+height_three="${BASH_REMATCH[2]}"
+height_four="${BASH_REMATCH[3]}"
+height_difference_23=$((height_two - height_three))
+height_difference_34=$((height_three - height_four))
+((height_difference_23 >= -1 && height_difference_23 <= 1 && \
+    height_difference_34 >= -1 && height_difference_34 <= 1)) || {
     cat "${log}" >&2
     fail "stacked teammate heights are not equal"
 }
-if grep -Eq 'zentty-linux: focus-pane pane=pane-[23]$' "${log}"; then
+if grep -Eq 'zentty-linux: focus-pane pane=pane-[234]$' "${log}"; then
     cat "${log}" >&2
     fail "team split stole terminal focus from the leader"
 fi
@@ -1218,7 +1239,7 @@ grep -Fxq 'zentty-linux: title=zentty-tmux-compat-real' "${log}" || {
     cat "${log}" >&2
     fail "send-keys text did not cross the Ghostty surface and PTY"
 }
-for teammate in pane-2 pane-3; do
+for teammate in pane-2 pane-3 pane-4; do
     grep -Fxq "zentty-linux: title=zentty-tmux-team-${teammate}" "${log}" || {
         cat "${log}" >&2
         fail "${teammate} did not receive real terminal input"
@@ -1238,7 +1259,7 @@ final_leader_width="${BASH_REMATCH[2]}"
 mapfile -t final_tmux_panes < <(sed -n 's/^final-tmux-pane=//p' "${fixture_root}/child-probe.log")
 [[ "${#final_tmux_panes[@]}" -eq 2 ]] ||
     fail "final tmux teardown pane identities were not recorded exactly"
-for pane in pane-1 pane-2 pane-3 "${final_tmux_panes[@]}"; do
+for pane in pane-1 pane-2 pane-3 pane-4 "${final_tmux_panes[@]}"; do
     grep -Fxq "zentty-linux: tmux-close pane=${pane}" "${log}" || {
         cat "${log}" >&2
         fail "${pane} did not cross real tmux-owned terminal teardown"
