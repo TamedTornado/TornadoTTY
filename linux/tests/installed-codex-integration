@@ -209,6 +209,10 @@ zentty_product_wait_for_log "${log}" \
     "zentty-linux: pane-context-owner pane=pane-1 owner=agent cwd=${session_working_directory} source=restore-draft" \
     "restore did not project the saved Codex session directory before authentication" ||
     fail "restored Codex draft context missing"
+zentty_product_wait_for_log "${log}" \
+    "zentty-linux: sidebar-working-directory pane=pane-1 cwd=${session_working_directory} visible=true" \
+    "restored Codex session directory did not reach the actual GTK pane label" ||
+    fail "restored Codex sidebar directory projection missing"
 zentty_product_wait_for_log "${log}" 'zentty-linux: terminal-ready-pane=pane-1' \
     "restored Codex surface did not initialize" || fail "real resumed surface missing"
 zentty_product_prepare_input x11 "${log}" || fail "could not focus the resumed Codex TUI"
@@ -269,4 +273,4 @@ if grep -Fq 'zentty-linux: restore-failure pane=pane-1 state=shown' "${log}"; th
 fi
 close_product
 
-echo "Installed Codex integration passed: x11, version=${codex_version#codex-cli }, model-endpoint=controlled-loopback-completed-turn, wrapper=staged, pty=real, hook=real, notify=real, ipc=real, relaunch=real-resume-tui, resume-cwd=session, context-ownership=agent-to-shell, shell-cwd=physical-receipt, lifecycle=physical"
+echo "Installed Codex integration passed: x11, version=${codex_version#codex-cli }, model-endpoint=controlled-loopback-completed-turn, wrapper=staged, pty=real, hook=real, notify=real, ipc=real, relaunch=real-resume-tui, resume-cwd=session, sidebar=actual-gtk-label, context-ownership=agent-to-shell, shell-cwd=physical-receipt, lifecycle=physical"

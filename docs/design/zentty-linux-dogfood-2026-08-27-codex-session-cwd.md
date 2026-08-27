@@ -74,8 +74,33 @@ Passing receipt:
 `Installed Codex integration passed: x11, version=0.147.0,
 model-endpoint=controlled-loopback-completed-turn, wrapper=staged, pty=real,
 hook=real, notify=real, ipc=real, relaunch=real-resume-tui,
-resume-cwd=session, context-ownership=agent-to-shell,
-shell-cwd=physical-receipt, lifecycle=physical`
+resume-cwd=session, sidebar=actual-gtk-label,
+context-ownership=agent-to-shell, shell-cwd=physical-receipt,
+lifecycle=physical`
+
+## Dogfood-visible projection repair
+
+After the first installed build, an operator screenshot proved that the
+effective directory was driving Git/project routing but was not visible in the
+sidebar. The worklane subtitle and pane title both rendered the animated Codex
+activity (`Working Bro`), while `SidebarPaneSummary.working_directory` was
+discarded by the GTK renderer. GH-108 was reopened; the prior close was
+premature because internal routing did not satisfy the visible pane/worklane
+acceptance criteria.
+
+The repaired sidebar keeps activity, directory, and agent state as independent
+fields: the worklane subtitle shows the focused pane's compact directory, and
+the pane row shows activity, compact directory, then agent status. Home paths
+render with `~`; the full path remains in the directory tooltip and accessible
+pane label. Codex activity animation now updates only the activity title and no
+longer overwrites the directory-bearing worklane context.
+
+The pre-existing installed-Codex journey had asserted model ownership, window
+title, project routing, persistence, and relaunch, but not the GTK sidebar
+widget. That coverage gap allowed the defect. The same journey now requires a
+receipt emitted by the pane-directory label setter for the restored session's
+exact directory. The controlled-display GTK test independently inspects the
+rendered worklane and pane labels. No second sidebar or Codex harness was added.
 
 ## Failures and repairs during construction
 
@@ -107,6 +132,18 @@ Nothing below was converted into a pass:
 7. A screenshot exposed an unrelated Codex warning about `/tmp/.codex` trust in
    the temporary environment. The exact controlled session directory remained
    correct and authenticated; no broader `/tmp` trust exception was added.
+8. The first post-repair real journey reached the resumed Codex TUI and
+   authenticated directory ownership, but physical `/exit` did not produce a
+   `session.end`; the existing shell-return assertion failed. Nothing was
+   waived. An unchanged lifecycle path passed on the immediate controlled
+   rerun, including the new exact GTK-label receipt and physical shell return.
+   The isolated non-reproduction remains uncertainty rather than proof of a
+   product repair.
+9. Focused closeout reran `linux/tests/test-orchestration-contract`. It retained
+   its known unrelated failure because `linux/tests/staged-shell-integration`
+   generates an inline agent program; this slice did not touch or waive that
+   file. The same finding is already recorded by the upstream-parity dogfood
+   report and remains outside GH-108.
 
 The final real journey completes in approximately six seconds in the private
 X11 environment. This is focused GH-108 evidence, not a claim of full Linux

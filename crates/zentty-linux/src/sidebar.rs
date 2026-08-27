@@ -2,6 +2,7 @@ use gtk::glib::variant::ToVariant;
 use gtk::prelude::*;
 use std::cell::{Cell, RefCell};
 use std::collections::BTreeMap;
+use std::path::Path;
 use std::rc::Rc;
 use zentty_core::{ClipboardConfig, RankedServer, ServerRelevanceTier, SidebarWorklaneSummary};
 
@@ -25,6 +26,49 @@ struct WorklaneDestination {
     worklane_title: Option<String>,
     label: String,
     color: Option<zentty_core::WorklaneColor>,
+}
+
+fn compact_working_directory(path: &str) -> String {
+    let home = std::env::var("HOME").ok();
+    compact_working_directory_in_home(path, home.as_deref())
+}
+
+fn compact_working_directory_in_home(path: &str, home: Option<&str>) -> String {
+    let Some(home) = home.filter(|home| !home.is_empty()) else {
+        return path.to_owned();
+    };
+    let path = Path::new(path);
+    let home = Path::new(home);
+    if path == home {
+        return "~".to_owned();
+    }
+    path.strip_prefix(home).map_or_else(
+        |_| path.to_string_lossy().into_owned(),
+        |relative| format!("~/{}", relative.to_string_lossy()),
+    )
+}
+
+fn pane_working_directory_text(pane: &zentty_core::SidebarPaneSummary) -> Option<String> {
+    pane.working_directory
+        .as_deref()
+        .map(str::trim)
+        .filter(|path| !path.is_empty())
+        .map(compact_working_directory)
+}
+
+fn worklane_context_text(summary: &SidebarWorklaneSummary) -> String {
+    summary
+        .pane_rows
+        .iter()
+        .find(|pane| pane.is_focused)
+        .and_then(pane_working_directory_text)
+        .or_else(|| {
+            summary
+                .pane_rows
+                .iter()
+                .find_map(pane_working_directory_text)
+        })
+        .unwrap_or_else(|| summary.primary_text.clone())
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -279,6 +323,7 @@ pub(crate) fn install_styles() {
          .pane-row-agent-attention { background: rgba(214, 158, 46, 0.16); }\n\
          .pane-marker { color: #727a86; }\n\
          .worklane-card-active .pane-marker { color: #69db7c; }\n\
+         .pane-working-directory { color: #c1c6cf; font-size: 11px; }\n\
          .pane-agent-status { color: #a7adb8; font-size: 11px; }\n\
          .pane-agent-status-attention { color: #f6c453; font-weight: 700; }\n\
          .server-row { color: #9bd1ff; border-radius: 6px; padding: 3px 7px; }\n\
@@ -497,14 +542,15 @@ fn make_worklane_card(
         .top_label
         .clone()
         .unwrap_or_else(|| format!("Worklane {}", index + 1));
-    let accessible_label = format!("{top}, {}", summary.primary_text);
+    let context_text = worklane_context_text(summary);
+    let accessible_label = format!("{top}, {context_text}");
     select.update_property(&[gtk::accessible::Property::Label(&accessible_label)]);
     let top_label = gtk::Label::new(Some(&top));
     top_label.set_widget_name(&widget_name("worklane-title", &summary.worklane_id));
     top_label.add_css_class("worklane-title");
     top_label.set_xalign(0.0);
     top_label.set_ellipsize(gtk::pango::EllipsizeMode::End);
-    let context = gtk::Label::new(Some(&summary.primary_text));
+    let context = gtk::Label::new(Some(&context_text));
     context.set_widget_name(&widget_name("worklane-context", &summary.worklane_id));
     context.add_css_class("worklane-context");
     context.set_xalign(0.0);
@@ -1015,7 +1061,7 @@ fn make_worklane_drag_preview_card(summary: &SidebarWorklaneSummary, index: usiz
     title.add_css_class("worklane-title");
     title.set_xalign(0.0);
     title.set_ellipsize(gtk::pango::EllipsizeMode::End);
-    let context = gtk::Label::new(Some(&summary.primary_text));
+    let context = gtk::Label::new(Some(&worklane_context_text(summary)));
     context.add_css_class("worklane-context");
     context.set_xalign(0.0);
     context.set_ellipsize(gtk::pango::EllipsizeMode::Middle);
@@ -1098,6 +1144,12 @@ fn make_pane_row(
     pane_title.set_widget_name(&widget_name("pane-title", &pane.pane_id));
     pane_title.set_xalign(0.0);
     pane_title.set_ellipsize(gtk::pango::EllipsizeMode::End);
+    let working_directory = gtk::Label::new(None);
+    working_directory.set_widget_name(&widget_name("pane-working-directory", &pane.pane_id));
+    working_directory.add_css_class("pane-working-directory");
+    working_directory.set_xalign(0.0);
+    working_directory.set_ellipsize(gtk::pango::EllipsizeMode::Middle);
+    update_working_directory_label(&working_directory, pane);
     let agent_status = gtk::Label::new(None);
     agent_status.set_widget_name(&widget_name("pane-agent-status", &pane.pane_id));
     agent_status.add_css_class("pane-agent-status");
@@ -1105,6 +1157,7 @@ fn make_pane_row(
     agent_status.set_ellipsize(gtk::pango::EllipsizeMode::End);
     update_agent_status_label(&agent_status, pane.agent_status.as_ref());
     labels.append(&pane_title);
+    labels.append(&working_directory);
     labels.append(&agent_status);
     pane_content.append(&marker);
     pane_content.append(&labels);
@@ -1233,8 +1286,9 @@ pub(crate) fn update_metadata(sidebar: &gtk::Box, summaries: &[SidebarWorklaneSu
         ) else {
             return false;
         };
-        context.set_text(&summary.primary_text);
-        let accessible_label = format!("{title_text}, {}", summary.primary_text);
+        let context_text = worklane_context_text(summary);
+        context.set_text(&context_text);
+        let accessible_label = format!("{title_text}, {context_text}");
         select.update_property(&[gtk::accessible::Property::Label(&accessible_label)]);
         let Some(move_up) = find_named_widget(
             sidebar.upcast_ref(),
@@ -1289,7 +1343,6 @@ pub(crate) fn update_codex_activity_titles(
 ) -> bool {
     let mut rendered_activity = false;
     for summary in summaries {
-        let mut focused_title = None;
         for pane in &summary.pane_rows {
             let text = titles
                 .get(&pane.pane_id)
@@ -1301,15 +1354,12 @@ pub(crate) fn update_codex_activity_titles(
                 label.set_text(text);
                 rendered_activity |= titles.contains_key(&pane.pane_id);
             }
-            if pane.is_focused {
-                focused_title = Some(text);
-            }
         }
         if let Some(context) = find_named_label(
             sidebar.upcast_ref(),
             &widget_name("worklane-context", &summary.worklane_id),
         ) {
-            context.set_text(focused_title.unwrap_or(&summary.primary_text));
+            context.set_text(&worklane_context_text(summary));
         }
     }
     rendered_activity
@@ -1380,6 +1430,13 @@ fn update_pane_metadata(sidebar: &gtk::Box, pane: &zentty_core::SidebarPaneSumma
         return false;
     };
     title.set_text(&pane.primary_text);
+    let Some(working_directory) = find_named_label(
+        sidebar.upcast_ref(),
+        &widget_name("pane-working-directory", &pane.pane_id),
+    ) else {
+        return false;
+    };
+    update_working_directory_label(&working_directory, pane);
     let Some(agent_status) = find_named_label(
         sidebar.upcast_ref(),
         &widget_name("pane-agent-status", &pane.pane_id),
@@ -1419,6 +1476,25 @@ fn update_pane_metadata(sidebar: &gtk::Box, pane: &zentty_core::SidebarPaneSumma
     true
 }
 
+fn update_working_directory_label(label: &gtk::Label, pane: &zentty_core::SidebarPaneSummary) {
+    if let Some(working_directory) = pane_working_directory_text(pane) {
+        if label.text() != working_directory {
+            label.set_text(&working_directory);
+            eprintln!(
+                "zentty-linux: sidebar-working-directory pane={} cwd={} visible=true",
+                pane.pane_id,
+                pane.working_directory.as_deref().unwrap_or_default()
+            );
+        }
+        label.set_tooltip_text(pane.working_directory.as_deref());
+        label.set_visible(true);
+    } else {
+        label.set_text("");
+        label.set_tooltip_text(None);
+        label.set_visible(false);
+    }
+}
+
 fn update_agent_status_label(label: &gtk::Label, status: Option<&zentty_core::PaneAgentStatus>) {
     label.remove_css_class("pane-agent-status-attention");
     let Some(status) = status else {
@@ -1435,16 +1511,14 @@ fn update_agent_status_label(label: &gtk::Label, status: Option<&zentty_core::Pa
 }
 
 fn pane_accessible_label(pane: &zentty_core::SidebarPaneSummary) -> String {
-    pane.agent_status.as_ref().map_or_else(
-        || pane.primary_text.clone(),
-        |status| {
-            format!(
-                "{}, {}",
-                pane.primary_text,
-                agent_status_view::present(status).text
-            )
-        },
-    )
+    let mut parts = vec![pane.primary_text.clone()];
+    if let Some(working_directory) = pane_working_directory_text(pane) {
+        parts.push(working_directory);
+    }
+    if let Some(status) = pane.agent_status.as_ref() {
+        parts.push(agent_status_view::present(status).text);
+    }
+    parts.join(", ")
 }
 
 fn apply_worklane_visual_state(card: &gtk::Widget, summary: &SidebarWorklaneSummary) {
@@ -2046,9 +2120,10 @@ fn remove_all_children(container: &gtk::Box) {
 #[cfg(test)]
 mod tests {
     use super::{
-        WorklaneDestinationGroup, WorklaneDropEdge, WorklaneSelectionState, find_named_widget,
-        local_destination_groups, make_context_menu, make_worklane_card, pane_accessible_label,
-        pane_action_specs, reveal_range, selection_state, worklane_destinations,
+        WorklaneDestinationGroup, WorklaneDropEdge, WorklaneSelectionState,
+        compact_working_directory_in_home, find_named_widget, local_destination_groups,
+        make_context_menu, make_worklane_card, pane_accessible_label, pane_action_specs,
+        reveal_range, selection_state, worklane_context_text, worklane_destinations,
     };
     use crate::{
         pane_controls::{PaneControlAction, PaneFrame},
@@ -2086,6 +2161,32 @@ mod tests {
             is_active: false,
             color,
         }
+    }
+
+    #[test]
+    fn working_directory_presentation_compacts_home_without_prefix_collisions() {
+        assert_eq!(
+            compact_working_directory_in_home("/home/jason/Projects/Bro", Some("/home/jason")),
+            "~/Projects/Bro"
+        );
+        assert_eq!(
+            compact_working_directory_in_home("/home/jason", Some("/home/jason")),
+            "~"
+        );
+        assert_eq!(
+            compact_working_directory_in_home("/home/jason-old/Bro", Some("/home/jason")),
+            "/home/jason-old/Bro"
+        );
+    }
+
+    #[test]
+    fn worklane_context_prefers_the_focused_pane_directory() {
+        let mut summary = lane("lane-a", &["idle", "Working Bro"], None);
+        summary.pane_rows[0].working_directory = Some("/shell".to_owned());
+        summary.pane_rows[0].is_focused = false;
+        summary.pane_rows[1].working_directory = Some("/session/Bro".to_owned());
+        summary.pane_rows[1].is_focused = true;
+        assert_eq!(worklane_context_text(&summary), "/session/Bro");
     }
 
     fn named_lane(
@@ -2367,7 +2468,7 @@ mod tests {
                 pane_id: "pane-a".to_owned(),
                 primary_text: "pnpm dev".to_owned(),
                 custom_title: None,
-                working_directory: None,
+                working_directory: Some("/workspace/frontend".to_owned()),
                 is_focused: true,
                 agent_status: Some(status),
                 project_context: None,
@@ -2429,6 +2530,19 @@ mod tests {
             Some("workspace.select-pane")
         );
         assert!(pane_accessible_label(&summary.pane_rows[0]).contains("Needs input"));
+        assert!(pane_accessible_label(&summary.pane_rows[0]).contains("/workspace/frontend"));
+        let worklane_context =
+            find_named_widget(card.upcast_ref(), "zentty-worklane-context-lane-a")
+                .expect("worklane context must exist")
+                .downcast::<gtk::Label>()
+                .expect("worklane context must remain a label");
+        assert_eq!(worklane_context.text(), "/workspace/frontend");
+        let pane_directory =
+            find_named_widget(card.upcast_ref(), "zentty-pane-working-directory-pane-a")
+                .expect("pane working directory must exist")
+                .downcast::<gtk::Label>()
+                .expect("pane working directory must remain a label");
+        assert_eq!(pane_directory.text(), "/workspace/frontend");
 
         for (name, expected_role) in [
             ("zentty-worklane-menu-lane-a", gtk::AccessibleRole::Button),
