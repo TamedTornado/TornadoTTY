@@ -698,9 +698,9 @@ impl ApplicationShell {
                         is_remote: pane.ssh_connection_label.is_some()
                             || self.remote_panes.identities.contains_key(&pane.id),
                         is_worklane_active: worklane.id == active_worklane_id,
-                        working_directory: pane
-                            .working_directory
-                            .as_deref()
+                        working_directory: self
+                            .state
+                            .effective_working_directory_for_pane(&pane.id)
                             .map(std::path::PathBuf::from),
                     });
                 }
@@ -2833,8 +2833,7 @@ impl ApplicationShell {
         let Some(focused_directory) = self
             .state
             .focused_pane_id()
-            .and_then(|pane_id| self.state.pane(pane_id))
-            .and_then(|pane| pane.working_directory.as_deref())
+            .and_then(|pane_id| self.state.effective_working_directory_for_pane(pane_id))
         else {
             return Vec::new();
         };
@@ -5827,6 +5826,14 @@ fn restore_workspace_state(
     for draft in drafts {
         if commands.contains_key(&draft.pane_id) {
             let _ = state.seed_restored_agent(draft, unix_time_ms());
+            if let Some(working_directory) =
+                state.effective_working_directory_for_pane(&draft.pane_id)
+            {
+                eprintln!(
+                    "zentty-linux: pane-context-owner pane={} owner=agent cwd={} source=restore-draft",
+                    draft.pane_id, working_directory
+                );
+            }
         }
     }
     Ok((state, commands))

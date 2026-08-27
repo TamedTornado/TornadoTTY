@@ -164,6 +164,35 @@ impl AgentEventCoordinator {
         }
     }
 
+    fn log_pane_context_owner(
+        state: &WorkspaceState,
+        pane_id: &str,
+        event_working_directory: Option<&str>,
+        session_ended: bool,
+    ) {
+        if let Some(working_directory) = event_working_directory {
+            eprintln!(
+                "zentty-linux: pane-context-owner pane={pane_id} owner=agent cwd={working_directory}"
+            );
+        } else if session_ended
+            && let Some(working_directory) = state.effective_working_directory_for_pane(pane_id)
+        {
+            eprintln!(
+                "zentty-linux: pane-context-owner pane={pane_id} owner=shell cwd={working_directory}"
+            );
+        }
+    }
+
+    fn refresh_project_context(shell: &Rc<RefCell<ApplicationShell>>, pane_ids: Vec<String>) {
+        let mut shell = shell.borrow_mut();
+        for pane_id in pane_ids {
+            super::project_context_runtime::mark_pane_for_refresh(&mut shell, &pane_id);
+            eprintln!(
+                "zentty-linux: project-context pane={pane_id} refresh=agent-completion-requested"
+            );
+        }
+    }
+
     pub(super) fn apply_inputs(
         shell: &Rc<RefCell<ApplicationShell>>,
         tmux_commands: Vec<AuthenticatedTmuxRequest>,
@@ -184,7 +213,10 @@ impl AgentEventCoordinator {
         let mut review_refresh_panes = Vec::new();
         for mut event in events {
             let pane_id = event.target.pane_id.clone();
-            let refresh_review = matches!(event.event_kind(), "agent.idle" | "session.end");
+            let event_working_directory = event.event.working_directory();
+            let refresh_context = matches!(event.event_kind(), "agent.idle" | "session.end")
+                || event_working_directory.is_some();
+            let session_ended = event.event_kind() == "session.end";
             let current_worklane_id = {
                 let shell = shell.borrow();
                 shell
@@ -217,7 +249,13 @@ impl AgentEventCoordinator {
             Self::confirm_restored_agent(shell, &pane_id);
             let mut shell = shell.borrow_mut();
             shell.state.apply_agent_event(event, now);
-            if refresh_review {
+            Self::log_pane_context_owner(
+                &shell.state,
+                &pane_id,
+                event_working_directory.as_deref(),
+                session_ended,
+            );
+            if refresh_context {
                 review_refresh_panes.push(pane_id.clone());
             }
             let ApplicationShell {
@@ -230,13 +268,7 @@ impl AgentEventCoordinator {
         }
 
         if !review_refresh_panes.is_empty() {
-            let mut shell = shell.borrow_mut();
-            for pane_id in review_refresh_panes {
-                super::project_context_runtime::mark_pane_for_refresh(&mut shell, &pane_id);
-                eprintln!(
-                    "zentty-linux: project-context pane={pane_id} refresh=agent-completion-requested"
-                );
-            }
+            Self::refresh_project_context(shell, review_refresh_panes);
         }
 
         let enrichments = shell.borrow_mut().agent_events.transcript_enricher.drain();

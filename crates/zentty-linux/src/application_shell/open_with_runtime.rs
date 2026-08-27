@@ -234,14 +234,12 @@ fn focused_local_directory(shell: &ApplicationShell) -> Result<PathBuf, &'static
     {
         return Err("remote-pane");
     }
-    let directory = foreground_process_id
-        .and_then(|pid| fs::read_link(format!("/proc/{pid}/cwd")).ok())
+    let directory = shell
+        .state
+        .effective_working_directory_for_pane(pane_id)
+        .map(PathBuf::from)
         .or_else(|| {
-            shell
-                .state
-                .pane(pane_id)
-                .and_then(|pane| pane.working_directory.as_deref())
-                .map(PathBuf::from)
+            foreground_process_id.and_then(|pid| fs::read_link(format!("/proc/{pid}/cwd")).ok())
         })
         .ok_or("missing-directory")?;
     let canonical = fs::canonicalize(directory).map_err(|_| "stale-directory")?;

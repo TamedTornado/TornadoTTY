@@ -450,7 +450,7 @@ fn explicit_transcript_context_does_not_require_a_guessed_working_directory() {
             target: AgentTarget::new("window-a", "worklane-a", "pane-a"),
             pane_token: "token-pane-a".to_owned(),
             event: AgentEvent::parse(
-                br#"{"version":1,"event":"agent.running","agent":{"name":"Codex"},"session":{"id":"codex-explicit"},"transcriptPath":"/tmp/explicit.jsonl","context":{"workingDirectory":"/tmp/event-project"}}"#,
+                br#"{"version":1,"event":"agent.running","agent":{"name":"Codex"},"session":{"id":"codex-explicit"},"transcriptPath":"/tmp/explicit.jsonl","context":{"workingDirectory":"/tmp"}}"#,
             )
             .unwrap(),
         },
@@ -464,10 +464,7 @@ fn explicit_transcript_context_does_not_require_a_guessed_working_directory() {
     let candidate = state
         .codex_transcript_enrichment_candidate("pane-a", None)
         .unwrap();
-    assert_eq!(
-        candidate.working_directory.as_deref(),
-        Some("/tmp/event-project")
-    );
+    assert_eq!(candidate.working_directory.as_deref(), Some("/tmp"));
     assert_eq!(
         candidate.transcript_path.as_deref(),
         Some("/tmp/explicit.jsonl")
@@ -528,7 +525,7 @@ fn active_supported_agents_produce_restorable_per_pane_drafts() {
     state.apply_agent_event(
         event(
             "pane-agent",
-            br#"{"version":1,"event":"session.start","agent":{"name":"Codex","pid":4242},"session":{"id":"session-codex"},"context":{"workingDirectory":"/tmp/event-project","launch":{"arguments":["codex","--ambient-secret","DO_NOT_PERSIST"],"environment":{"API_TOKEN":"DO_NOT_PERSIST"}}}}"#,
+            br#"{"version":1,"event":"session.start","agent":{"name":"Codex","pid":4242},"session":{"id":"session-codex"},"context":{"workingDirectory":"/tmp","launch":{"arguments":["codex","--ambient-secret","DO_NOT_PERSIST"],"environment":{"API_TOKEN":"DO_NOT_PERSIST"}}}}"#,
         ),
         10,
     );
@@ -558,10 +555,7 @@ fn active_supported_agents_produce_restorable_per_pane_drafts() {
         Some("codex resume session-codex")
     );
     assert_eq!(drafts[0].tracked_pid, 4242);
-    assert_eq!(
-        drafts[0].working_directory.as_deref(),
-        Some("/tmp/event-project")
-    );
+    assert_eq!(drafts[0].working_directory.as_deref(), Some("/tmp"));
     assert_eq!(
         drafts[0].agent_launch_snapshot.as_ref().unwrap().arguments,
         ["codex", "resume", "session-codex"]
@@ -1256,6 +1250,62 @@ fn sidebar_summaries_are_compound_worklane_and_pane_presentations() {
     assert!(!summaries[0].pane_rows[0].is_focused);
     assert_eq!(summaries[0].pane_rows[1].primary_text, "cargo test");
     assert!(summaries[0].pane_rows[1].is_focused);
+}
+
+#[test]
+fn authenticated_agent_directory_temporarily_owns_all_pane_context_projection() {
+    let mut state = WorkspaceState::new("worklane-a", "pane-a");
+    assert!(state.configure_pane_launch("pane-a", Some("/tmp".to_owned()), None));
+    let target = AgentTarget::new("window-a", "worklane-a", "pane-a");
+    state.apply_agent_event(
+        AuthenticatedAgentEvent {
+            target: target.clone(),
+            pane_token: "authenticated".to_owned(),
+            event: AgentEvent::parse(
+                br#"{"version":1,"event":"session.start","agent":{"name":"Codex"},"session":{"id":"bro"},"context":{"workingDirectory":"/usr"}}"#,
+            )
+            .unwrap(),
+        },
+        1_000,
+    );
+
+    assert_eq!(
+        state.effective_working_directory_for_pane("pane-a"),
+        Some("/usr")
+    );
+    assert_eq!(
+        state.sidebar_summaries()[0].pane_rows[0]
+            .working_directory
+            .as_deref(),
+        Some("/usr")
+    );
+    assert_eq!(
+        state.pane("pane-a").unwrap().working_directory.as_deref(),
+        Some("/tmp"),
+        "agent context must not overwrite the parent shell directory"
+    );
+
+    state.apply_agent_event(
+        AuthenticatedAgentEvent {
+            target,
+            pane_token: "authenticated".to_owned(),
+            event: AgentEvent::parse(
+                br#"{"version":1,"event":"session.end","agent":{"name":"Codex"},"session":{"id":"bro"}}"#,
+            )
+            .unwrap(),
+        },
+        2_000,
+    );
+    assert_eq!(
+        state.effective_working_directory_for_pane("pane-a"),
+        Some("/tmp")
+    );
+    assert_eq!(
+        state.sidebar_summaries()[0].pane_rows[0]
+            .working_directory
+            .as_deref(),
+        Some("/tmp")
+    );
 }
 
 #[test]

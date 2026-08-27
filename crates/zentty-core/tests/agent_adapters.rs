@@ -48,7 +48,7 @@ fn codex_hooks_map_source_lifecycle_and_approval_semantics() {
     ));
     let start = reduce(
         adapt_codex_hook(
-            br#"{"hook_event_name":"SessionStart","session_id":"codex-a","cwd":"/tmp/project"}"#,
+            br#"{"hook_event_name":"SessionStart","session_id":"codex-a","cwd":"/tmp"}"#,
             Some(4242),
         )
         .unwrap(),
@@ -56,6 +56,7 @@ fn codex_hooks_map_source_lifecycle_and_approval_semantics() {
     assert_eq!(start.agent_name, "Codex");
     assert_eq!(start.phase, AgentPhase::Starting);
     assert_eq!(start.tracked_pid, Some(4242));
+    assert_eq!(start.working_directory.as_deref(), Some("/tmp"));
 
     let approval = reduce(
         adapt_codex_hook(

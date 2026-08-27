@@ -70,8 +70,7 @@ pub(super) fn refresh_focused(shell: &Rc<RefCell<ApplicationShell>>) {
             .or_else(|| {
                 shell_ref
                     .state
-                    .pane(&pane_id)
-                    .and_then(|pane| pane.working_directory.as_deref())
+                    .effective_working_directory_for_pane(&pane_id)
                     .map(PathBuf::from)
             });
         if let Some(icon_root) = icon_root {
@@ -273,11 +272,16 @@ fn collect_probe_sources(shell: &mut ApplicationShell) -> Option<Vec<ProbeSource
                 continue;
             }
             let working_directory = shell
-                .pane_runtime
-                .surface(&pane.id)
-                .and_then(zentty_ghostty::GhosttySurface::foreground_process_id)
-                .and_then(|pid| process_working_directory(pid).ok())
-                .or_else(|| pane.working_directory.as_deref().map(PathBuf::from))
+                .state
+                .effective_working_directory_for_pane(&pane.id)
+                .map(PathBuf::from)
+                .or_else(|| {
+                    shell
+                        .pane_runtime
+                        .surface(&pane.id)
+                        .and_then(zentty_ghostty::GhosttySurface::foreground_process_id)
+                        .and_then(|pid| process_working_directory(pid).ok())
+                })
                 .or_else(|| std::env::current_dir().ok());
             if let Some(working_directory) = working_directory {
                 sources.push(ProbeSource {
@@ -590,11 +594,16 @@ fn observation_is_current(shell: &ApplicationShell, source: &ProbeSource) -> boo
         return false;
     };
     let current = shell
-        .pane_runtime
-        .surface(&pane.id)
-        .and_then(zentty_ghostty::GhosttySurface::foreground_process_id)
-        .and_then(|pid| process_working_directory(pid).ok())
-        .or_else(|| pane.working_directory.as_deref().map(PathBuf::from));
+        .state
+        .effective_working_directory_for_pane(&pane.id)
+        .map(PathBuf::from)
+        .or_else(|| {
+            shell
+                .pane_runtime
+                .surface(&pane.id)
+                .and_then(zentty_ghostty::GhosttySurface::foreground_process_id)
+                .and_then(|pid| process_working_directory(pid).ok())
+        });
     current.is_some_and(|current| canonical_directories_match(&current, &source.working_directory))
 }
 

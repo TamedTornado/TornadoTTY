@@ -247,7 +247,22 @@ fn adapt_codex_family_hook(
         )?,
         _ => return Ok(Vec::new()),
     };
-    Ok(vec![event.with_transcript_path(transcript_path)])
+    Ok(vec![codex_event_with_context(event, &payload)])
+}
+
+fn codex_event_with_context(event: AgentEvent, payload: &Value) -> AgentEvent {
+    let transcript_path = string_at(payload, &["transcript_path", "transcriptPath"]);
+    let working_directory = string_at(
+        payload,
+        &[
+            "cwd",
+            "current_working_directory",
+            "currentWorkingDirectory",
+        ],
+    );
+    event
+        .with_transcript_path(transcript_path)
+        .with_working_directory(working_directory)
 }
 
 fn adapt_small_harness_lifecycle(

@@ -619,8 +619,8 @@ fn focused_fallback_directory(shell: &ApplicationShell) -> Result<String, String
     shell
         .state
         .focused_pane_id()
-        .and_then(|pane_id| shell.state.pane(pane_id))
-        .and_then(|pane| pane.working_directory.clone())
+        .and_then(|pane_id| shell.state.effective_working_directory_for_pane(pane_id))
+        .map(str::to_owned)
         .filter(|path| Path::new(path).is_dir())
         .or_else(|| std::env::var_os("HOME").map(|path| path.to_string_lossy().into_owned()))
         .ok_or_else(|| "no focused working directory or HOME is available".to_owned())

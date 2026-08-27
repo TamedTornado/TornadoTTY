@@ -149,7 +149,7 @@ fn canonical_artifact_context_and_launch_metadata_merge_without_erasure() {
                 "session":{"id":"session-a","parentId":"parent-a"},
                 "artifact":{"kind":"pull-request","label":"PR #42","url":"https://example.test/pull/42"},
                 "context":{
-                    "workingDirectory":"/tmp/project with spaces",
+                    "workingDirectory":"/tmp",
                     "launch":{"arguments":["codex","resume","session-a"],"environment":{"SAFE_FLAG":"1"}}
                 }
             }"#,
@@ -161,10 +161,7 @@ fn canonical_artifact_context_and_launch_metadata_merge_without_erasure() {
     assert_eq!(artifact.kind, zentty_core::AgentArtifactKind::PullRequest);
     assert_eq!(artifact.label, "PR #42");
     assert_eq!(artifact.url, "https://example.test/pull/42");
-    assert_eq!(
-        status.working_directory.as_deref(),
-        Some("/tmp/project with spaces")
-    );
+    assert_eq!(status.working_directory.as_deref(), Some("/tmp"));
     let launch = status.agent_launch_snapshot.as_ref().unwrap();
     assert_eq!(launch.arguments, ["codex", "resume", "session-a"]);
     assert_eq!(
@@ -187,11 +184,41 @@ fn canonical_artifact_context_and_launch_metadata_merge_without_erasure() {
     );
     let status = store.status_for_pane("pane-a").unwrap();
     assert!(status.artifact_link.is_some());
-    assert_eq!(
-        status.working_directory.as_deref(),
-        Some("/tmp/project with spaces")
-    );
+    assert_eq!(status.working_directory.as_deref(), Some("/tmp"));
     assert!(status.agent_launch_snapshot.is_some());
+}
+
+#[test]
+fn agent_working_directory_rejects_relative_missing_and_nul_paths() {
+    let mut store = AgentStatusStore::default();
+    store.apply(
+        event_for(
+            "pane-a",
+            br#"{"version":1,"event":"agent.running","agent":{"name":"Codex"},"session":{"id":"session-a"},"context":{"workingDirectory":"/tmp"}}"#,
+        ),
+        1_000,
+    );
+    for (now, path) in [
+        (2_000, "relative/project"),
+        (3_000, "/definitely/missing/zentty-agent-context"),
+        (4_000, "/tmp\0escape"),
+    ] {
+        let payload = serde_json::json!({
+            "version": 1,
+            "event": "agent.running",
+            "agent": {"name": "Codex"},
+            "session": {"id": "session-a"},
+            "context": {"workingDirectory": path},
+        });
+        store.apply(event_for("pane-a", payload.to_string().as_bytes()), now);
+        assert_eq!(
+            store
+                .status_for_pane("pane-a")
+                .and_then(|status| status.working_directory.as_deref()),
+            Some("/tmp"),
+            "invalid agent context must not replace the last authenticated canonical directory"
+        );
+    }
 }
 
 #[test]

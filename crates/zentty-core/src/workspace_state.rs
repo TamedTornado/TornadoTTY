@@ -713,7 +713,9 @@ impl WorkspaceState {
                             pane_id: pane.id.clone(),
                             primary_text: pane.display_title().to_owned(),
                             custom_title: pane.custom_title.clone(),
-                            working_directory: pane.working_directory.clone(),
+                            working_directory: self
+                                .effective_working_directory_for_pane(&pane.id)
+                                .map(str::to_owned),
                             is_focused: Some(pane.id.as_str()) == focused_pane_id,
                             agent_status: self.agent_statuses.status_for_pane(&pane.id).cloned(),
                             project_context: None,
@@ -733,6 +735,21 @@ impl WorkspaceState {
     #[must_use]
     pub fn pane_agent_status(&self, pane_id: &str) -> Option<&PaneAgentStatus> {
         self.agent_statuses.status_for_pane(pane_id)
+    }
+
+    /// Returns the active agent's authenticated directory while it owns the
+    /// pane, otherwise the shell-reported durable directory. Agent context is
+    /// intentionally not copied into `PaneState`, so shell ownership resumes
+    /// without a second mutable CWD store.
+    #[must_use]
+    pub fn effective_working_directory_for_pane(&self, pane_id: &str) -> Option<&str> {
+        self.agent_statuses
+            .status_for_pane(pane_id)
+            .and_then(|status| status.working_directory.as_deref())
+            .or_else(|| {
+                self.pane(pane_id)
+                    .and_then(|pane| pane.working_directory.as_deref())
+            })
     }
 
     pub fn create_worklane(
@@ -2895,6 +2912,7 @@ impl WorkspaceState {
             &draft.pane_id,
             &draft.session_id,
             &draft.tool_name,
+            draft.working_directory.as_deref(),
             crate::agent_status::RestoredTaskState {
                 progress: draft.task_progress,
                 tasks: &draft.tasks,

@@ -991,6 +991,14 @@ impl PaneRuntimeCoordinator {
         shell_ref.pane_runtime.restore_launches.remove(pane_id);
         shell_ref.failed_restore_commands.remove(pane_id);
         let _ = shell_ref.state.clear_failed_agent_restore(pane_id);
+        if let Some(working_directory) = shell_ref
+            .state
+            .effective_working_directory_for_pane(pane_id)
+        {
+            eprintln!(
+                "zentty-linux: pane-context-owner pane={pane_id} owner=shell cwd={working_directory}"
+            );
+        }
         if let Err(error) = shell_ref.pane_runtime.remove(pane_id, true) {
             eprintln!("zentty-linux: completed restore cleanup failed: {error}");
             shell_ref.main_loop.quit();

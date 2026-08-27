@@ -127,6 +127,17 @@ struct ContextDescriptor {
     launch: Option<LaunchDescriptor>,
 }
 
+pub(crate) fn canonical_working_directory(path: &str) -> Option<String> {
+    let path = path.trim();
+    if path.is_empty() || path.contains('\0') || !std::path::Path::new(path).is_absolute() {
+        return None;
+    }
+    std::fs::canonicalize(path)
+        .ok()
+        .filter(|path| path.is_dir())
+        .map(|path| path.to_string_lossy().into_owned())
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
 pub struct AgentEvent {
     version: u32,
@@ -312,13 +323,10 @@ impl AgentEvent {
         })
     }
 
-    pub(crate) fn working_directory(&self) -> Option<&str> {
-        self.context
-            .as_ref()?
-            .working_directory
-            .as_deref()
-            .map(str::trim)
-            .filter(|path| !path.is_empty())
+    #[must_use]
+    pub fn working_directory(&self) -> Option<String> {
+        let path = self.context.as_ref()?.working_directory.as_deref()?;
+        canonical_working_directory(path)
     }
 
     pub(crate) fn launch_snapshot(&self) -> Option<AgentLaunchSnapshot> {
@@ -338,6 +346,19 @@ impl AgentEvent {
 
     pub(crate) fn with_transcript_path(mut self, path: Option<String>) -> Self {
         self.transcript_path = path;
+        self
+    }
+
+    pub(crate) fn with_working_directory(mut self, path: Option<String>) -> Self {
+        let Some(path) = path else {
+            return self;
+        };
+        self.context
+            .get_or_insert(ContextDescriptor {
+                working_directory: None,
+                launch: None,
+            })
+            .working_directory = Some(path);
         self
     }
 }

@@ -289,7 +289,9 @@ impl ApplicationShell {
                         "index": pane_index,
                         "column": column_index + 1,
                         "title": pane.display_title(),
-                        "workingDirectory": pane.working_directory,
+                        "workingDirectory": self
+                            .state
+                            .effective_working_directory_for_pane(&pane.id),
                         "isFocused": self.state.active_worklane_id() == worklane.id
                             && focused_pane_id.as_deref() == Some(pane.id.as_str()),
                         "agentTool": serde_json::Value::Null,

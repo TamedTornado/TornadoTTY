@@ -187,6 +187,7 @@ impl AgentStatusStore {
         pane_id: &str,
         session_id: &str,
         agent_name: &str,
+        working_directory: Option<&str>,
         task_state: RestoredTaskState<'_>,
         now: u64,
     ) {
@@ -203,7 +204,8 @@ impl AgentStatusStore {
                 tracked_pid: None,
                 transcript_path: None,
                 artifact_link: None,
-                working_directory: None,
+                working_directory: working_directory
+                    .and_then(crate::agent_protocol::canonical_working_directory),
                 agent_launch_snapshot: None,
                 signal_origin: AgentSignalOrigin::Compatibility,
                 signal_confidence: AgentSignalConfidence::Strong,
@@ -1259,7 +1261,7 @@ fn update_status_identity(status: &mut PaneAgentStatus, event: &crate::AgentEven
         status.artifact_link = Some(artifact);
     }
     if let Some(working_directory) = event.working_directory() {
-        status.working_directory = Some(working_directory.to_owned());
+        status.working_directory = Some(working_directory);
     }
     if let Some(snapshot) = event.launch_snapshot() {
         status.agent_launch_snapshot = Some(snapshot);
