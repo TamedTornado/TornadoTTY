@@ -26,7 +26,7 @@
     {"number": 23, "state": "OPEN", "depends_on": [9, 15], "features": ["lifecycle.windows-confirmations", "lifecycle.updates-channels", "trust.about-licenses-privacy-errors", "diagnostics.task-terminal-performance"], "title": "Linux lifecycle and trust: updates, privacy, diagnostics, About, and licenses", "url": "https://github.com/TamedTornado/zentty/issues/23"},
     {"number": 65, "state": "OPEN", "depends_on": [19], "features": ["utilities.task-manager"], "title": "Future: Task Manager network and container/cgroup telemetry", "url": "https://github.com/TamedTornado/zentty/issues/65"},
     {"number": 80, "state": "CLOSED", "depends_on": [16], "features": ["worklane.peek-live-navigation"], "title": "Linux UX: finish live multiwindow Worklane Peek", "url": "https://github.com/TamedTornado/zentty/issues/80"},
-    {"number": 115, "state": "OPEN", "depends_on": [], "features": [], "title": "Epic: refresh Linux parity against Zentty 0.2.0 and current macOS main", "url": "https://github.com/TamedTornado/zentty/issues/115"},
+    {"number": 115, "state": "CLOSED", "depends_on": [], "features": [], "title": "Epic: refresh Linux parity against Zentty 0.2.0 and current macOS main", "url": "https://github.com/TamedTornado/zentty/issues/115"},
     {"number": 116, "state": "CLOSED", "depends_on": [115], "features": [], "title": "Sync macOS source baseline to upstream 0d0a3eff and refresh parity ledgers", "url": "https://github.com/TamedTornado/zentty/issues/116"},
     {"number": 117, "state": "CLOSED", "depends_on": [115], "features": ["agent.claude-teams-tmux-compat"], "title": "Port Zentty 0.2 tmux end-of-options and Claude teammate launch handshake", "url": "https://github.com/TamedTornado/zentty/issues/117"},
     {"number": 118, "state": "CLOSED", "depends_on": [115], "features": ["cli.topology-control-grid-notify"], "title": "Honor parent --json for Zentty list subcommands", "url": "https://github.com/TamedTornado/zentty/issues/118"},
@@ -34,8 +34,8 @@
     {"number": 120, "state": "CLOSED", "depends_on": [115], "features": ["worklane.titles-colors"], "title": "Use named worklanes in Move Pane destination menus", "url": "https://github.com/TamedTornado/zentty/issues/120"},
     {"number": 121, "state": "CLOSED", "depends_on": [115], "features": ["configuration.settings-window-lifecycle"], "title": "Make Ctrl+W close the Linux Settings window", "url": "https://github.com/TamedTornado/zentty/issues/121"},
     {"number": 122, "state": "CLOSED", "depends_on": [115], "features": ["clipboard.clean-raw-markdown"], "title": "Preserve real newlines in Clean Copy using terminal width and record shape", "url": "https://github.com/TamedTornado/zentty/issues/122"},
-    {"number": 123, "state": "OPEN", "depends_on": [115], "features": ["application.codex-title-animation"], "title": "Animate eligible local Codex activity titles without mutating pane identity", "url": "https://github.com/TamedTornado/zentty/issues/123"},
-    {"number": 124, "state": "OPEN", "depends_on": [115], "features": ["terminal.ime-backspace-composition"], "title": "Prove IME Backspace composition parity on GTK/Ghostty", "url": "https://github.com/TamedTornado/zentty/issues/124"}
+    {"number": 123, "state": "CLOSED", "depends_on": [115], "features": ["application.codex-title-animation"], "title": "Animate eligible local Codex activity titles without mutating pane identity", "url": "https://github.com/TamedTornado/zentty/issues/123"},
+    {"number": 124, "state": "CLOSED", "depends_on": [115], "features": ["terminal.ime-backspace-composition"], "title": "Prove IME Backspace composition parity on GTK/Ghostty", "url": "https://github.com/TamedTornado/zentty/issues/124"}
   ],
   "public_release_tags": [
     "v0.1.7", "v0.1.8", "v0.1.9", "v0.1.10", "v0.1.11", "v0.1.12", "v0.1.13",

@@ -16,22 +16,22 @@ range. The fetched topic refs `chore/update-libghostty-tip`,
 This document classifies behavior, not implementation language. Swift/AppKit
 tests define the source result; Linux must implement applicable behavior through
 the existing Rust/GTK/Ghostty owners. A fetched remote ref is not a durable
-checked-in authority, so [GH-116](https://github.com/TamedTornado/zentty/issues/116)
-must merge the source/test range before the evidence ledger changes its
-`source_head`.
+checked-in authority. [GH-116](https://github.com/TamedTornado/zentty/issues/116)
+merged that source/test range and changed the evidence ledger `source_head` to
+the audited upstream commit.
 
 ## Required Linux work
 
 | Source change | Linux finding | Status and owner |
 | --- | --- | --- |
-| `f5fce0b6`, `b864e857`: tmux `--` parsing and Claude deferred teammate handshake | The Linux respawn path recognizes a delimiter, but generic split parsing retains bare `--`; the exact `-- cat` bootstrap is not pinned and can become an immediate invalid command. | **MISSING** — [GH-117](https://github.com/TamedTornado/zentty/issues/117) |
-| `089b1f2f`: parent `zentty list --json` | Linux accepts `list panes --json`, but `list --json panes` is parsed as overview options rather than a resource subcommand. | **MISSING** — [GH-118](https://github.com/TamedTornado/zentty/issues/118) |
-| `984e3076`: Ghostty-compatible shortcut preset | Linux Settings exposes only left- and right-hand presets. Fullscreen already has the idiomatic and physically tested F11 binding, but the new preset does not exist. | **MISSING** — [GH-119](https://github.com/TamedTornado/zentty/issues/119) |
-| `4b70b32f`: stable Move Pane destination names | Linux still derives every destination from its first pane title plus `+N more`, even when `SidebarWorklaneSummary.top_label` contains a custom worklane title. | **MISSING** — [GH-120](https://github.com/TamedTornado/zentty/issues/120) |
-| `984e3076`: Settings window close equivalent | Linux Settings owns Ctrl+1, Ctrl+2, Ctrl+[ / Ctrl+], and Ctrl+F but not exact Ctrl+W. | **MISSING** — [GH-121](https://github.com/TamedTornado/zentty/issues/121) |
-| `0d0a3eff`: Clean Copy real-newline preservation | Rust Clean Copy has broad structure heuristics but no surface column input and can flatten after a real short line merely because another line is long. | **MISSING** — [GH-122](https://github.com/TamedTornado/zentty/issues/122) |
-| `5180a977`, spinner portion of `4cc16928`: local Codex activity animation | Linux intentionally replaces recognized Braille frames with a stable dot. Current source instead keeps stable identity while animating an eligible live local title in the sidebar and window chrome, with reduced-motion support. | **MISSING** — [GH-123](https://github.com/TamedTornado/zentty/issues/123) |
-| `19efc39a`: IME Backspace composition | The source repair is AppKit-specific. Linux delegates GTK IME key routing to Ghostty and has real IBus/Fcitx composition coverage, but the existing journey covers Escape cancellation rather than active-preedit Backspace byte behavior. | **UNPROVEN PLATFORM BEHAVIOR** — [GH-124](https://github.com/TamedTornado/zentty/issues/124) |
+| `f5fce0b6`, `b864e857`: tmux `--` parsing and Claude deferred teammate handshake | Linux consumes the delimiter and preserves the exact deferred `-- cat` bootstrap/respawn handshake through the existing tmux and installed-team journeys. | **IMPLEMENTED** — [GH-117](https://github.com/TamedTornado/zentty/issues/117) |
+| `089b1f2f`: parent `zentty list --json` | Parent- and child-positioned JSON/output-version flags share one parser contract for windows, worklanes, panes, aliases, filters, and invalid forms. | **IMPLEMENTED** — [GH-118](https://github.com/TamedTornado/zentty/issues/118) |
+| `984e3076`: Ghostty-compatible shortcut preset | Linux Settings exposes the source-compatible preset with Linux-native keys, conflict-safe Zentty actions, persistence, and physical real-PTY coverage. | **IMPLEMENTED** — [GH-119](https://github.com/TamedTornado/zentty/issues/119) |
+| `4b70b32f`: stable Move Pane destination names | Move Pane destinations prefer stable named worklane titles and retain deterministic fallbacks for unnamed lanes. | **IMPLEMENTED** — [GH-120](https://github.com/TamedTornado/zentty/issues/120) |
+| `984e3076`: Settings window close equivalent | Exact Ctrl+W closes only the Linux Settings toplevel and is covered through the existing real Settings journey. | **IMPLEMENTED** — [GH-121](https://github.com/TamedTornado/zentty/issues/121) |
+| `0d0a3eff`: Clean Copy real-newline preservation | Clean Copy consumes real surface width and structured-record shape so true newlines survive while visual prose wraps can still flatten. | **IMPLEMENTED** — [GH-122](https://github.com/TamedTornado/zentty/issues/122) |
+| `5180a977`, spinner portion of `4cc16928`: local Codex activity animation | Eligible local live Codex titles animate in ephemeral GTK presentation while stable pane identity, persistence, remote/custom titles, and reduced motion retain their source contracts. | **IMPLEMENTED** — [GH-123](https://github.com/TamedTornado/zentty/issues/123) |
+| `19efc39a`: IME Backspace composition | Real controlled IBus and Fcitx journeys on X11 and Wayland prove active-preedit Backspace is consumed, preserves surrounding commits, and emits no DEL/BS byte into the PTY. No Linux product patch was required. | **PLATFORM BEHAVIOR PROVEN** — [GH-124](https://github.com/TamedTornado/zentty/issues/124) |
 
 ## Platform reconciliations
 
@@ -59,15 +59,14 @@ release announcement alone is not evidence of a new gap.
 
 ## Order and claim boundary
 
-1. GH-116 lands the source/test baseline and refreshes machine-readable claims.
-2. GH-117 repairs the agent-team compatibility regression because it affects a
-   substantive workflow and current Linux code is demonstrably behind.
-3. GH-118, GH-120, and GH-121 close deterministic, bounded interaction defects.
-4. GH-122 and GH-124 close terminal-byte correctness contracts.
-5. GH-119 and GH-123 deliver the larger Settings and visual features with real
-   GTK acceptance.
+GH-116 through GH-124 completed in the planned dependency order. Each child
+extended its existing test owner and used focused tests plus its directly
+affected real product journey; none created a new integration layer or required
+full qualification.
 
-Each child extends its existing test owner. Focused tests and the directly
-affected real product journey are required; full qualification is not. Source
-parity must not be claimed until every required child is closed and the
-refreshed inventory contains no affected PARTIAL or NOT_IMPLEMENTED entry.
+All eight affected behavioral inventory rows are now `IMPLEMENTED`, including
+the proven GTK/Ghostty platform behavior for IME Backspace. The broader Linux
+inventory still contains 2 `PARTIAL` and 11 `NOT_IMPLEMENTED` entries owned by
+GH-7 and GH-23. Closing GH-115 therefore means parity with this audited upstream
+range, not completion of the Linux port, release readiness, operator visual QA,
+or full Linux qualification.
