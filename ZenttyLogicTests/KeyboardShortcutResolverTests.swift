@@ -690,6 +690,89 @@ final class KeyboardShortcutResolverTests: XCTestCase {
         XCTAssertEqual(manager.shortcut(for: .findPrevious), .init(key: .character("g"), modifiers: [.command, .shift]))
     }
 
+    func test_ghostty_compatible_preset_maps_host_actions_and_preserves_safe_zentty_shortcuts() throws {
+        let preset = try XCTUnwrap(ShortcutPreset(rawValue: "ghosttyCompatible"))
+        let presetBindings = ShortcutPresetResolver().resolve(preset)
+        let manager = ShortcutManager(shortcuts: .init(bindings: presetBindings))
+
+        let expected: [AppCommandID: KeyboardShortcut] = [
+            .newWindow: .init(key: .character("n"), modifiers: [.command]),
+            .closeWindow: .init(key: .character("w"), modifiers: [.command, .shift]),
+            .newWorklane: .init(key: .character("t"), modifiers: [.command]),
+            .nextWorklane: .init(key: .tab, modifiers: [.control]),
+            .previousWorklane: .init(key: .tab, modifiers: [.control, .shift]),
+            .closeFocusedPane: .init(key: .character("w"), modifiers: [.command]),
+            .restoreClosedPane: .init(key: .character("t"), modifiers: [.command, .shift]),
+            .splitHorizontally: .init(key: .character("d"), modifiers: [.command]),
+            .splitVertically: .init(key: .character("d"), modifiers: [.command, .shift]),
+            .focusPreviousPane: .init(key: .character("["), modifiers: [.command]),
+            .focusNextPane: .init(key: .character("]"), modifiers: [.command]),
+            .focusLeftPane: .init(key: .leftArrow, modifiers: [.command, .option]),
+            .focusRightPane: .init(key: .rightArrow, modifiers: [.command, .option]),
+            .focusUpInColumn: .init(key: .upArrow, modifiers: [.command, .option]),
+            .focusDownInColumn: .init(key: .downArrow, modifiers: [.command, .option]),
+            .resizePaneLeft: .init(key: .leftArrow, modifiers: [.command, .control]),
+            .resizePaneRight: .init(key: .rightArrow, modifiers: [.command, .control]),
+            .resizePaneUp: .init(key: .upArrow, modifiers: [.command, .control]),
+            .resizePaneDown: .init(key: .downArrow, modifiers: [.command, .control]),
+            .find: .init(key: .character("f"), modifiers: [.command]),
+            .useSelectionForFind: .init(key: .character("e"), modifiers: [.command]),
+            .findNext: .init(key: .character("g"), modifiers: [.command]),
+            .findPrevious: .init(key: .character("g"), modifiers: [.command, .shift]),
+            .showCommandPalette: .init(key: .character("p"), modifiers: [.command, .shift]),
+            .openSettings: .init(key: .character(","), modifiers: [.command]),
+            .reloadConfig: .init(key: .character(","), modifiers: [.command, .shift]),
+            .toggleSidebar: .init(key: .character("s"), modifiers: [.command]),
+            .copyFocusedPanePath: .init(key: .character("c"), modifiers: [.command, .shift]),
+            .cleanCopy: .init(key: .character("c"), modifiers: [.command, .control]),
+            .jumpToLatestNotification: .init(key: .character("u"), modifiers: [.command, .shift]),
+            .arrangeHeightFull: .init(key: .character("1"), modifiers: [.command, .option]),
+            .arrangeHeightTwoPerColumn: .init(key: .character("2"), modifiers: [.command, .option]),
+            .arrangeHeightThreePerColumn: .init(key: .character("3"), modifiers: [.command, .option]),
+            .arrangeHeightFourPerColumn: .init(key: .character("4"), modifiers: [.command, .option]),
+            .arrangeWidthGoldenFocusWide: .init(key: .character("g"), modifiers: [.command, .control]),
+            .arrangeWidthGoldenFocusNarrow: .init(key: .character("g"), modifiers: [.command, .control, .option]),
+            .arrangeHeightGoldenFocusTall: .init(key: .character("g"), modifiers: [.command, .control, .shift]),
+            .arrangeHeightGoldenFocusShort: .init(key: .character("g"), modifiers: [.command, .control, .option, .shift]),
+            .movePaneLeft: .init(key: .leftArrow, modifiers: [.command, .control, .option]),
+            .movePaneRight: .init(key: .rightArrow, modifiers: [.command, .control, .option]),
+            .movePaneUp: .init(key: .upArrow, modifiers: [.command, .control, .option]),
+            .movePaneDown: .init(key: .downArrow, modifiers: [.command, .control, .option]),
+            .resetPaneLayout: .init(key: .character("0"), modifiers: [.command, .control, .option]),
+            .openBookmarksPopover: .init(key: .character("b"), modifiers: [.command, .shift]),
+        ]
+
+        for (commandID, shortcut) in expected {
+            XCTAssertEqual(manager.shortcut(for: commandID), shortcut, "Unexpected shortcut for \(commandID)")
+        }
+
+        for definition in AppCommandRegistry.definitions where expected[definition.id] == nil {
+            XCTAssertNil(
+                manager.shortcut(for: definition.id),
+                "Expected unlisted command \(definition.id) to be unbound"
+            )
+        }
+    }
+
+    func test_ghostty_compatible_preset_uses_logical_characters_instead_of_physical_layout_output() throws {
+        let preset = try XCTUnwrap(ShortcutPreset(rawValue: "ghosttyCompatible"))
+        let presetBindings = ShortcutPresetResolver(
+            sourceProvider: StubKeyboardPreviewSourceProvider(
+                geometry: .iso,
+                outputs: [
+                    .init(keyCode: UInt16(kVK_ANSI_W), modifiers: [], value: "z"),
+                    .init(keyCode: UInt16(kVK_ANSI_LeftBracket), modifiers: [], value: "^"),
+                    .init(keyCode: UInt16(kVK_ANSI_RightBracket), modifiers: [], value: "$"),
+                ]
+            )
+        ).resolve(preset)
+        let manager = ShortcutManager(shortcuts: .init(bindings: presetBindings))
+
+        XCTAssertEqual(manager.shortcut(for: .closeFocusedPane), .init(key: .character("w"), modifiers: [.command]))
+        XCTAssertEqual(manager.shortcut(for: .focusPreviousPane), .init(key: .character("["), modifiers: [.command]))
+        XCTAssertEqual(manager.shortcut(for: .focusNextPane), .init(key: .character("]"), modifiers: [.command]))
+    }
+
     func test_preview_resolver_maps_option_modified_character_to_physical_key() {
         let resolver = KeyboardLayoutPreviewResolver(
             sourceProvider: StubKeyboardPreviewSourceProvider(

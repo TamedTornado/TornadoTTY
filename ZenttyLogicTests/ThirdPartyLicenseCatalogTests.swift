@@ -7,9 +7,10 @@ final class ThirdPartyLicenseCatalogTests: XCTestCase {
 
         let versionsByID = Dictionary(uniqueKeysWithValues: catalog.entries.map { ($0.id, $0.version) })
 
-        XCTAssertEqual(versionsByID["ghostty"], "e75f895")
-        XCTAssertEqual(versionsByID["sentry-cocoa"], "9.9.0")
-        XCTAssertEqual(versionsByID["sparkle"], "2.9.1")
+        XCTAssertEqual(versionsByID["fuzzymatch"], "1.3.3")
+        XCTAssertEqual(versionsByID["ghostty"], "bee61930c")
+        XCTAssertEqual(versionsByID["sentry-cocoa"], "9.13.0")
+        XCTAssertEqual(versionsByID["sparkle"], "2.9.2")
         XCTAssertEqual(versionsByID["swift-argument-parser"], "1.7.1")
     }
 

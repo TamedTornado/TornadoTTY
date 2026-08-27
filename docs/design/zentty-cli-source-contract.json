@@ -4,7 +4,7 @@
     "files": ["ZenttyCLI/ZenttyCLI.swift", "ZenttyCLI/TopologyCLI.swift", "ZenttyCLI/TmuxCompatCommand.swift"],
     "audit_ledger": "docs/design/zentty-feature-evidence-2026-08-04.json",
     "source_repository": "https://github.com/dedene/zentty.git",
-    "source_head": "6e021b0d3d80025900de1a7ab2f37cc6510da3fe"
+    "source_head": "0d0a3effb6decb1ea395e1758e6f042226255ac1"
   },
   "status_values": ["IMPLEMENTED", "PARTIAL", "NOT_IMPLEMENTED", "PLATFORM_ALTERNATIVE"],
   "current_output_version": 1,

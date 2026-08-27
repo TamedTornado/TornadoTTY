@@ -34,6 +34,21 @@ enum WorklaneSidebarSummaryBuilder {
         let primaryText: String
         let cwdPath: String?
         let isCwdDerived: Bool
+        let animatesLocalCodexSpinner: Bool
+
+        init(
+            paneID: PaneID?,
+            primaryText: String,
+            cwdPath: String?,
+            isCwdDerived: Bool,
+            animatesLocalCodexSpinner: Bool = false
+        ) {
+            self.paneID = paneID
+            self.primaryText = primaryText
+            self.cwdPath = cwdPath
+            self.isCwdDerived = isCwdDerived
+            self.animatesLocalCodexSpinner = animatesLocalCodexSpinner
+        }
     }
 
     private enum PaneIdentityStyle {
@@ -153,6 +168,7 @@ enum WorklaneSidebarSummaryBuilder {
             badgeText: badgeText,
             topLabel: topLabel,
             primaryText: primaryText,
+            primaryAnimatesLocalCodexSpinner: identity.animatesLocalCodexSpinner,
             focusedPaneLineIndex: focusedPaneLineIndex,
             statusText: statusPresentation.statusText,
             statusSymbolName: statusPresentation.statusSymbolName,
@@ -258,6 +274,7 @@ enum WorklaneSidebarSummaryBuilder {
                 paneID: paneContext.paneID,
                 primaryText: paneIdentity.primaryText,
                 usesCustomTitle: paneIdentity.usesCustomTitle,
+                animatesLocalCodexSpinner: paneIdentity.animatesLocalCodexSpinner,
                 trailingText: paneIdentity.trailingText,
                 detailText: paneIdentity.detailText,
                 statusText: statusPresentation.statusText,
@@ -475,7 +492,8 @@ enum WorklaneSidebarSummaryBuilder {
             primaryText: primaryText,
             cwdPath: presentation.cwd,
             isCwdDerived: !paneIdentity.usesCustomTitle
-                && primaryText == compactSidebarContextText(for: presentation)
+                && primaryText == compactSidebarContextText(for: presentation),
+            animatesLocalCodexSpinner: paneIdentity.animatesLocalCodexSpinner
         )
     }
 
@@ -484,6 +502,21 @@ enum WorklaneSidebarSummaryBuilder {
         let trailingText: String?
         let detailText: String?
         let usesCustomTitle: Bool
+        let animatesLocalCodexSpinner: Bool
+
+        init(
+            primaryText: String,
+            trailingText: String?,
+            detailText: String?,
+            usesCustomTitle: Bool,
+            animatesLocalCodexSpinner: Bool = false
+        ) {
+            self.primaryText = primaryText
+            self.trailingText = trailingText
+            self.detailText = detailText
+            self.usesCustomTitle = usesCustomTitle
+            self.animatesLocalCodexSpinner = animatesLocalCodexSpinner
+        }
     }
 
     private static func paneIdentity(
@@ -544,7 +577,12 @@ enum WorklaneSidebarSummaryBuilder {
                 primaryText: volatileTitle,
                 trailingText: branch,
                 detailText: workingDirectory,
-                usesCustomTitle: false
+                usesCustomTitle: false,
+                animatesLocalCodexSpinner: PaneDisplayIdentityResolver.animatesLocalCodexSpinner(
+                    pane: pane,
+                    presentation: presentation,
+                    metadata: metadata
+                )
             )
         }
 
@@ -1022,6 +1060,7 @@ enum WorklaneSidebarSummaryBuilder {
                 badgeText: summary.badgeText,
                 topLabel: worklane.title,
                 primaryText: summary.primaryText,
+                primaryAnimatesLocalCodexSpinner: summary.primaryAnimatesLocalCodexSpinner,
                 contextPrefixText: contextPrefixText,
                 focusedPaneLineIndex: summary.focusedPaneLineIndex,
                 statusText: summary.statusText,

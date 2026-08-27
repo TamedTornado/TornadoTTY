@@ -648,14 +648,16 @@ final class SidebarWorklaneRowButton: NSButton {
             configurePaneRows(for: renderPlan.paneRows, animated: animated)
         }
 
-        textStack.setViews(
-            contentRenderer.groupedViews(
-                for: renderPlan,
-                labels: contentLabels(),
-                paneRows: contentPaneRows()
-            ),
-            in: .top
+        let groupedViews = contentRenderer.groupedViews(
+            for: renderPlan,
+            labels: contentLabels(),
+            paneRows: contentPaneRows()
         )
+        if textStack.setSidebarViewsIfNeeded(groupedViews, in: .top) {
+#if DEBUG
+            contentStackReplacementCountForTesting &+= 1
+#endif
+        }
         heightConstraint?.constant = renderPlan.rowHeight
         invalidateIntrinsicContentSize()
 
@@ -857,11 +859,21 @@ final class SidebarWorklaneRowButton: NSButton {
                 activeTextColor: activeTextColor,
                 inactiveTextColor: inactiveTextColor
             )
-            primaryBaseLabel.textColor = SidebarWorklaneRowStyleResolver.renderedBaseTextColor(
+            let primaryBaseTextColor = SidebarWorklaneRowStyleResolver.renderedBaseTextColor(
                 primaryColor,
                 isShimmering: summary.isWorking,
                 treatment: .shadow
             )
+            let animatesBrailleSpinner = summary.isWorking
+                && summary.primaryAnimatesLocalCodexSpinner
+            // Keep the native text field present for accessibility while the
+            // CoreText overlay supplies the visible animated glyphs.
+            primaryBaseLabel.textColor = animatesBrailleSpinner ? .clear : primaryBaseTextColor
+            primaryLabel.animatesBrailleSpinner = animatesBrailleSpinner
+            primaryLabel.animatedSpinnerBaseColor = animatesBrailleSpinner
+                ? primaryBaseTextColor
+                : nil
+            primaryBaseLabel.isHidden = false
             statusBaseLabel.textColor = SidebarWorklaneRowStyleResolver.statusTextColor(
                 attentionState: summary.attentionState,
                 theme: currentTheme
@@ -902,6 +914,9 @@ final class SidebarWorklaneRowButton: NSButton {
                 )
             }
         } else {
+            primaryLabel.animatesBrailleSpinner = false
+            primaryLabel.animatedSpinnerBaseColor = nil
+            primaryBaseLabel.isHidden = false
             applyPaneRowColors(
                 paneRows: summary.paneRows,
                 activeTextColor: activeTextColor,
@@ -1037,7 +1052,8 @@ final class SidebarWorklaneRowButton: NSButton {
                     isActive: isActive,
                     theme: currentTheme
                 ),
-                reducedMotion: reducedMotionProvider()
+                reducedMotion: reducedMotionProvider(),
+                animatesLocalCodexSpinner: paneRow.animatesLocalCodexSpinner
             )
             paneDetailLabels[index].textColor = SidebarWorklaneRowStyleResolver.paneDetailTextColor(
                 isFocused: paneRow.isFocused,
@@ -1176,6 +1192,8 @@ final class SidebarWorklaneRowButton: NSButton {
     }
 
 #if DEBUG
+    private(set) var contentStackReplacementCountForTesting = 0
+
     var debugAccessForTesting: SidebarWorklaneRowDebugAccess {
         SidebarWorklaneRowDebugAccess(
             owner: self,

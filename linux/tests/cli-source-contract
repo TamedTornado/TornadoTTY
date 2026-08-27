@@ -21,7 +21,7 @@ jq -e . "${contract}" >/dev/null || fail "contract is not valid JSON"
 jq -e '
     . as $root |
     .schema_version == 1 and
-    .source.source_head == "6e021b0d3d80025900de1a7ab2f37cc6510da3fe" and
+    .source.source_head == "0d0a3effb6decb1ea395e1758e6f042226255ac1" and
     .current_output_version == 1 and
     .status_values == ["IMPLEMENTED", "PARTIAL", "NOT_IMPLEMENTED", "PLATFORM_ALTERNATIVE"] and
     (.commands | length == 40) and

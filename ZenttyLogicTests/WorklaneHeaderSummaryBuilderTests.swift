@@ -312,6 +312,7 @@ final class WorklaneHeaderSummaryBuilderTests: XCTestCase {
         let summary = WorklaneHeaderSummaryBuilder.summary(for: worklane)
 
         XCTAssertEqual(summary.focusedLabel, "Thinking ✳ Investigate pane title updates")
+        XCTAssertFalse(summary.focusedLabelAnimatesLocalCodexSpinner)
     }
 
     func test_summary_omits_compacted_metadata_branch_when_review_state_is_unavailable() {
@@ -452,6 +453,31 @@ final class WorklaneHeaderSummaryBuilderTests: XCTestCase {
         let summary = WorklaneHeaderSummaryBuilder.summary(for: worklane)
 
         XCTAssertEqual(summary.focusedLabel, "/tmp/project")
+    }
+
+    func test_summary_marks_only_live_local_codex_spinner_title_for_animation() {
+        let paneID = PaneID("pane-codex")
+        let worklane = makeWorklane(
+            paneID: paneID,
+            metadata: TerminalMetadata(
+                title: "Working ⠋ preserve ⠸ subject",
+                currentWorkingDirectory: "/tmp/project",
+                processName: "codex",
+                gitBranch: "main"
+            ),
+            agentStatus: PaneAgentStatus(
+                tool: .codex,
+                state: .running,
+                text: nil,
+                artifactLink: nil,
+                updatedAt: Date(timeIntervalSince1970: 42)
+            )
+        )
+
+        let summary = WorklaneHeaderSummaryBuilder.summary(for: worklane)
+
+        XCTAssertEqual(summary.focusedLabel, "Working ⠋ preserve ⠸ subject")
+        XCTAssertTrue(summary.focusedLabelAnimatesLocalCodexSpinner)
     }
 
     func test_summary_surfaces_remote_context_without_reusing_local_cwd_path() {

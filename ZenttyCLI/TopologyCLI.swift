@@ -166,7 +166,13 @@ struct ListWindowsCommand: ParsableCommand {
     @Flag(name: .long, help: "Output as JSON.")
     var json = false
 
+    @ParentCommand var parent: ListCommandGroup
+
     mutating func run() throws {
+        try Self.execute(json: parent.json || json)
+    }
+
+    static func execute(json: Bool) throws {
         let windows = try DiscoveryIPC.send(subcommand: "windows")?.result?.discoveredWindows ?? []
         if json {
             try printJSON(windows)
@@ -197,9 +203,7 @@ struct WindowListCommand: ParsableCommand {
     var json = false
 
     mutating func run() throws {
-        var command = ListWindowsCommand()
-        command.json = json
-        try command.run()
+        try ListWindowsCommand.execute(json: json)
     }
 }
 
@@ -214,7 +218,13 @@ struct ListWorklanesCommand: ParsableCommand {
     @Flag(name: .long, help: "Output as JSON.")
     var json = false
 
+    @ParentCommand var parent: ListCommandGroup
+
     mutating func run() throws {
+        try Self.execute(filters: filters, json: parent.json || json)
+    }
+
+    static func execute(filters: PaneDiscoveryFilterOptions, json: Bool) throws {
         let worklanes = try DiscoveryIPC.send(
             subcommand: "worklanes",
             arguments: filters.arguments()
@@ -250,10 +260,7 @@ struct WorklaneListCommand: ParsableCommand {
     var json = false
 
     mutating func run() throws {
-        var command = ListWorklanesCommand()
-        command.filters = filters
-        command.json = json
-        try command.run()
+        try ListWorklanesCommand.execute(filters: filters, json: json)
     }
 }
 
@@ -268,8 +275,10 @@ struct ListPanesCommand: ParsableCommand {
     @Flag(name: .long, help: "Output as JSON.")
     var json = false
 
+    @ParentCommand var parent: ListCommandGroup
+
     mutating func run() throws {
-        try renderPanes(arguments: filters.arguments(), json: json)
+        try renderPanes(arguments: filters.arguments(), json: parent.json || json)
     }
 }
 

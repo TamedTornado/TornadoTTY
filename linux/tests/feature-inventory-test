@@ -58,11 +58,11 @@ expect_linux_shortcut_registry_rejected() {
 jq -e '
     .schema_version == 1 and
     .result == "PASS" and
-    .entry_count == 60 and
-    .classifications.REQUIRED_INITIAL_RELEASE == 34 and
-    .implementation_statuses.IMPLEMENTED == 47 and
-    .implementation_statuses.PARTIAL == 2 and
-    .implementation_statuses.NOT_IMPLEMENTED == 11 and
+    .entry_count == 63 and
+    .classifications.REQUIRED_INITIAL_RELEASE == 37 and
+    .implementation_statuses.IMPLEMENTED == 42 and
+    .implementation_statuses.PARTIAL == 9 and
+    .implementation_statuses.NOT_IMPLEMENTED == 12 and
     .evidence.app_commands == 70 and
     .evidence.pane_commands == 33 and
     .evidence.settings_sections == 9 and
@@ -103,25 +103,28 @@ jq -e '
     exit 1
 }
 jq -e '
-    [.entries[] | select(.linux_owner_issue == 22)] |
-    length == 2 and all(.[]; .implementation_status == "IMPLEMENTED") and
-    (map(select(.id == "cli.topology-control-grid-notify"))[0].test_plan |
-        contains("All 40 source commands")) and
-    (map(select(.id == "shell.environment-integration"))[0].test_plan |
-        contains("byte-identical user files"))
+    ([.entries[] | select(.linux_owner_issue == 22)] |
+        length == 1 and
+        .[0].id == "shell.environment-integration" and
+        .[0].implementation_status == "IMPLEMENTED" and
+        (.[0].test_plan | contains("byte-identical user files"))) and
+    (.entries[] | select(.id == "cli.topology-control-grid-notify") |
+        .linux_owner_issue == 118 and .implementation_status == "PARTIAL")
 ' "${source_inventory}" >/dev/null || {
     echo "feature-inventory-test: GH22 CLI/shell closeout evidence regressed" >&2
     exit 1
 }
 jq -e '
-    [.entries[] | select(.linux_owner_issue == 20)] |
-    all(.[]; .implementation_status == "IMPLEMENTED") and
-    (map(select(.id == "configuration.shortcuts-presets"))[0].test_plan |
-        contains("native GTK chooser export/import")) and
-    (map(select(.id == "configuration.ghostty-appearance"))[0].test_plan |
-        contains("live palette replacement")) and
-    (map(select(.id == "configuration.ghostty-appearance"))[0].alternative_or_blocker |
-        contains("explicit documented no-blur degradation"))
+    ([.entries[] | select(.linux_owner_issue == 20)] |
+        all(.[]; .implementation_status == "IMPLEMENTED") and
+        (map(select(.id == "configuration.ghostty-appearance"))[0].test_plan |
+            contains("live palette replacement")) and
+        (map(select(.id == "configuration.ghostty-appearance"))[0].alternative_or_blocker |
+            contains("explicit documented no-blur degradation"))) and
+    (.entries[] | select(.id == "configuration.shortcuts-presets") |
+        .linux_owner_issue == 119 and
+        .implementation_status == "PARTIAL" and
+        (.test_plan | contains("native GTK chooser export/import")))
 ' "${source_inventory}" >/dev/null || {
     echo "feature-inventory-test: GH20 settings closeout evidence regressed" >&2
     exit 1
@@ -141,7 +144,8 @@ jq -e '
 }
 jq -e '
     .entries[] | select(.id == "agent.claude-teams-tmux-compat") |
-    .implementation_status == "IMPLEMENTED" and
+    .linux_owner_issue == 117 and
+    .implementation_status == "PARTIAL" and
     (.test_plan | contains("two real GTK windows")) and
     (.test_plan | contains("reject cross-window explicit pane targets")) and
     (.test_plan | contains("application-instance scope"))
@@ -159,7 +163,8 @@ jq -e '
 }
 jq -e '
     .entries[] | select(.id == "clipboard.clean-raw-markdown") |
-    .implementation_status == "IMPLEMENTED" and
+    .linux_owner_issue == 122 and
+    .implementation_status == "PARTIAL" and
     (.test_plan | contains("non-text owner")) and
     (.test_plan | contains("two real windows"))
 ' "${source_inventory}" >/dev/null || {
@@ -269,7 +274,7 @@ expect_evidence_rejected duplicate-issue "duplicate Linux issue numbers"
 
 jq '.public_release_tags |= .[:-1]' \
     "${source_evidence}" >"${temp_dir}/missing-release.json"
-expect_evidence_rejected missing-release "public release ledger must contain all 39 releases"
+expect_evidence_rejected missing-release "public release ledger must contain all 40 audited releases"
 
 jq '.release_feature_map |= .[:-1]' \
     "${source_evidence}" >"${temp_dir}/unmapped-release.json"

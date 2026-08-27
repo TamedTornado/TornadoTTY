@@ -185,15 +185,21 @@ final class LibghosttyRuntimeTests: XCTestCase {
         XCTAssertFalse(contents?.contains("window-padding-y") ?? true)
     }
 
-    func testTransparentBackgroundOverrideContents_forcesTransparentEmbeddedSurfaceAndAddsFallbackBlur() {
+    // Intentional: a user-set minimum-contrast is discarded on the forced-transparent
+    // surface, where Ghostty would evaluate it against a background that is not visible.
+    func testTransparentBackgroundOverrideContents_overridesUserConfiguredMinimumContrast() {
         let contents = LibghosttyRuntime.transparentBackgroundOverrideContents(
             userConfigContents: """
             background-opacity = 0.95
+            minimum-contrast = 1.3
             theme = \(GhosttyThemeLibrary.fallbackPersistedThemeName)
             """
         )
 
-        XCTAssertEqual(contents, "background-opacity = 0\nbackground-blur-radius = 20\n")
+        XCTAssertEqual(
+            contents,
+            "background-opacity = 0\nminimum-contrast = 1\nbackground-blur-radius = 20\n"
+        )
     }
 
     func testTransparentBackgroundOverrideContents_keepsTransparencyOverrideWhenBlurRadiusConfigured() {
@@ -204,7 +210,7 @@ final class LibghosttyRuntimeTests: XCTestCase {
             """
         )
 
-        XCTAssertEqual(contents, "background-opacity = 0\n")
+        XCTAssertEqual(contents, "background-opacity = 0\nminimum-contrast = 1\n")
     }
 
     func testTransparentBackgroundOverrideContents_keepsTransparencyOverrideWhenLegacyBackgroundBlurConfigured() {
@@ -215,7 +221,7 @@ final class LibghosttyRuntimeTests: XCTestCase {
             """
         )
 
-        XCTAssertEqual(contents, "background-opacity = 0\n")
+        XCTAssertEqual(contents, "background-opacity = 0\nminimum-contrast = 1\n")
     }
 
     func testTransparentBackgroundOverrideContents_skipsTransparencyWhenBackgroundImageConfigured() {
@@ -248,7 +254,10 @@ final class LibghosttyRuntimeTests: XCTestCase {
             """
         )
 
-        XCTAssertEqual(contents, "background-opacity = 0\nbackground-blur-radius = 20\n")
+        XCTAssertEqual(
+            contents,
+            "background-opacity = 0\nminimum-contrast = 1\nbackground-blur-radius = 20\n"
+        )
     }
 
     func testTransparentBackgroundOverrideContents_forcesTransparencyWhenBackgroundImageIsLaterCleared() {
@@ -259,7 +268,10 @@ final class LibghosttyRuntimeTests: XCTestCase {
             """
         )
 
-        XCTAssertEqual(contents, "background-opacity = 0\nbackground-blur-radius = 20\n")
+        XCTAssertEqual(
+            contents,
+            "background-opacity = 0\nminimum-contrast = 1\nbackground-blur-radius = 20\n"
+        )
     }
 
     func testTransparentBackgroundOverrideContents_forcesTransparencyWhenBackgroundImageIsCommentedOut() {
@@ -269,7 +281,10 @@ final class LibghosttyRuntimeTests: XCTestCase {
             """
         )
 
-        XCTAssertEqual(contents, "background-opacity = 0\nbackground-blur-radius = 20\n")
+        XCTAssertEqual(
+            contents,
+            "background-opacity = 0\nminimum-contrast = 1\nbackground-blur-radius = 20\n"
+        )
     }
 
     func testPaddingPolicyOverrideContents_injectsDefaultsWhenKeysMissing() {

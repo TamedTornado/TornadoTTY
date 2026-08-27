@@ -209,6 +209,10 @@ final class AppDelegateTests: XCTestCase {
                 "Focus Right Pane",
                 "Focus Up In Column",
                 "Focus Down In Column",
+                "Move Pane Left",
+                "Move Pane Right",
+                "Move Pane Up",
+                "Move Pane Down",
             ]
         )
 
@@ -222,6 +226,10 @@ final class AppDelegateTests: XCTestCase {
             #selector(MainWindowController.focusRightPane(_:)),
             #selector(MainWindowController.focusUpInColumn(_:)),
             #selector(MainWindowController.focusDownInColumn(_:)),
+            #selector(MainWindowController.movePaneLeft(_:)),
+            #selector(MainWindowController.movePaneRight(_:)),
+            #selector(MainWindowController.movePaneUp(_:)),
+            #selector(MainWindowController.movePaneDown(_:)),
         ]
         for action in requiredActions {
             XCTAssertTrue(actions.contains(action), "Navigation menu should contain action \(action)")
@@ -261,7 +269,7 @@ final class AppDelegateTests: XCTestCase {
         delegate.applicationDidFinishLaunching(Notification(name: NSApplication.didFinishLaunchingNotification))
 
         let viewMenu = try XCTUnwrap(menu(named: "View"))
-        let actionItems = viewMenu.items.filter { !$0.isSeparatorItem }
+        let actionItems = viewMenu.items.filter { !$0.isSeparatorItem && !$0.isHidden }
 
         XCTAssertEqual(
             actionItems.map(\.title),
@@ -279,8 +287,19 @@ final class AppDelegateTests: XCTestCase {
                 "Resize Pane Up",
                 "Resize Pane Down",
                 "Reset Pane Layout",
+                "Enter Full Screen",
             ]
         )
+
+        let controlCommandFullScreenItem = try XCTUnwrap(
+            viewMenu.items.first(where: {
+                $0.action == #selector(AppDelegate.toggleMainWindowFullScreen(_:)) &&
+                $0.keyEquivalentModifierMask == [.command, .control]
+            })
+        )
+        XCTAssertNil(controlCommandFullScreenItem.target)
+        XCTAssertEqual(controlCommandFullScreenItem.keyEquivalent, "f")
+        XCTAssertTrue(controlCommandFullScreenItem.allowsKeyEquivalentWhenHidden)
 
         let arrangeWidthMenu = try XCTUnwrap(submenu(named: "Arrange Width", in: viewMenu))
         XCTAssertEqual(
@@ -310,6 +329,32 @@ final class AppDelegateTests: XCTestCase {
 
         let separatorCount = viewMenu.items.count(where: { $0.isSeparatorItem })
         XCTAssertGreaterThanOrEqual(separatorCount, 3, "View menu should have separator groups for visual structure")
+    }
+
+    func test_application_launch_routes_full_screen_menu_item_through_app_delegate() throws {
+        NSApp.mainMenu = nil
+
+        let delegate = AppDelegate(
+            runtimeRegistryFactory: { PaneRuntimeRegistry(adapterFactory: { _ in MockTerminalAdapter() }) }
+        )
+        delegate.applicationDidFinishLaunching(Notification(name: NSApplication.didFinishLaunchingNotification))
+
+        let settled = expectation(description: "window shown")
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { settled.fulfill() }
+        wait(for: [settled], timeout: 2.0)
+
+        let viewMenu = try XCTUnwrap(menu(named: "View"))
+        let fullScreenItem = try XCTUnwrap(
+            viewMenu.items.first(where: {
+                $0.action == #selector(AppDelegate.toggleMainWindowFullScreen(_:)) &&
+                $0.keyEquivalentModifierMask == [.command, .control]
+            })
+        )
+        let action = try XCTUnwrap(fullScreenItem.action)
+        let target = NSApp.target(forAction: action, to: nil, from: fullScreenItem)
+
+        XCTAssertTrue(fullScreenItem.allowsKeyEquivalentWhenHidden)
+        XCTAssertTrue(target is AppDelegate)
     }
 
     func test_application_launch_applies_configured_shortcuts_to_menu_items() throws {
@@ -755,6 +800,174 @@ final class AppDelegateTests: XCTestCase {
         XCTAssertEqual(controllers[1].lastNavigateRequestPaneIDForTesting, paneID)
         XCTAssertNil(controllers[0].lastNavigateRequestWorklaneIDForTesting)
         XCTAssertNil(controllers[0].lastNavigateRequestPaneIDForTesting)
+    }
+
+    func test_tmux_routing_prefers_matching_windowIDAndFallsBackWhenThatWindowNoLongerOwnsWorklane() throws {
+        NSApp.mainMenu = nil
+
+        let delegate = AppDelegate(
+            runtimeRegistryFactory: { PaneRuntimeRegistry(adapterFactory: { _ in MockTerminalAdapter() }) }
+        )
+        delegate.applicationDidFinishLaunching(Notification(name: NSApplication.didFinishLaunchingNotification))
+        delegate.newWindow(nil)
+        waitForAppWindows()
+
+        let controllers = delegate.windowControllersForTesting
+        XCTAssertEqual(controllers.count, 2)
+        let sharedWorklaneID = WorklaneID("shared")
+        for (index, controller) in controllers.enumerated() {
+            let paneID = PaneID("pane-\(index)")
+            controller.rootViewControllerForTesting.replaceWorklanes([
+                WorklaneState(
+                    id: sharedWorklaneID,
+                    title: nil,
+                    paneStripState: PaneStripState(
+                        panes: [PaneState(id: paneID, title: "shell")],
+                        focusedPaneID: paneID
+                    )
+                )
+            ], activeWorklaneID: sharedWorklaneID)
+        }
+
+        let target = AgentIPCTarget(
+            windowID: controllers[1].windowIDForTesting,
+            worklaneID: sharedWorklaneID,
+            paneID: PaneID("pane-1")
+        )
+        XCTAssertTrue(
+            TmuxCompatIPCHandler.resolveWindowController(for: target, appDelegate: delegate) === controllers[1]
+        )
+
+        let replacementWorklaneID = WorklaneID("replacement")
+        let replacementPaneID = PaneID("replacement-pane")
+        controllers[1].rootViewControllerForTesting.replaceWorklanes([
+            WorklaneState(
+                id: replacementWorklaneID,
+                title: nil,
+                paneStripState: PaneStripState(
+                    panes: [PaneState(id: replacementPaneID, title: "shell")],
+                    focusedPaneID: replacementPaneID
+                )
+            )
+        ], activeWorklaneID: replacementWorklaneID)
+
+        XCTAssertTrue(
+            TmuxCompatIPCHandler.resolveWindowController(for: target, appDelegate: delegate) === controllers[0]
+        )
+    }
+
+    func test_tmux_routing_followsPaneWhenOriginalWindowRetainsDuplicatedWorklane() throws {
+        NSApp.mainMenu = nil
+
+        let delegate = AppDelegate(
+            runtimeRegistryFactory: { PaneRuntimeRegistry(adapterFactory: { _ in MockTerminalAdapter() }) }
+        )
+        delegate.applicationDidFinishLaunching(Notification(name: NSApplication.didFinishLaunchingNotification))
+        delegate.newWindow(nil)
+        waitForAppWindows()
+
+        let controllers = delegate.windowControllersForTesting
+        XCTAssertEqual(controllers.count, 2)
+        let sharedWorklaneID = WorklaneID("shared")
+        let originalPaneID = PaneID("original-pane")
+        controllers[0].rootViewControllerForTesting.replaceWorklanes([
+            WorklaneState(
+                id: sharedWorklaneID,
+                title: nil,
+                paneStripState: PaneStripState(
+                    panes: [PaneState(id: originalPaneID, title: "shell")],
+                    focusedPaneID: originalPaneID
+                )
+            )
+        ], activeWorklaneID: sharedWorklaneID)
+
+        let movedPaneID = PaneID("moved-pane")
+        controllers[1].rootViewControllerForTesting.replaceWorklanes([
+            WorklaneState(
+                id: sharedWorklaneID,
+                title: nil,
+                paneStripState: PaneStripState(
+                    panes: [PaneState(id: movedPaneID, title: "shell")],
+                    focusedPaneID: movedPaneID
+                )
+            )
+        ], activeWorklaneID: sharedWorklaneID)
+
+        let target = AgentIPCTarget(
+            windowID: controllers[0].windowIDForTesting,
+            worklaneID: sharedWorklaneID,
+            paneID: movedPaneID
+        )
+
+        XCTAssertTrue(
+            TmuxCompatIPCHandler.resolveWindowController(for: target, appDelegate: delegate) === controllers[1]
+        )
+    }
+
+    func test_tmux_routing_usesPaneMembershipToDisambiguateDuplicatedWorklanesAfterStaleWindowID() throws {
+        NSApp.mainMenu = nil
+
+        let delegate = AppDelegate(
+            runtimeRegistryFactory: { PaneRuntimeRegistry(adapterFactory: { _ in MockTerminalAdapter() }) }
+        )
+        delegate.applicationDidFinishLaunching(Notification(name: NSApplication.didFinishLaunchingNotification))
+        delegate.newWindow(nil)
+        delegate.newWindow(nil)
+        waitForAppWindows()
+
+        let controllers = delegate.windowControllersForTesting
+        XCTAssertEqual(controllers.count, 3)
+        let sharedWorklaneID = WorklaneID("shared")
+        for (index, controller) in controllers.prefix(2).enumerated() {
+            let paneID = PaneID("wrong-pane-\(index)")
+            controller.rootViewControllerForTesting.replaceWorklanes([
+                WorklaneState(
+                    id: sharedWorklaneID,
+                    title: nil,
+                    paneStripState: PaneStripState(
+                        panes: [PaneState(id: paneID, title: "shell")],
+                        focusedPaneID: paneID
+                    )
+                )
+            ], activeWorklaneID: sharedWorklaneID)
+        }
+
+        let worklaneOnlyMatch = try XCTUnwrap(delegate.windowController(containingWorklane: sharedWorklaneID))
+        let paneMatch = try XCTUnwrap(controllers.prefix(2).first { $0 !== worklaneOnlyMatch })
+        let targetPaneID = PaneID("target-pane")
+        paneMatch.rootViewControllerForTesting.replaceWorklanes([
+            WorklaneState(
+                id: sharedWorklaneID,
+                title: nil,
+                paneStripState: PaneStripState(
+                    panes: [PaneState(id: targetPaneID, title: "shell")],
+                    focusedPaneID: targetPaneID
+                )
+            )
+        ], activeWorklaneID: sharedWorklaneID)
+
+        let staleWorklaneID = WorklaneID("stale-window-worklane")
+        let stalePaneID = PaneID("stale-window-pane")
+        controllers[2].rootViewControllerForTesting.replaceWorklanes([
+            WorklaneState(
+                id: staleWorklaneID,
+                title: nil,
+                paneStripState: PaneStripState(
+                    panes: [PaneState(id: stalePaneID, title: "shell")],
+                    focusedPaneID: stalePaneID
+                )
+            )
+        ], activeWorklaneID: staleWorklaneID)
+
+        let target = AgentIPCTarget(
+            windowID: controllers[2].windowIDForTesting,
+            worklaneID: sharedWorklaneID,
+            paneID: targetPaneID
+        )
+
+        XCTAssertTrue(
+            TmuxCompatIPCHandler.resolveWindowController(for: target, appDelegate: delegate) === paneMatch
+        )
     }
 
     func test_restore_launch_uses_legacy_autosaved_frame_as_layout_seed_when_recipe_has_no_frame() throws {

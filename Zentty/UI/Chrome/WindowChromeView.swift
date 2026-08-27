@@ -60,7 +60,7 @@ final class WindowChromeView: NSView {
         }
     }
 
-    private let rowContainerView = NSView()
+    private let rowContainerView = WindowChromeDragRegionView()
     private let focusedProxyIconView = WindowChromeProxyIconView()
     private let serverContainerView = NSView()
     private let serverPrimaryBackgroundView = NSView()
@@ -90,6 +90,7 @@ final class WindowChromeView: NSView {
         font: .systemFont(ofSize: 12, weight: .medium),
         lineBreakMode: .byTruncatingTail
     )
+    private let focusedSpinnerLabel = SidebarShimmerTextView()
     private let remoteContextLabel = WindowChromeView.makeLabel(
         text: "",
         color: .tertiaryLabelColor,
@@ -101,6 +102,7 @@ final class WindowChromeView: NSView {
     private let urlOpener: (URL) -> Void
     private let pathRevealer: (URL) -> Void
     private let computerLocationOpener: (URL) -> Void
+    private let reducedMotionProvider: () -> Bool
 
     private var currentTheme = ZenttyTheme.fallback(for: nil)
     private var shortcutManager = ShortcutManager(shortcuts: .default)
@@ -133,11 +135,15 @@ final class WindowChromeView: NSView {
         frame frameRect: NSRect,
         urlOpener: @escaping (URL) -> Void = { NSWorkspace.shared.open($0) },
         pathRevealer: @escaping (URL) -> Void = { NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: $0.path) },
-        computerLocationOpener: @escaping (URL) -> Void = { NSWorkspace.shared.open($0) }
+        computerLocationOpener: @escaping (URL) -> Void = { NSWorkspace.shared.open($0) },
+        reducedMotionProvider: @escaping () -> Bool = {
+            NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        }
     ) {
         self.urlOpener = urlOpener
         self.pathRevealer = pathRevealer
         self.computerLocationOpener = computerLocationOpener
+        self.reducedMotionProvider = reducedMotionProvider
         super.init(frame: frameRect)
         setup()
     }
@@ -165,6 +171,7 @@ final class WindowChromeView: NSView {
         if newWindow == nil {
             reviewStalenessRecheckTimer?.invalidate()
             reviewStalenessRecheckTimer = nil
+            focusedSpinnerLabel.isVisibleForSharedAnimation = false
         }
     }
 
@@ -176,11 +183,20 @@ final class WindowChromeView: NSView {
         layoutServerControl()
         syncVisibleRowContent(forceChipRefresh: false)
         layoutRowContent(animated: animatesRowLayout)
+        syncFocusedSpinnerFrameAndVisibility()
     }
 
     func animateNextRowLayoutForSidebarTransition() {
         animatesNextRowLayout = true
         needsLayout = true
+    }
+
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool {
+        true
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        window?.performDrag(with: event)
     }
 
     private func setup() {
@@ -193,6 +209,12 @@ final class WindowChromeView: NSView {
         focusedProxyIconView.openComputerLocation = computerLocationOpener
         focusedLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         focusedLabel.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        focusedSpinnerLabel.font = focusedLabel.font ?? .systemFont(ofSize: 12, weight: .medium)
+        focusedSpinnerLabel.lineBreakMode = focusedLabel.lineBreakMode
+        focusedSpinnerLabel.lineHeight = focusedLabel.intrinsicContentSize.height
+        focusedSpinnerLabel.shimmerColor = .clear
+        focusedSpinnerLabel.ignoresHitTesting = true
+        focusedSpinnerLabel.isHidden = true
         remoteContextLabel.setContentCompressionResistancePriority(.defaultHigh, for: .horizontal)
         remoteContextLabel.setContentHuggingPriority(.defaultLow, for: .horizontal)
         branchLabel.setContentCompressionResistancePriority(.defaultHigh, for: .horizontal)
@@ -309,6 +331,7 @@ final class WindowChromeView: NSView {
         openWithContainerView.addSubview(openWithDividerView)
         openWithContainerView.addSubview(openWithPrimaryButton)
         openWithContainerView.addSubview(openWithMenuButton)
+        rowContainerView.addSubview(focusedSpinnerLabel)
         [worklaneTitleLabel, focusedProxyIconView, focusedLabel, remoteContextLabel, branchLabel, pullRequestButton].forEach {
             rowContainerView.addSubview($0)
         }
@@ -333,6 +356,7 @@ final class WindowChromeView: NSView {
         focusedLabel.isHidden = trimmed.isEmpty
         focusedLabel.invalidateIntrinsicContentSize()
         currentSummary.focusedLabel = trimmed.isEmpty ? nil : trimmed
+        syncFocusedSpinnerPresentation()
         needsLayout = true
     }
 
@@ -347,6 +371,7 @@ final class WindowChromeView: NSView {
         let focusedText = summary.focusedLabel?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         focusedLabel.stringValue = focusedText
         focusedLabel.isHidden = focusedText.isEmpty
+        syncFocusedSpinnerPresentation()
 
         let remoteContextText = summary.remoteContextLabel?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         remoteContextLabel.stringValue = remoteContextText
@@ -375,8 +400,8 @@ final class WindowChromeView: NSView {
         currentTheme = theme
 
         worklaneTitleLabel.textColor = theme.secondaryText
-        focusedLabel.textColor = theme.secondaryText
         remoteContextLabel.textColor = theme.tertiaryText
+        syncFocusedSpinnerPresentation()
         renderFocusedProxyIcon()
         updateBranchAppearance(animated: animated)
         updatePullRequestAppearance(animated: animated)
@@ -387,6 +412,36 @@ final class WindowChromeView: NSView {
         performThemeAnimation(animated: animated) {
             self.layer?.backgroundColor = theme.topChromeBackground.cgColor
         }
+    }
+
+    func setShimmerCoordinator(_ coordinator: SidebarShimmerCoordinator?) {
+        focusedSpinnerLabel.shimmerCoordinator = coordinator
+        syncFocusedSpinnerFrameAndVisibility()
+    }
+
+    private func syncFocusedSpinnerPresentation() {
+        let text = focusedLabel.stringValue
+        let animatesSpinner = currentSummary.focusedLabelAnimatesLocalCodexSpinner
+
+        focusedSpinnerLabel.stringValue = text
+        focusedSpinnerLabel.animatesBrailleSpinner = animatesSpinner
+        focusedSpinnerLabel.animatedSpinnerBaseColor = animatesSpinner
+            ? currentTheme.secondaryText
+            : nil
+        focusedSpinnerLabel.isShimmering = animatesSpinner
+        focusedSpinnerLabel.reducedMotion = reducedMotionProvider()
+        focusedSpinnerLabel.isHidden = !animatesSpinner
+        focusedLabel.textColor = animatesSpinner ? .clear : currentTheme.secondaryText
+        syncFocusedSpinnerFrameAndVisibility()
+    }
+
+    private func syncFocusedSpinnerFrameAndVisibility() {
+        focusedSpinnerLabel.frame = focusedLabel.frame
+        focusedSpinnerLabel.isVisibleForSharedAnimation =
+            !focusedSpinnerLabel.isHidden
+            && !focusedLabel.isHidden
+            && !rowContainerView.isHidden
+            && focusedLabel.frame.width > 0.5
     }
 
     func render(server state: WindowChromeServerState?) {
@@ -1280,7 +1335,7 @@ final class WindowChromeView: NSView {
         font: NSFont,
         lineBreakMode: NSLineBreakMode
     ) -> NSTextField {
-        let label = NSTextField(labelWithString: text)
+        let label = WindowChromeDragLabel(labelWithString: text)
         label.font = font
         label.textColor = color
         label.lineBreakMode = lineBreakMode
@@ -1334,6 +1389,25 @@ final class WindowChromeView: NSView {
     var focusedProxyIconImage: NSImage? { focusedProxyIconView.image }
     var focusedLabelText: String { focusedLabel.stringValue }
     var focusedLabelFrame: NSRect { focusedLabel.frame }
+#if DEBUG
+    var focusedLabelUsesLocalBrailleAnimationForTesting: Bool {
+        focusedSpinnerLabel.animatesBrailleSpinner
+    }
+    var focusedSpinnerDisplayedTextForTesting: String {
+        focusedSpinnerLabel.displayedStringValueForTesting
+    }
+    var focusedSpinnerBaseColorForTesting: NSColor? {
+        focusedSpinnerLabel.animatedSpinnerBaseColor
+    }
+    var focusedSpinnerReducedMotionForTesting: Bool {
+        focusedSpinnerLabel.reducedMotion
+    }
+    var focusedSpinnerIgnoresHitTestingForTesting: Bool {
+        focusedSpinnerLabel.hitTest(
+            NSPoint(x: focusedSpinnerLabel.bounds.midX, y: focusedSpinnerLabel.bounds.midY)
+        ) == nil
+    }
+#endif
     var remoteContextLabelText: String { remoteContextLabel.stringValue }
     var remoteContextLabelFrame: NSRect { remoteContextLabel.frame }
     var branchText: String { branchLabel.stringValue }
@@ -1420,6 +1494,14 @@ final class WindowChromeView: NSView {
     }
     var openWithPrimaryTintTokenForTesting: String { openWithPrimaryButton.contentTintColor?.themeToken ?? "" }
     var openWithMenuTintTokenForTesting: String { openWithMenuButton.contentTintColor?.themeToken ?? "" }
+
+#if DEBUG
+    func advanceFocusedBrailleSpinnerForTesting() {
+        for _ in 0..<SidebarShimmerTextView.spinnerTicksPerFrameForTesting {
+            focusedSpinnerLabel.applySharedShimmerState(phase: 0.5, inSweep: true)
+        }
+    }
+#endif
 
     func performOpenWithPrimaryClickForTesting() {
         openWithPrimaryButton.performClick(openWithPrimaryButton)
@@ -1522,6 +1604,17 @@ final class WindowChromeView: NSView {
         focusedProxyIconView.setDragSessionActiveForTesting(active)
     }
 
+    func acceptsWindowDragForTesting(at point: NSPoint) -> Bool {
+        guard let hitView = hitTest(point) else {
+            return false
+        }
+
+        return hitView === self ||
+            hitView === rowContainerView ||
+            hitView is WindowChromeDragLabel ||
+            hitView is WindowChromeReviewChipView
+    }
+
     private static func contextMenuEventForTesting() -> NSEvent? {
         NSEvent.mouseEvent(
             with: .rightMouseDown,
@@ -1534,6 +1627,37 @@ final class WindowChromeView: NSView {
             clickCount: 1,
             pressure: 0
         )
+    }
+}
+
+private final class WindowChromeDragRegionView: NSView {
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool {
+        true
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        window?.performDrag(with: event)
+    }
+}
+
+private final class WindowChromeDragLabel: NSTextField {
+    init(labelWithString stringValue: String) {
+        super.init(frame: .zero)
+        self.stringValue = stringValue
+        isEditable = false
+        isSelectable = false
+        isBordered = false
+        drawsBackground = false
+        backgroundColor = .clear
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        window?.performDrag(with: event)
     }
 }
 
@@ -2439,7 +2563,7 @@ private final class WindowChromeBranchLabel: NSTextField {
 }
 
 private final class WindowChromeReviewChipView: NSView {
-    private let label = NSTextField(labelWithString: "")
+    private let label = WindowChromePassiveLabel(labelWithString: "")
     private let chip: WorklaneReviewChip
 
     init(chip: WorklaneReviewChip) {
@@ -2475,6 +2599,14 @@ private final class WindowChromeReviewChipView: NSView {
             width: max(0, bounds.width - 20),
             height: labelHeight
         )
+    }
+
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool {
+        true
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        window?.performDrag(with: event)
     }
 
     func apply(theme: ZenttyTheme, animated: Bool) {
@@ -2533,5 +2665,26 @@ private final class WindowChromeReviewChipView: NSView {
         label.usesSingleLineMode = true
         label.cell?.wraps = false
         return ceil(max(label.fittingSize.width, label.intrinsicContentSize.width)) + 20
+    }
+}
+
+private final class WindowChromePassiveLabel: NSTextField {
+    init(labelWithString stringValue: String) {
+        super.init(frame: .zero)
+        self.stringValue = stringValue
+        isEditable = false
+        isSelectable = false
+        isBordered = false
+        drawsBackground = false
+        backgroundColor = .clear
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        nil
     }
 }

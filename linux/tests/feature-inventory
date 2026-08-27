@@ -210,8 +210,8 @@ while IFS= read -r location; do
     [[ -f "${repo_root}/${location}" ]] || fail "evidence file is missing: ${location}"
 done < <(jq -r '.first_party_documents[].location, .screenshots[].location' "${evidence}")
 
-[[ "$(jq -r '.public_release_tags | length' "${evidence}")" == 39 ]] ||
-    fail "public release ledger must contain all 39 releases from v0.1.7 through v0.1.45"
+[[ "$(jq -r '.public_release_tags | length' "${evidence}")" == 40 ]] ||
+    fail "public release ledger must contain all 40 audited releases from v0.1.7 through v0.2.0"
 [[ "$(jq -r '.public_release_tags[0]' "${evidence}")" == v0.1.7 ]] ||
     fail "public release ledger must begin at v0.1.7"
 [[ "$(jq -r '.public_release_tags[-1]' "${evidence}")" == "$(jq -r '.latest_public_release' "${evidence}")" ]] ||
@@ -231,7 +231,12 @@ done < <(jq -r '.public_release_tags[]' "${evidence}")
 git -C "${repo_root}" cat-file -e "$(jq -r '.source_head' "${evidence}")^{commit}" 2>/dev/null ||
     fail "audited source head is absent"
 if git -C "${repo_root}" show-ref --verify --quiet refs/remotes/upstream/main; then
-    expected_source_head="$(git -C "${repo_root}" merge-base HEAD refs/remotes/upstream/main)"
+    merge_head_path="$(git -C "${repo_root}" rev-parse --git-path MERGE_HEAD)"
+    if [[ -f "${merge_head_path}" ]]; then
+        expected_source_head="$(head -n 1 "${merge_head_path}")"
+    else
+        expected_source_head="$(git -C "${repo_root}" merge-base HEAD refs/remotes/upstream/main)"
+    fi
     [[ "$(jq -r '.source_head' "${evidence}")" == "${expected_source_head}" ]] ||
         fail "audited source head is stale relative to the port branch"
 fi

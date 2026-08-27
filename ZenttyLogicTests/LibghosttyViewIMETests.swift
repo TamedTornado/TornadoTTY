@@ -112,6 +112,49 @@ final class LibghosttyViewIMETests: AppKitTestCase {
     }
 }
 
+@MainActor
+final class LibghosttyViewIMEKeyRoutingTests: XCTestCase {
+    func test_key_ending_composition_without_committed_text_stays_composing() {
+        XCTAssertTrue(
+            LibghosttyView.shouldSendKeyAsComposing(
+                wasComposing: true,
+                isComposing: false,
+                committedText: nil
+            )
+        )
+    }
+
+    func test_key_during_active_composition_is_composing() {
+        XCTAssertTrue(
+            LibghosttyView.shouldSendKeyAsComposing(
+                wasComposing: false,
+                isComposing: true,
+                committedText: nil
+            )
+        )
+    }
+
+    func test_key_without_composition_is_not_composing() {
+        XCTAssertFalse(
+            LibghosttyView.shouldSendKeyAsComposing(
+                wasComposing: false,
+                isComposing: false,
+                committedText: nil
+            )
+        )
+    }
+
+    func test_key_committing_composed_text_is_not_composing() {
+        XCTAssertFalse(
+            LibghosttyView.shouldSendKeyAsComposing(
+                wasComposing: true,
+                isComposing: false,
+                committedText: "好"
+            )
+        )
+    }
+}
+
 // `ghostty_surface_ime_point` hands back x/y/height in points but width in device
 // pixels (upstream leaves the width divide out on purpose), so `imeRect()` has to
 // normalise width itself or the caret rect is twice as wide on Retina and the

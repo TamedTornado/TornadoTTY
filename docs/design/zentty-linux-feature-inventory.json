@@ -75,11 +75,11 @@
       "classification": "REQUIRED_INITIAL_RELEASE",
       "origin": "PORT_PARITY",
       "user_impact": "Users cannot distinguish concurrent tasks reliably without durable names and color cues.",
-      "linux_owner_issue": 4,
-      "implementation_status": "IMPLEMENTED",
+      "linux_owner_issue": 120,
+      "implementation_status": "PARTIAL",
       "focused_tests": ["crates/zentty-core/tests/workspace_state.rs"],
       "product_scenarios": ["linux/tests/rust-source-ux-x11", "linux/tests/rust-session-restore", "linux/tests/rust-worklane-accessibility"],
-      "test_plan": "Real GTK modal Save, Cancel, empty-title, color treatment, and persisted recipe journeys exercise the source semantics; the controlled accessibility contract checks the compound card's named selector and source-derived label metadata.",
+      "test_plan": "Keep the existing real GTK modal Save, Cancel, empty-title, color treatment, persisted recipe, and accessibility journeys green. Add focused catalog coverage and a real menu journey proving that Move Pane destinations use current custom worklane titles, update immediately after rename, disambiguate duplicate titles, and retain stable destination identity.",
       "alternative_or_blocker": null
     },
     {
@@ -243,6 +243,22 @@
       "alternative_or_blocker": null
     },
     {
+      "id": "terminal.ime-backspace-composition",
+      "category": "terminal_foundation",
+      "behavior": "Route Backspace through the active GTK IME preedit so composition is edited or cancelled without leaking a terminal key event, corrupting committed text, or transferring composition to another pane.",
+      "source": ["Zentty/Terminal/LibghosttyView.swift"],
+      "swift_tests": ["ZenttyLogicTests/LibghosttyViewIMETests.swift"],
+      "classification": "REQUIRED_INITIAL_RELEASE",
+      "origin": "PORT_PARITY",
+      "user_impact": "Users of composed-input languages can corrupt the preedit or send an unintended Backspace to the shell when correcting text.",
+      "linux_owner_issue": 124,
+      "implementation_status": "PARTIAL",
+      "focused_tests": ["crates/zentty-test-support/src/bin/wayland_keycode_driver.rs", "linux/tests/lib/product-input-test"],
+      "product_scenarios": [],
+      "test_plan": "Add a focused GTK input-context contract and extend the real nested X11 and Wayland IBus/fcitx journeys to create an active non-ASCII preedit, press physical Backspace, verify the compositor-driven preedit update or cancellation, then commit and assert exact PTY bytes. Retain cross-surface focus and pane-destruction counterexamples; environmental absence must remain non-passing.",
+      "alternative_or_blocker": null
+    },
+    {
       "id": "terminal.remote-ssh-transfer",
       "category": "terminal_foundation",
       "behavior": "Recognize SSH pane identity, show a remote marker, and safely upload pasted or dropped local files/images to the resolved remote host before inserting the escaped remote path.",
@@ -367,11 +383,11 @@
       "classification": "REQUIRED_INITIAL_RELEASE",
       "origin": "PORT_PARITY",
       "user_impact": "Clean Copy is a named public Zentty feature; corruption or omission forces users back to manually repairing terminal output.",
-      "linux_owner_issue": 17,
-      "implementation_status": "IMPLEMENTED",
+      "linux_owner_issue": 122,
+      "implementation_status": "PARTIAL",
       "focused_tests": ["crates/zentty-core/tests/clean_copy.rs", "crates/zentty-linux/src/platform.rs", "crates/zentty-linux/src/application_shell/clipboard_actions.rs", "crates/zentty-linux/src/application_shell/action_router.rs", "crates/zentty-linux/src/sidebar.rs"],
       "product_scenarios": ["linux/tests/rust-pane-search"],
-      "test_plan": "Preserve source-derived cleanup and bailout goldens plus mutation coverage; in controlled X11 and Wayland, preserve an independent non-text owner when no Ghostty selection exists, select real terminal text through Select All, read the exact primary selection externally, invoke automatic Copy, Copy Raw and Copy as Markdown through the real command palette, read exact standard-clipboard bytes externally, paste cleaned bytes back through the real PTY, and prove distinct selections remain isolated across two real windows. The process-level clipboard config snapshot and automatic clean-copy substitution use the single GH-20 settings owner. Remote non-text paste/upload remains owned by its separately qualified GH-17 workflow."
+      "test_plan": "Preserve source-derived cleanup and bailout goldens plus mutation coverage; in controlled X11 and Wayland, preserve an independent non-text owner when no Ghostty selection exists, select real terminal text through Select All, read the exact primary selection externally, invoke automatic Copy, Copy Raw and Copy as Markdown through the real command palette, read exact standard-clipboard bytes externally, paste cleaned bytes back through the real PTY, and prove distinct selections remain isolated across two real windows. GH-122 must add the current source's terminal-width-aware structured-newline cases before this returns to IMPLEMENTED. The process-level clipboard config snapshot and automatic clean-copy substitution use the single GH-20 settings owner. Remote non-text paste/upload remains owned by its separately qualified GH-17 workflow."
     },
     {
       "id": "project.git-review-icons",
@@ -478,11 +494,27 @@
       "classification": "REQUIRED_INITIAL_RELEASE",
       "origin": "PORT_PARITY",
       "user_impact": "Keyboard-first and fully bindable commands are defining source behavior, including preserving terminal input when an app action is unbound.",
-      "linux_owner_issue": 20,
-      "implementation_status": "IMPLEMENTED",
+      "linux_owner_issue": 119,
+      "implementation_status": "PARTIAL",
       "focused_tests": ["crates/zentty-core/src/shortcut.rs", "crates/zentty-linux/src/application_shell/shortcut_registry.rs", "crates/zentty-linux/src/application_shell/shortcut_runtime.rs", "crates/zentty-linux/src/shortcut_settings.rs"],
       "product_scenarios": ["linux/tests/rust-shortcuts-settings"],
-      "test_plan": "Preserve the controlled X11/Wayland real-settings journey for physical recording, conflict replacement, preset/reset, native GTK chooser export/import, source-compatible persistence, restart, active-action interception, and displaced/unbound bytes reaching a real Ghostty PTY. The inventory validator must continue proving that every audited source command is present in the Linux bindable registry; Linux additionally exposes its platform fullscreen and minimize commands. Preserve the zero-survivor shortcut-model mutation receipt.",
+      "test_plan": "Preserve the controlled X11/Wayland real-settings journey for physical recording, conflict replacement, preset/reset, native GTK chooser export/import, source-compatible persistence, restart, active-action interception, and displaced/unbound bytes reaching a real Ghostty PTY. GH-119 must add the current source's Ghostty-compatible preset, exact binding fixture, settings selection, persistence, and real PTY routing before this returns to IMPLEMENTED. The inventory validator must continue proving that every audited source command is present in the Linux bindable registry; Linux additionally exposes its platform fullscreen and minimize commands. Preserve the zero-survivor shortcut-model mutation receipt.",
+      "alternative_or_blocker": null
+    },
+    {
+      "id": "configuration.settings-window-lifecycle",
+      "category": "configuration",
+      "behavior": "Treat Settings as a normal independently managed application window, including closing the active Settings toplevel with the platform Close Window shortcut without closing a terminal window or quitting Zentty.",
+      "source": ["Zentty/UI/Settings/SettingsWindowController.swift", "Zentty/AppMenuBuilder.swift"],
+      "swift_tests": ["ZenttyTests/PaneLayoutSettingsWindowControllerTests.swift", "ZenttyLogicTests/AppMenuBuilderTests.swift"],
+      "classification": "REQUIRED_INITIAL_RELEASE",
+      "origin": "PORT_PARITY",
+      "user_impact": "A standard close-window command silently failing in Settings makes window ownership feel broken and can route destructive commands to the wrong toplevel.",
+      "linux_owner_issue": 121,
+      "implementation_status": "PARTIAL",
+      "focused_tests": ["crates/zentty-linux/src/settings_shell.rs"],
+      "product_scenarios": ["linux/tests/rust-shortcuts-settings"],
+      "test_plan": "Add a focused action-routing test and a controlled real-GTK journey that opens Settings from a live terminal window, sends physical Ctrl+W while Settings owns focus, proves only Settings closes, proves the PTY and terminal window remain alive, and checks the same command against terminal-window focus and repeated Settings opens.",
       "alternative_or_blocker": null
     },
     {
@@ -570,11 +602,11 @@
       "classification": "REQUIRED_INITIAL_RELEASE",
       "origin": "PORT_PARITY",
       "user_impact": "Scriptable pane-aware control and hooks are advertised product behavior and the transport used by agent integrations, notifications and teams.",
-      "linux_owner_issue": 22,
-      "implementation_status": "IMPLEMENTED",
+      "linux_owner_issue": 118,
+      "implementation_status": "PARTIAL",
       "focused_tests": ["docs/design/zentty-cli-source-contract.json", "linux/tests/cli-source-contract", "crates/zentty-agent-ipc/tests/product_cli.rs", "crates/zentty-agent-ipc/tests/integration_cli.rs"],
       "product_scenarios": ["linux/tests/rust-cli-contract", "linux/tests/rust-tmux-compat-product", "linux/tests/rust-development-servers", "linux/tests/rust-notifications-settings"],
-      "test_plan": "Maintain exact source-command closure in the machine-readable CLI contract. Invoke the real staged CLI as a subprocess into a running product over the authenticated Unix socket on controlled X11 and Wayland, validate versioned JSON against schemas and text against reviewed goldens, exercise command families/aliases/selectors/errors against real PTYs and windows, and mutation-test parsing/auth/output dispatch. All 40 source commands are implemented or carry the documented Linux platform alternative; downstream agent context persistence remains separately explicit in the GH-46 agent-event contract rather than being misclassified as a CLI gap.",
+      "test_plan": "Maintain exact source-command closure in the machine-readable CLI contract. Invoke the real staged CLI as a subprocess into a running product over the authenticated Unix socket on controlled X11 and Wayland, validate versioned JSON against schemas and text against reviewed goldens, exercise command families/aliases/selectors/errors against real PTYs and windows, and mutation-test parsing/auth/output dispatch. All 40 source command symbols remain represented, but GH-118 must accept and prove the current parent-level `zentty list --json panes` ordering before this returns to IMPLEMENTED. Downstream agent context persistence remains separately explicit in the GH-46 agent-event contract rather than being misclassified as a CLI gap.",
       "alternative_or_blocker": null
     },
     {
@@ -706,6 +738,22 @@
       "alternative_or_blocker": null
     },
     {
+      "id": "application.codex-title-animation",
+      "category": "coding_agents",
+      "behavior": "Animate the source Braille activity indicator for eligible live local Codex work without changing pane identity, title ownership, attention state, or inactive and restored presentation.",
+      "source": ["Zentty/AppState/Agent/TerminalMetadataChangeClassifier.swift", "Zentty/AppState/PaneDisplayIdentityResolver.swift", "Zentty/UI/Sidebar/SidebarShimmerTextView.swift", "Zentty/UI/Sidebar/SidebarPaneRowRenderer.swift"],
+      "swift_tests": ["ZenttyLogicTests/SidebarShimmerCoordinatorTests.swift", "ZenttyLogicTests/PaneDisplayIdentityResolverTests.swift"],
+      "classification": "REQUIRED_INITIAL_RELEASE",
+      "origin": "PORT_PARITY",
+      "user_impact": "Without the activity treatment, running Codex panes lose the current source application's glanceable distinction between active work and static identity.",
+      "linux_owner_issue": 123,
+      "implementation_status": "NOT_IMPLEMENTED",
+      "focused_tests": [],
+      "product_scenarios": [],
+      "test_plan": "Separate stable display identity from frame presentation, unit-test eligibility and frame progression with an injected monotonic clock, and run a real controlled Codex event journey proving animation only while eligible, no topology or persisted-title mutation, immediate stop on terminal state change, and bounded repaint behavior while hidden or inactive.",
+      "alternative_or_blocker": null
+    },
+    {
       "id": "agent.claude-code",
       "category": "coding_agents",
       "behavior": "Support Claude Code hooks, session correlation, stop-race handling, explicit state, title presentation, questions, and resume.",
@@ -730,11 +778,11 @@
       "classification": "REQUIRED_INITIAL_RELEASE",
       "origin": "PORT_PARITY",
       "user_impact": "Without the compatibility path, Claude Code agent teams cannot create and control their source-equivalent subordinate pane topology inside Zentty even when ordinary terminals and Claude hooks work.",
-      "linux_owner_issue": 14,
-      "implementation_status": "IMPLEMENTED",
+      "linux_owner_issue": 117,
+      "implementation_status": "PARTIAL",
       "focused_tests": ["crates/zentty-tmux-compat/tests/source_fixtures.rs", "crates/zentty-tmux-compat/tests/protocol_contract.rs", "crates/zentty-agent-ipc/tests/tmux_transport.rs", "crates/zentty-agent-ipc/tests/tmux_cli.rs", "crates/zentty-linux/src/tmux_compat.rs", "crates/zentty-test-support/src/bin/controlled_anthropic.rs"],
       "product_scenarios": ["linux/tests/rust-tmux-compat-product", "linux/tests/installed-claude-agent-team"],
-      "test_plan": "Freeze the source command and alias contract, test Rust parsing/protocol/store logic and mutations, then drive the staged and installed tmux shim as a real subprocess through a private Unix socket into the real Zentty app, Ghostty surfaces, and PTYs. Cover first-split golden geometry, later vertical stacking, leader focus, send/list/capture/select/kill, width restoration, concurrent wait-for clients, restart, corrupt state, permissions, authentication, malformed input, and oversized requests; control only the remote model response. In the existing staged product actor, create two real GTK windows with real Ghostty PTYs under private X11 and Wayland compositors, route separate CLI subprocesses through pane capabilities from both windows, reject cross-window explicit pane targets, keep selection and team anchors worklane-scoped, and prove buffers plus wait-for signals retain their source-defined application-instance scope.",
+      "test_plan": "Freeze the source command and alias contract, test Rust parsing/protocol/store logic and mutations, then drive the staged and installed tmux shim as a real subprocess through a private Unix socket into the real Zentty app, Ghostty surfaces, and PTYs. Cover first-split golden geometry, later vertical stacking, leader focus, send/list/capture/select/kill, width restoration, concurrent wait-for clients, restart, corrupt state, permissions, authentication, malformed input, and oversized requests; control only the remote model response. GH-117 must consume the current source's bare `--` split delimiter and prove the exact Claude `-- cat` deferred handshake before this returns to IMPLEMENTED. In the existing staged product actor, create two real GTK windows with real Ghostty PTYs under private X11 and Wayland compositors, route separate CLI subprocesses through pane capabilities from both windows, reject cross-window explicit pane targets, keep selection and team anchors worklane-scoped, and prove buffers plus wait-for signals retain their source-defined application-instance scope.",
       "alternative_or_blocker": null
     },
     {

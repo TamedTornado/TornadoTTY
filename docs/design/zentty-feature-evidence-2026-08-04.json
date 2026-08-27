@@ -1,31 +1,41 @@
 {
   "schema_version": 1,
-  "audit_date": "2026-08-04",
-  "source_head": "6e021b0d3d80025900de1a7ab2f37cc6510da3fe",
-  "latest_public_release": "v0.1.45",
-  "issue_state_reconciled_at": "2026-08-22",
+  "audit_date": "2026-08-27",
+  "source_head": "0d0a3effb6decb1ea395e1758e6f042226255ac1",
+  "latest_public_release": "v0.2.0",
+  "issue_state_reconciled_at": "2026-08-27",
   "linux_issues": [
     {"number": 2, "state": "CLOSED", "depends_on": [], "features": [], "title": "Rust: define product architecture and workspace contract", "url": "https://github.com/TamedTornado/zentty/issues/2"},
     {"number": 3, "state": "CLOSED", "depends_on": [2, 13], "features": ["workspace.recipe-v3", "workspace.live-clean-snapshots", "pane.cwd-command-title"], "title": "Linux: implement persistent workspace and worklane model", "url": "https://github.com/TamedTornado/zentty/issues/3"},
-    {"number": 4, "state": "CLOSED", "depends_on": [2, 3, 13], "features": ["worklane.navigation-identity", "worklane.titles-colors", "worklane.sidebar-summaries-attention", "pane.layout-split-focus-move", "commands.linux-shortcuts-menus"], "title": "Rust/Linux: build the GTK worklane and pane application shell", "url": "https://github.com/TamedTornado/zentty/issues/4"},
+    {"number": 4, "state": "CLOSED", "depends_on": [2, 3, 13], "features": ["worklane.navigation-identity", "worklane.sidebar-summaries-attention", "pane.layout-split-focus-move", "commands.linux-shortcuts-menus"], "title": "Rust/Linux: build the GTK worklane and pane application shell", "url": "https://github.com/TamedTornado/zentty/issues/4"},
     {"number": 5, "state": "OPEN", "depends_on": [4, 13], "features": ["pane.close-restore"], "title": "Linux: own terminal pane lifecycle, focus, and restoration handoff", "url": "https://github.com/TamedTornado/zentty/issues/5"},
     {"number": 6, "state": "CLOSED", "depends_on": [3, 5], "features": ["workspace.crash-recovery"], "title": "Linux: qualify restart and crash recovery", "url": "https://github.com/TamedTornado/zentty/issues/6"},
     {"number": 7, "state": "OPEN", "depends_on": [3, 4, 5], "features": ["pane.drag-drop", "pane.search", "commands.palette-routing", "agents.shared-consent-bootstrap", "agents.shared-ipc-status-attention", "agent.codex", "agent.claude-code", "agent.gemini", "agent.opencode", "agent.amp", "agent.copilot", "agent.cursor", "agent.droid", "agent.kimi", "agent.pi", "agent.omp", "agent.grok", "agent.antigravity", "agent.hermes", "agent.vibe", "agent.small-harness", "agent.custom"], "title": "Linux: inventory and deliver essential Zentty workflow parity", "url": "https://github.com/TamedTornado/zentty/issues/7"},
     {"number": 8, "state": "OPEN", "depends_on": [5], "features": ["terminal.ghostty-fidelity-resources"], "title": "Linux QA: close native input, IME, resize, and scaling gaps", "url": "https://github.com/TamedTornado/zentty/issues/8"},
     {"number": 9, "state": "CLOSED", "depends_on": [8, 13], "features": [], "title": "Linux: package and qualify install, upgrade, and uninstall ownership", "url": "https://github.com/TamedTornado/zentty/issues/9"},
     {"number": 13, "state": "CLOSED", "depends_on": [2], "features": [], "title": "Rust: bootstrap the workspace and safe Ghostty/GTK adapter", "url": "https://github.com/TamedTornado/zentty/issues/13"},
-    {"number": 14, "state": "CLOSED", "depends_on": [3, 4, 5, 7], "features": ["agent.claude-teams-tmux-compat"], "title": "Linux: port Zentty tmux compatibility and agent-team IPC", "url": "https://github.com/TamedTornado/zentty/issues/14"},
+    {"number": 14, "state": "CLOSED", "depends_on": [3, 4, 5, 7], "features": [], "title": "Linux: port Zentty tmux compatibility and agent-team IPC", "url": "https://github.com/TamedTornado/zentty/issues/14"},
     {"number": 15, "state": "CLOSED", "depends_on": [], "features": [], "title": "Linux planning: exhaustive source-backed feature audit and coverage gates", "url": "https://github.com/TamedTornado/zentty/issues/15"},
     {"number": 16, "state": "OPEN", "depends_on": [4, 15], "features": ["workspace.multiwindow-live-handoff", "application.sidebar-chrome-source-ux", "application.navigation-history-recents"], "title": "Linux UX: source-accurate sidebar, chrome, Worklane Peek, and navigation", "url": "https://github.com/TamedTornado/zentty/issues/16"},
-    {"number": 17, "state": "CLOSED", "depends_on": [5, 15], "features": ["terminal.input-selection-scrolling", "terminal.remote-ssh-transfer", "search.window-global", "clipboard.clean-raw-markdown"], "title": "Linux terminal UX: search, clipboard, scrolling, and remote paste parity", "url": "https://github.com/TamedTornado/zentty/issues/17"},
+    {"number": 17, "state": "CLOSED", "depends_on": [5, 15], "features": ["terminal.input-selection-scrolling", "terminal.remote-ssh-transfer", "search.window-global"], "title": "Linux terminal UX: search, clipboard, scrolling, and remote paste parity", "url": "https://github.com/TamedTornado/zentty/issues/17"},
     {"number": 18, "state": "CLOSED", "depends_on": [3, 4, 15], "features": ["workspace.bookmarks-presets", "project.git-review-icons", "project.open-with"], "title": "Linux project context: bookmarks, git/PR status, icons, and Open With", "url": "https://github.com/TamedTornado/zentty/issues/18"},
     {"number": 19, "state": "CLOSED", "depends_on": [4, 15], "features": ["utilities.dev-servers", "utilities.task-runners"], "title": "Linux project utilities: dev servers, task runners, and Task Manager", "url": "https://github.com/TamedTornado/zentty/issues/19"},
-    {"number": 20, "state": "OPEN", "depends_on": [4, 13, 15], "features": ["configuration.toml-settings", "configuration.shortcuts-presets", "configuration.ghostty-appearance"], "title": "Linux settings: config, shortcuts, Ghostty resources, and appearance parity", "url": "https://github.com/TamedTornado/zentty/issues/20"},
+    {"number": 20, "state": "OPEN", "depends_on": [4, 13, 15], "features": ["configuration.toml-settings", "configuration.ghostty-appearance"], "title": "Linux settings: config, shortcuts, Ghostty resources, and appearance parity", "url": "https://github.com/TamedTornado/zentty/issues/20"},
     {"number": 21, "state": "CLOSED", "depends_on": [7, 15], "features": ["desktop.notifications-inbox-routing", "desktop.fleet-status", "desktop.agent-sleep-inhibition"], "title": "Linux attention: notifications, inbox, fleet status, and agent sleep inhibition", "url": "https://github.com/TamedTornado/zentty/issues/21"},
-    {"number": 22, "state": "CLOSED", "depends_on": [4, 5, 7, 15], "features": ["cli.topology-control-grid-notify", "shell.environment-integration"], "title": "Epic: Linux CLI, authenticated control, grids, agents, and shell integration parity", "url": "https://github.com/TamedTornado/zentty/issues/22"},
+    {"number": 22, "state": "CLOSED", "depends_on": [4, 5, 7, 15], "features": ["shell.environment-integration"], "title": "Epic: Linux CLI, authenticated control, grids, agents, and shell integration parity", "url": "https://github.com/TamedTornado/zentty/issues/22"},
     {"number": 23, "state": "OPEN", "depends_on": [9, 15], "features": ["lifecycle.windows-confirmations", "lifecycle.updates-channels", "trust.about-licenses-privacy-errors", "diagnostics.task-terminal-performance"], "title": "Linux lifecycle and trust: updates, privacy, diagnostics, About, and licenses", "url": "https://github.com/TamedTornado/zentty/issues/23"},
     {"number": 65, "state": "OPEN", "depends_on": [19], "features": ["utilities.task-manager"], "title": "Future: Task Manager network and container/cgroup telemetry", "url": "https://github.com/TamedTornado/zentty/issues/65"},
-    {"number": 80, "state": "CLOSED", "depends_on": [16], "features": ["worklane.peek-live-navigation"], "title": "Linux UX: finish live multiwindow Worklane Peek", "url": "https://github.com/TamedTornado/zentty/issues/80"}
+    {"number": 80, "state": "CLOSED", "depends_on": [16], "features": ["worklane.peek-live-navigation"], "title": "Linux UX: finish live multiwindow Worklane Peek", "url": "https://github.com/TamedTornado/zentty/issues/80"},
+    {"number": 115, "state": "OPEN", "depends_on": [], "features": [], "title": "Epic: refresh Linux parity against Zentty 0.2", "url": "https://github.com/TamedTornado/zentty/issues/115"},
+    {"number": 116, "state": "OPEN", "depends_on": [115], "features": [], "title": "Merge the current Zentty source baseline and refresh the parity ledger", "url": "https://github.com/TamedTornado/zentty/issues/116"},
+    {"number": 117, "state": "OPEN", "depends_on": [115], "features": ["agent.claude-teams-tmux-compat"], "title": "Match the updated tmux split handshake used by Claude teams", "url": "https://github.com/TamedTornado/zentty/issues/117"},
+    {"number": 118, "state": "OPEN", "depends_on": [115], "features": ["cli.topology-control-grid-notify"], "title": "Accept parent-level --json for list topology commands", "url": "https://github.com/TamedTornado/zentty/issues/118"},
+    {"number": 119, "state": "OPEN", "depends_on": [115], "features": ["configuration.shortcuts-presets"], "title": "Add the Ghostty-compatible shortcut preset on Linux", "url": "https://github.com/TamedTornado/zentty/issues/119"},
+    {"number": 120, "state": "OPEN", "depends_on": [115], "features": ["worklane.titles-colors"], "title": "Use named worklane titles in Move Pane destinations", "url": "https://github.com/TamedTornado/zentty/issues/120"},
+    {"number": 121, "state": "OPEN", "depends_on": [115], "features": ["configuration.settings-window-lifecycle"], "title": "Close the Linux Settings window with Ctrl+W", "url": "https://github.com/TamedTornado/zentty/issues/121"},
+    {"number": 122, "state": "OPEN", "depends_on": [115], "features": ["clipboard.clean-raw-markdown"], "title": "Preserve structured newlines in Clean Copy", "url": "https://github.com/TamedTornado/zentty/issues/122"},
+    {"number": 123, "state": "OPEN", "depends_on": [115], "features": ["application.codex-title-animation"], "title": "Port the current Codex activity-title animation", "url": "https://github.com/TamedTornado/zentty/issues/123"},
+    {"number": 124, "state": "OPEN", "depends_on": [115], "features": ["terminal.ime-backspace-composition"], "title": "Qualify Backspace during active GTK IME composition", "url": "https://github.com/TamedTornado/zentty/issues/124"}
   ],
   "public_release_tags": [
     "v0.1.7", "v0.1.8", "v0.1.9", "v0.1.10", "v0.1.11", "v0.1.12", "v0.1.13",
@@ -33,7 +43,7 @@
     "v0.1.21", "v0.1.22", "v0.1.23", "v0.1.24", "v0.1.25", "v0.1.26", "v0.1.27",
     "v0.1.28", "v0.1.29", "v0.1.30", "v0.1.31", "v0.1.32", "v0.1.33", "v0.1.34",
     "v0.1.35", "v0.1.36", "v0.1.37", "v0.1.38", "v0.1.39", "v0.1.40", "v0.1.41",
-    "v0.1.42", "v0.1.43", "v0.1.44", "v0.1.45"
+    "v0.1.42", "v0.1.43", "v0.1.44", "v0.1.45", "v0.2.0"
   ],
   "release_feature_map": [
     {"tag": "v0.1.7", "features": ["agent.gemini", "pane.layout-split-focus-move", "terminal.input-selection-scrolling", "trust.about-licenses-privacy-errors", "configuration.ghostty-appearance", "desktop.notifications-inbox-routing", "commands.palette-routing"]},
@@ -74,7 +84,8 @@
     {"tag": "v0.1.42", "features": ["terminal.remote-ssh-transfer", "pane.cwd-command-title", "application.sidebar-chrome-source-ux", "project.git-review-icons", "pane.drag-drop", "configuration.toml-settings", "terminal.input-selection-scrolling", "utilities.task-manager"]},
     {"tag": "v0.1.43", "features": ["agent.omp", "clipboard.clean-raw-markdown", "desktop.notifications-inbox-routing", "desktop.fleet-status"]},
     {"tag": "v0.1.44", "features": ["pane.layout-split-focus-move", "agent.kimi", "clipboard.clean-raw-markdown", "workspace.multiwindow-live-handoff", "desktop.notifications-inbox-routing"]},
-    {"tag": "v0.1.45", "features": ["agent.kimi", "agents.shared-consent-bootstrap", "workspace.live-clean-snapshots"]}
+    {"tag": "v0.1.45", "features": ["agent.kimi", "agents.shared-consent-bootstrap", "workspace.live-clean-snapshots"]},
+    {"tag": "v0.2.0", "features": ["agent.claude-teams-tmux-compat", "application.codex-title-animation", "application.sidebar-chrome-source-ux", "cli.topology-control-grid-notify", "clipboard.clean-raw-markdown", "configuration.ghostty-appearance", "configuration.settings-window-lifecycle", "configuration.shortcuts-presets", "terminal.ghostty-fidelity-resources", "terminal.ime-backspace-composition", "worklane.titles-colors"]}
   ],
   "first_party_documents": [
     {"id": "repo-readme", "location": "README.md", "features": ["application.sidebar-chrome-source-ux", "worklane.navigation-identity", "commands.palette-routing", "search.window-global", "agents.shared-ipc-status-attention", "configuration.ghostty-appearance", "cli.topology-control-grid-notify"]},

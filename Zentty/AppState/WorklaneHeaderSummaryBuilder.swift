@@ -14,6 +14,13 @@ enum WorklaneHeaderSummaryBuilder {
         return WorklaneChromeSummary(
             worklaneTitle: worklane.title,
             focusedLabel: focusedLabel,
+            focusedLabelAnimatesLocalCodexSpinner: focusedPaneContext.map {
+                PaneDisplayIdentityResolver.animatesLocalCodexSpinner(
+                    pane: $0.pane,
+                    presentation: $0.presentation,
+                    metadata: $0.metadata
+                )
+            } ?? false,
             remoteContextLabel: remoteContextLabel,
             cwdPath: visibleLocalCwdPath(from: presentation),
             branch: branch,

@@ -16,9 +16,9 @@
       "homepageURLString" : "https://ghostty.org",
       "id" : "ghostty",
       "licenseName" : "MIT License",
-      "sourceURLString" : "https://github.com/ghostty-org/ghostty/blob/e75f895/LICENSE",
+      "sourceURLString" : "https://github.com/ghostty-org/ghostty/blob/bee61930c43ea94ccb372fb14f02f81c01ec73b9/LICENSE",
       "spdxID" : "MIT",
-      "version" : "e75f895"
+      "version" : "bee61930c"
     },
     {
       "displayName" : "iTerm2 Color Schemes",
@@ -36,9 +36,9 @@
       "homepageURLString" : "https://github.com/getsentry/sentry-cocoa",
       "id" : "sentry-cocoa",
       "licenseName" : "MIT License",
-      "sourceURLString" : "https://github.com/getsentry/sentry-cocoa/blob/d459ff99b1912c9603c9e607e030b4b98e2e199a/LICENSE.md",
+      "sourceURLString" : "https://github.com/getsentry/sentry-cocoa/blob/64c9c5cc401aefde0eda46a9192b36082533a79d/LICENSE.md",
       "spdxID" : "MIT",
-      "version" : "9.9.0"
+      "version" : "9.13.0"
     },
     {
       "displayName" : "Sparkle",
@@ -46,8 +46,8 @@
       "homepageURLString" : "https://github.com/sparkle-project/Sparkle",
       "id" : "sparkle",
       "licenseName" : "Other",
-      "sourceURLString" : "https://github.com/sparkle-project/Sparkle/blob/066e75a8b3e99962685d6a90cdd5293ebffd9261/LICENSE",
-      "version" : "2.9.1"
+      "sourceURLString" : "https://github.com/sparkle-project/Sparkle/blob/6276ba2b404829d139c45ff98427cf90e2efc59b/LICENSE",
+      "version" : "2.9.2"
     },
     {
       "displayName" : "Swift Argument Parser",

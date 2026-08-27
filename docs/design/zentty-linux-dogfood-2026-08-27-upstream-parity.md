@@ -54,3 +54,46 @@ so parity work must not downgrade it.
 The checked-in Swift tree remains at the old baseline until GH-116. Fetched
 remote objects are sufficient for this local discovery but not durable CI
 evidence. No qualification was run and no current-source parity is claimed.
+
+## GH-116 source merge and ledger repair
+
+Upstream `main` merged without conflicts and touched exactly 80 macOS,
+GhosttyKit-build, release, and Swift-test files. It did not modify Linux product
+code, Rust crates, Linux packaging, or Linux qualification orchestration. The
+merge is therefore retained as a source-reference update rather than manually
+copying selected Swift changes and losing provenance.
+
+The first mechanical owner/status patch matched repeated JSON fields in three
+adjacent inventory entries rather than their intended IDs. Inspection caught
+the error before staging: `worklane.navigation-identity`,
+`terminal.input-selection-scrolling`, and `configuration.toml-settings` were
+restored to their existing implemented owners, and subsequent edits were
+anchored by feature ID. No product code or committed history was affected.
+
+The renewed ledger now records 63 features: 42 `IMPLEMENTED`, 9 `PARTIAL`, and
+12 `NOT_IMPLEMENTED`. Five old broad green claims became explicit partial
+claims under GH-117 through GH-120 and GH-122. Three narrow entries were added
+for Settings-window lifecycle (GH-121), Codex activity animation (GH-123), and
+active-preedit IME Backspace (GH-124). This is discovery of previously absent
+scope, not a regression in the running Linux product.
+
+The evidence ledger now names source `0d0a3eff`, release `v0.2.0`, all 40
+audited releases, and exact child-issue ownership. The CLI source contract uses
+the same source head. The inventory validator learned to validate a pending
+merge through Git's actual `MERGE_HEAD` path, including worktrees, rather than
+producing a false stale-head failure before the merge commit exists. Its
+machine-summary expectations and negative tests were updated for the expanded
+ledger; old tests that required the affected entries to remain green now
+require their explicit partial status and new owner instead.
+
+Focused receipts before commit:
+
+- `linux/tests/feature-inventory`: PASS, 63 entries.
+- `linux/tests/feature-inventory-test`: PASS, including negative cases.
+- `linux/tests/cli-source-contract`: PASS, 40 commands, 40 source symbols,
+  13 output contracts, and 6 schemas.
+
+No product qualification or operator QA was run for this source-only merge.
+The operator will continue using the installed product while the parity
+children are implemented; visible changes will be deployed and reviewed in
+meaningful batches rather than interrupting normal use after every issue.
