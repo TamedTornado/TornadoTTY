@@ -60,8 +60,8 @@ jq -e '
     .result == "PASS" and
     .entry_count == 63 and
     .classifications.REQUIRED_INITIAL_RELEASE == 37 and
-    .implementation_statuses.IMPLEMENTED == 44 and
-    .implementation_statuses.PARTIAL == 7 and
+    .implementation_statuses.IMPLEMENTED == 45 and
+    .implementation_statuses.PARTIAL == 6 and
     .implementation_statuses.NOT_IMPLEMENTED == 12 and
     .evidence.app_commands == 70 and
     .evidence.pane_commands == 33 and
@@ -124,8 +124,8 @@ jq -e '
             contains("explicit documented no-blur degradation"))) and
     (.entries[] | select(.id == "configuration.shortcuts-presets") |
         .linux_owner_issue == 119 and
-        .implementation_status == "PARTIAL" and
-        (.test_plan | contains("native GTK chooser export/import")))
+        .implementation_status == "IMPLEMENTED" and
+        (.test_plan | contains("physical Ctrl+Shift+O delivery")))
 ' "${source_inventory}" >/dev/null || {
     echo "feature-inventory-test: GH20 settings closeout evidence regressed" >&2
     exit 1

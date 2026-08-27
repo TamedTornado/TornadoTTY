@@ -488,17 +488,17 @@
     {
       "id": "configuration.shortcuts-presets",
       "category": "configuration",
-      "behavior": "Make the complete command registry bindable with physical-key recording, pass-through when unbound, conflicts, clear/reset, left/right-hand presets, clickable previews, search/categories, import and export.",
+      "behavior": "Make the complete command registry bindable with physical-key recording, pass-through when unbound, conflicts, clear/reset, left/right-hand and Linux Ghostty-compatible presets, clickable previews, search/categories, import and export.",
       "source": ["Zentty/Input/KeyboardShortcut.swift", "Zentty/Input/KeyboardShortcutResolver.swift", "Zentty/Input/ShortcutPreset.swift", "Zentty/UI/Settings/ShortcutsSettingsSectionViewController.swift"],
       "swift_tests": ["ZenttyLogicTests/KeyboardShortcutResolverTests.swift", "ZenttyLogicTests/AppMenuBuilderTests.swift"],
       "classification": "REQUIRED_INITIAL_RELEASE",
       "origin": "PORT_PARITY",
       "user_impact": "Keyboard-first and fully bindable commands are defining source behavior, including preserving terminal input when an app action is unbound.",
       "linux_owner_issue": 119,
-      "implementation_status": "PARTIAL",
+      "implementation_status": "IMPLEMENTED",
       "focused_tests": ["crates/zentty-core/src/shortcut.rs", "crates/zentty-linux/src/application_shell/shortcut_registry.rs", "crates/zentty-linux/src/application_shell/shortcut_runtime.rs", "crates/zentty-linux/src/shortcut_settings.rs"],
       "product_scenarios": ["linux/tests/rust-shortcuts-settings"],
-      "test_plan": "Preserve the controlled X11/Wayland real-settings journey for physical recording, conflict replacement, preset/reset, native GTK chooser export/import, source-compatible persistence, restart, active-action interception, and displaced/unbound bytes reaching a real Ghostty PTY. GH-119 must add the current source's Ghostty-compatible preset, exact binding fixture, settings selection, persistence, and real PTY routing before this returns to IMPLEMENTED. The inventory validator must continue proving that every audited source command is present in the Linux bindable registry; Linux additionally exposes its platform fullscreen and minimize commands. Preserve the zero-survivor shortcut-model mutation receipt.",
+      "test_plan": "Preserve the controlled X11/Wayland real-settings journey for physical recording, conflict replacement, preset/reset, native GTK chooser export/import, source-compatible persistence, restart, active-action interception, and displaced/unbound bytes reaching a real Ghostty PTY. GH-119 added the current source's Ghostty-compatible preset, derived from Linux-pinned Ghostty revision 80054768, with exact mapping documentation, logical non-US characters, physical arrows/function keys, dedicated accessible Settings action and confirmation, atomic persistence, standard Linux F11, and physical Ctrl+Shift+O delivery into a real new Ghostty surface. The inventory validator must continue proving that every audited source command is present in the Linux bindable registry; Linux additionally exposes its platform fullscreen and minimize commands. Preserve the zero-survivor shortcut-model mutation receipt.",
       "alternative_or_blocker": null
     },
     {

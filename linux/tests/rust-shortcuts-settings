@@ -327,7 +327,33 @@ zentty_product_wait_for_log "${log}" \
     "left-hand preset did not cross the real settings action" || fail "shortcut preset failed"
 grep -Fq 'command_id = "pane.focus.up"' "${config}" || fail "left preset was not persisted"
 grep -Fq 'shortcut = "command+w"' "${config}" || fail "left preset value was not persisted"
-for _ in {1..4}; do settings_key Tab; done
+# Apply the dedicated Ghostty preset through its real destructive-replacement
+# confirmation. The active transient, not its parent Settings window, owns the
+# confirmation key event.
+for _ in {1..2}; do settings_key Tab; done
+settings_key space
+zentty_product_wait_for_log "${log}" \
+    'zentty-linux: shortcut-settings action=shortcut-preset-ghostty confirmation=shown revision=80054768edbffd5df8568782e528363033a49192' \
+    "Ghostty preset did not expose its confirmation" || fail "Ghostty preset confirmation failed"
+if zentty_product_uses_xdotool "${backend}"; then
+    xdotool key Return
+else
+    zentty_product_key "${backend}" Return
+fi
+zentty_product_wait_for_log "${log}" \
+    'zentty-linux: shortcut-settings action=shortcut-preset-ghostty result=applied' \
+    "Ghostty preset did not apply after confirmation" || fail "Ghostty preset failed"
+grep -Fq 'shortcut = "command+shift+o"' "${config}" || fail "Ghostty split-right binding was not persisted"
+grep -Fq 'shortcut = "option+f4"' "${config}" || fail "Ghostty close-window binding was not persisted"
+! grep -Fq 'command_id = "window.toggle_fullscreen"' "${config}" ||
+    fail "standard Linux F11 fullscreen was unnecessarily overridden or unbound"
+! grep -Fq 'shortcut = "command+return"' "${config}" ||
+    fail "Ghostty Ctrl+Enter displaced standard Linux F11 fullscreen"
+! grep -Fq 'shortcut = "command+w"' "${config}" || fail "Ghostty preset did not atomically replace the left preset"
+prepare_settings_input
+# AlertDialog returns focus to the shortcut search entry. Traverse the complete
+# real header (left, right, Ghostty, import, export, reset) from that anchor.
+for _ in {1..6}; do settings_key Tab; done
 settings_key space
 zentty_product_wait_for_log "${log}" \
     'zentty-linux: shortcut-settings action=shortcut-reset result=applied' \
@@ -391,7 +417,7 @@ zentty_product_wait_for_log "${log}" 'zentty-linux: shortcut-settings saved comm
 shortcut_export="${HOME}/zentty-shortcuts.toml"
 rm -f -- "${shortcut_export}"
 settings_key ctrl+f
-for _ in {1..4}; do settings_key Tab; done
+for _ in {1..5}; do settings_key Tab; done
 settings_key space
 prepare_dialog_input 'Export Zentty Shortcuts'
 dialog_key Tab
@@ -404,13 +430,13 @@ zentty_product_wait_for_log "${log}" \
     "shortcut export did not report success" || fail "shortcut export failed"
 prepare_settings_input
 settings_key ctrl+f
-for _ in {1..5}; do settings_key Tab; done
+for _ in {1..6}; do settings_key Tab; done
 settings_key space
 zentty_product_wait_for_log_count "${log}" \
     'zentty-linux: shortcut-settings action=shortcut-reset result=applied' 2 \
     "post-export reset did not apply" || fail "post-export reset failed"
 settings_key ctrl+f
-for _ in {1..3}; do settings_key Tab; done
+for _ in {1..4}; do settings_key Tab; done
 settings_key space
 prepare_dialog_input 'Import Zentty Shortcuts'
 if [[ "${backend}" == wayland ]]; then
@@ -712,4 +738,39 @@ zentty_product_wait_for_log "${log}" \
     'zentty-linux: sidebar-selection-emphasis value=vivid' \
     "Vivid selection did not reach the real sidebar projection" || fail "sidebar emphasis projection failed"
 
-echo "rust-shortcuts-settings-${backend}: PASS unified-settings theme-catalog terminal-palette-preview explicit-theme-slots bundled-theme-runtime-path opencode-theme-sync sidebar-selection-emphasis real-gtk-settings physical-recorder shortcut-presets conflict-replacement native-chooser-import-export source-theme-mode real-ghostty-reload preserved-pty bound-action unbound-byte persistence-restart"
+# Finish with the new preset itself crossing the real GTK confirmation,
+# persisted registry, physical Linux chord, action router, and Ghostty surface.
+shortcut_section_before="$(grep -Fc 'zentty-linux: settings-section selected=shortcuts' "${log}" 2>/dev/null || true)"
+settings_key ctrl+2
+zentty_product_wait_for_log_count "${log}" 'zentty-linux: settings-section selected=shortcuts' "$((shortcut_section_before + 1))" \
+    "final Ghostty preset journey did not reach Shortcuts" || fail "Ghostty preset navigation failed"
+settings_key ctrl+f
+for _ in {1..3}; do settings_key Tab; done
+ghostty_confirmation_before="$(grep -Fc 'zentty-linux: shortcut-settings action=shortcut-preset-ghostty confirmation=shown' "${log}" 2>/dev/null || true)"
+ghostty_applied_before="$(grep -Fc 'zentty-linux: shortcut-settings action=shortcut-preset-ghostty result=applied' "${log}" 2>/dev/null || true)"
+settings_key space
+zentty_product_wait_for_log_count "${log}" \
+    'zentty-linux: shortcut-settings action=shortcut-preset-ghostty confirmation=shown' "$((ghostty_confirmation_before + 1))" \
+    "final Ghostty preset confirmation was not shown" || fail "Ghostty preset delivery setup failed"
+if zentty_product_uses_xdotool "${backend}"; then
+    xdotool key Return
+else
+    zentty_product_key "${backend}" Return
+fi
+zentty_product_wait_for_log_count "${log}" \
+    'zentty-linux: shortcut-settings action=shortcut-preset-ghostty result=applied' "$((ghostty_applied_before + 1))" \
+    "final Ghostty preset did not apply" || fail "Ghostty preset delivery setup failed"
+prepare_settings_input
+settings_key Escape
+zentty_product_wait_for_log "${log}" 'shortcut-settings hidden parent-presented=true' \
+    "closing Settings after the Ghostty preset did not restore the product" ||
+    fail "Ghostty preset focus restoration failed"
+zentty_product_prepare_input "${backend}" "${log}" || fail "Ghostty preset product input was unavailable"
+main_key ctrl+shift+o
+zentty_product_wait_for_log "${log}" 'zentty-linux: shortcut=command+shift+o action=new-pane-right' \
+    "Ghostty Ctrl+Shift+O did not reach Zentty's action router" || fail "Ghostty shortcut delivery failed"
+zentty_product_wait_for_log "${log}" 'zentty-linux: pane-display id=pane-2' \
+    "Ghostty split chord did not create a real terminal surface" || fail "Ghostty split delivery failed"
+[[ ! -s "${bytes}" ]] || fail "Ghostty application shortcut leaked into the real child PTY"
+
+echo "rust-shortcuts-settings-${backend}: PASS unified-settings theme-catalog terminal-palette-preview explicit-theme-slots bundled-theme-runtime-path opencode-theme-sync sidebar-selection-emphasis real-gtk-settings physical-recorder shortcut-presets ghostty-linux-preset conflict-replacement native-chooser-import-export source-theme-mode real-ghostty-reload preserved-pty bound-action unbound-byte persistence-restart"

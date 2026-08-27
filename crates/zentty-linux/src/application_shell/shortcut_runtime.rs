@@ -148,4 +148,20 @@ mod tests {
             "f11"
         );
     }
+
+    #[test]
+    fn character_bindings_follow_the_active_keyboard_layout() {
+        assert_eq!(
+            shortcut_from_event(gdk::Key::odiaeresis, gdk::ModifierType::CONTROL_MASK)
+                .unwrap()
+                .storage_string(),
+            "command+ö"
+        );
+        assert_eq!(
+            shortcut_from_event(gdk::Key::Left, gdk::ModifierType::CONTROL_MASK)
+                .unwrap()
+                .storage_string(),
+            "command+left"
+        );
+    }
 }

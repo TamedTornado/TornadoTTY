@@ -213,3 +213,37 @@ now deliberately periodic and batched: each issue still receives focused
 automated and real-product integration evidence, while visible deployments are
 held for an explicit QA stop so normal dogfooding work is not interrupted after
 every feature.
+
+## GH-119 Ghostty-compatible Linux shortcut preset
+
+The source commit `984e3076` adds a macOS Ghostty-compatible preset. Linux was
+derived instead from Ghostty's real Linux defaults at the revision pinned by
+`linux/ghostty.lock`, `80054768edbffd5df8568782e528363033a49192`; the exact mapping and deliberate
+deviations are recorded in `ghostty-linux-shortcut-preset-v1.md`. Logical
+character keyvals follow non-US layouts, while arrows, Tab, and F11 remain
+physical. F11 is retained rather than copying Ghostty's Ctrl+Enter fullscreen.
+
+The Settings header now exposes an accessible Ghostty preset action with an
+explicit destructive-replacement confirmation. Acceptance constructs the new
+manager before calling the existing persistence callback, so a conflict cannot
+partially replace the live or stored registry. Left- and right-hand mapping
+functions were not changed. Diff review caught that placing a sixth action in
+the already dense one-row header would reintroduce Settings clipping; search is
+now full-width above an aligned action row, with physical traversal re-proved.
+
+The first focused compile rejected the missing exhaustive `HeaderAction`
+variant; it was added without a fallback match. The first real journey applied
+the preset but incorrectly expected normalized TOML to repeat the default F11
+binding. The assertion now proves there is no fullscreen override or unbind and
+no Ctrl+Enter displacement. The next run observed GTK returning focus to the
+search entry after AlertDialog teardown; traversal was anchored to that real
+focus rather than adding a timer or product focus hack. The final delivery
+receipt initially used a fixed count across the journey's intentional product
+restart/log truncation; it now measures the pre-action count.
+
+Focused Rust tests, rustfmt, clippy with warnings denied, and shellcheck pass.
+`linux/tests/nested-wayland-input linux/tests/rust-shortcuts-settings` passes
+with real GTK Settings, confirmation, normalized XDG persistence, restart,
+physical Ctrl+Shift+O input, Zentty action routing, and a new real Ghostty
+surface/PTY. The installed dogfood application was not replaced or restarted;
+operator review remains part of a later explicit batch QA stop.

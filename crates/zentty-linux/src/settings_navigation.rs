@@ -76,7 +76,7 @@ impl SettingsSection {
                 "confirm quit close restore workspace clipboard copy flatten markdown url"
             }
             Self::Appearance => "theme opacity color font terminal ghostty background",
-            Self::Shortcuts => "keyboard keybinding hotkey binding shortcut",
+            Self::Shortcuts => "keyboard keybinding hotkey binding shortcut ghostty preset",
             Self::Notifications => "sound alert notify permission desktop",
             Self::UpdatesPrivacy => "update channel beta stable crash error report privacy sentry",
             Self::PaneLayout => "worklane workspace pane split layout opacity label icon scroll",
@@ -204,6 +204,7 @@ mod tests {
         assert!(SettingsSection::UpdatesPrivacy.matches("crash"));
         assert!(SettingsSection::Agents.matches("opencode"));
         assert!(SettingsSection::OpenWith.matches("custom launchers"));
+        assert!(SettingsSection::Shortcuts.matches("ghostty"));
         assert!(!SettingsSection::Appearance.matches("server"));
         assert_eq!(SettingsSection::parse("unknown"), None);
     }

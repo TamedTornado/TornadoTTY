@@ -117,36 +117,49 @@ pub(crate) fn show(
     root.set_margin_end(16);
     root.add_css_class("zentty-shortcuts-settings");
 
-    let header = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    let header = gtk::Box::new(gtk::Orientation::Vertical, 8);
     let search = gtk::SearchEntry::builder()
         .placeholder_text("Search shortcuts")
         .hexpand(true)
         .build();
     header.append(&search);
+    let header_actions = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    header_actions.set_halign(gtk::Align::End);
     for (label, action) in [
         ("Left-hand preset", HeaderAction::LeftPreset),
         ("Right-hand preset", HeaderAction::RightPreset),
+        ("Ghostty preset", HeaderAction::GhosttyPreset),
         ("Import…", HeaderAction::Import),
         ("Export…", HeaderAction::Export),
         ("Reset", HeaderAction::Reset),
     ] {
         let button = gtk::Button::with_label(label);
+        if matches!(action, HeaderAction::GhosttyPreset) {
+            button.update_property(&[gtk::accessible::Property::Label(
+                "Apply Ghostty-compatible shortcut preset",
+            )]);
+        }
         button.set_tooltip_text(Some(match action {
             HeaderAction::LeftPreset => "Replace bindings with the source left-hand preset",
             HeaderAction::RightPreset => "Replace bindings with the source right-hand preset",
+            HeaderAction::GhosttyPreset => {
+                "Replace bindings with Linux Ghostty-compatible shortcuts"
+            }
             HeaderAction::Import => "Import source-compatible shortcut TOML",
             HeaderAction::Export => "Export source-compatible shortcut TOML",
             HeaderAction::Reset => "Restore all default bindings",
         }));
-        header.append(&button);
+        header_actions.append(&button);
         button.set_widget_name(match action {
             HeaderAction::LeftPreset => "shortcut-preset-left",
             HeaderAction::RightPreset => "shortcut-preset-right",
+            HeaderAction::GhosttyPreset => "shortcut-preset-ghostty",
             HeaderAction::Import => "shortcut-import",
             HeaderAction::Export => "shortcut-export",
             HeaderAction::Reset => "shortcut-reset",
         });
     }
+    header.append(&header_actions);
     root.append(&header);
 
     let content = gtk::Paned::new(gtk::Orientation::Horizontal);
@@ -321,7 +334,7 @@ pub(crate) fn show(
     connect_search(&search, &state);
     connect_detail_controls(&state);
     connect_preview(&keyboard, &state);
-    connect_header(&header, &window, &state);
+    connect_header(&header_actions, &window, &state);
     install_window_shortcuts(&window, parent, &search, Rc::clone(restore_parent_focus));
     install_recorder(&window, &state);
     let initial_search = search.clone();
@@ -427,6 +440,7 @@ fn install_window_shortcuts(
 enum HeaderAction {
     LeftPreset,
     RightPreset,
+    GhosttyPreset,
     Import,
     Export,
     Reset,
@@ -889,7 +903,7 @@ fn replace_conflict(state: &Rc<RefCell<ViewState>>) {
 }
 
 fn connect_header(header: &gtk::Box, window: &gtk::Window, state: &Rc<RefCell<ViewState>>) {
-    let mut child = header.first_child().and_then(|child| child.next_sibling());
+    let mut child = header.first_child();
     while let Some(widget) = child {
         if let Ok(button) = widget.clone().downcast::<gtk::Button>() {
             let name = button.widget_name();
@@ -900,6 +914,7 @@ fn connect_header(header: &gtk::Box, window: &gtk::Window, state: &Rc<RefCell<Vi
                 match name.as_str() {
                     "shortcut-preset-left" => apply_preset(&state, Preset::Left),
                     "shortcut-preset-right" => apply_preset(&state, Preset::Right),
+                    "shortcut-preset-ghostty" => confirm_ghostty_preset(&window, &state),
                     "shortcut-import" => choose_import(&window, &state),
                     "shortcut-export" => choose_export(&window, &state),
                     "shortcut-reset" => {
@@ -917,12 +932,45 @@ fn connect_header(header: &gtk::Box, window: &gtk::Window, state: &Rc<RefCell<Vi
 enum Preset {
     Left,
     Right,
+    Ghostty,
+}
+
+const GHOSTTY_PRESET_REVISION: &str = "80054768edbffd5df8568782e528363033a49192";
+const GHOSTTY_PRESET_CONFIRMATION: &str = "This replaces all current shortcut bindings with Linux Ghostty-compatible shortcuts while keeping non-conflicting Zentty actions.";
+
+fn confirm_ghostty_preset(window: &gtk::Window, state: &Rc<RefCell<ViewState>>) {
+    let dialog = gtk::AlertDialog::builder()
+        .modal(true)
+        .message("Apply Ghostty-compatible preset?")
+        .detail(GHOSTTY_PRESET_CONFIRMATION)
+        .buttons(["Cancel", "Apply Preset"])
+        .cancel_button(0)
+        .default_button(1)
+        .build();
+    eprintln!(
+        "zentty-linux: shortcut-settings action=shortcut-preset-ghostty confirmation=shown revision={GHOSTTY_PRESET_REVISION}"
+    );
+    let weak = Rc::downgrade(state);
+    dialog.choose(
+        Some(window),
+        None::<&gtk::gio::Cancellable>,
+        move |response| {
+            let accepted = response == Ok(1);
+            eprintln!(
+                "zentty-linux: shortcut-settings action=shortcut-preset-ghostty confirmation=answered accepted={accepted}"
+            );
+            if accepted && let Some(state) = weak.upgrade() {
+                apply_preset(&state, Preset::Ghostty);
+            }
+        },
+    );
 }
 
 fn apply_preset(state: &Rc<RefCell<ViewState>>, preset: Preset) {
     let entries = match preset {
         Preset::Left => left_preset(),
         Preset::Right => right_preset(),
+        Preset::Ghostty => ghostty_preset(),
     };
     let assigned = entries.keys().copied().collect::<HashSet<_>>();
     let mut bindings = entries
@@ -943,10 +991,12 @@ fn apply_preset(state: &Rc<RefCell<ViewState>>, preset: Preset) {
     let message = match preset {
         Preset::Left => "Left-hand preset applied.",
         Preset::Right => "Right-hand preset applied.",
+        Preset::Ghostty => "Ghostty-compatible preset applied.",
     };
     let action = match preset {
         Preset::Left => "shortcut-preset-left",
         Preset::Right => "shortcut-preset-right",
+        Preset::Ghostty => "shortcut-preset-ghostty",
     };
     apply_all(state, &bindings, message, action);
 }
@@ -1046,6 +1096,51 @@ fn right_preset() -> HashMap<&'static str, &'static str> {
         ("navigate.back", "command+,"),
         ("navigate.forward", "command+."),
         ("app.open_settings", "command+o"),
+    ])
+}
+
+/// Linux Ghostty defaults at [`GHOSTTY_PRESET_REVISION`], translated only into
+/// Zentty command IDs. Character chords stay logical; arrows, Tab, and F11 are
+/// physical keys in `shortcut_from_event`. Zentty-only entries are retained
+/// only where they do not collide with those Ghostty chords.
+fn ghostty_preset() -> HashMap<&'static str, &'static str> {
+    HashMap::from([
+        ("app.new_window", "command+shift+n"),
+        ("app.close_window", "option+f4"),
+        ("worklane.new", "command+shift+t"),
+        ("worklane.next", "command+tab"),
+        ("worklane.previous", "command+shift+tab"),
+        ("pane.close_focused", "command+shift+w"),
+        ("pane.split.horizontal", "command+shift+o"),
+        ("pane.split.vertical", "command+shift+e"),
+        ("pane.focus.previous", "command+control+["),
+        ("pane.focus.next", "command+control+]"),
+        ("pane.focus.up", "command+option+up"),
+        ("pane.focus.down", "command+option+down"),
+        ("pane.focus.left", "command+option+left"),
+        ("pane.focus.right", "command+option+right"),
+        ("pane.resize.up", "command+control+shift+up"),
+        ("pane.resize.down", "command+control+shift+down"),
+        ("pane.resize.left", "command+control+shift+left"),
+        ("pane.resize.right", "command+control+shift+right"),
+        ("pane.search.find", "command+shift+f"),
+        ("command_palette.show", "command+shift+p"),
+        ("app.open_settings", "command+,"),
+        ("app.reload_config", "command+shift+,"),
+        ("window.toggle_fullscreen", "f11"),
+        ("sidebar.toggle", "command+s"),
+        ("clipboard.clean_copy", "command+control+c"),
+        ("notifications.jump_latest", "command+shift+u"),
+        ("pane.arrange.height.full", "command+option+1"),
+        ("pane.arrange.height.two_per_column", "command+option+2"),
+        ("pane.arrange.height.three_per_column", "command+option+3"),
+        ("pane.arrange.height.four_per_column", "command+option+4"),
+        ("pane.move.left", "command+control+option+left"),
+        ("pane.move.right", "command+control+option+right"),
+        ("pane.move.up", "command+control+option+up"),
+        ("pane.move.down", "command+control+option+down"),
+        ("pane.reset_layout", "command+control+option+0"),
+        ("bookmarks.openPopover", "command+shift+b"),
     ])
 }
 
@@ -1199,10 +1294,11 @@ mod tests {
 
     #[test]
     fn preset_bindings_are_conflict_free_for_available_linux_commands() {
-        for preset in [Preset::Left, Preset::Right] {
+        for preset in [Preset::Left, Preset::Right, Preset::Ghostty] {
             let entries = match preset {
                 Preset::Left => left_preset(),
                 Preset::Right => right_preset(),
+                Preset::Ghostty => ghostty_preset(),
             };
             let bindings = entries
                 .into_iter()
@@ -1219,6 +1315,30 @@ mod tests {
                 .collect::<HashSet<_>>();
             assert_eq!(unique.len(), bindings.len());
         }
+    }
+
+    #[test]
+    fn ghostty_preset_matches_the_pinned_linux_core_and_preserves_f11() {
+        let preset = ghostty_preset();
+        assert_eq!(
+            GHOSTTY_PRESET_REVISION,
+            "80054768edbffd5df8568782e528363033a49192"
+        );
+        assert_eq!(preset["app.new_window"], "command+shift+n");
+        assert_eq!(preset["worklane.new"], "command+shift+t");
+        assert_eq!(preset["pane.close_focused"], "command+shift+w");
+        assert_eq!(preset["pane.split.horizontal"], "command+shift+o");
+        assert_eq!(preset["pane.split.vertical"], "command+shift+e");
+        assert_eq!(preset["pane.search.find"], "command+shift+f");
+        assert_eq!(preset["app.open_settings"], "command+,");
+        assert_eq!(preset["app.reload_config"], "command+shift+,");
+        assert_eq!(preset["window.toggle_fullscreen"], "f11");
+        assert!(
+            !preset
+                .values()
+                .any(|shortcut| *shortcut == "command+return")
+        );
+        assert!(GHOSTTY_PRESET_CONFIRMATION.contains("replaces all current"));
     }
 
     #[test]
