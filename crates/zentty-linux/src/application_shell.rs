@@ -20,7 +20,6 @@ use crate::{
     restore_notice::RestoreNotice,
     sidebar,
     sidebar_visibility::{Event as SidebarVisibilityEvent, Mode as SidebarVisibilityMode},
-    source_ui,
     window_chrome::WindowChrome,
     worklane_peek::{
         self, Direction as PeekDirection, PanePreview, Phase as PeekPhase,
@@ -64,30 +63,13 @@ mod task_runner_runtime;
 mod tmux_runtime;
 
 use action_router::{
-    ACTION_ADD_PANE_LEFT, ACTION_ADD_PANE_RIGHT, ACTION_ARRANGE_GOLDEN_NARROW,
-    ACTION_ARRANGE_GOLDEN_SHORT, ACTION_ARRANGE_GOLDEN_TALL, ACTION_ARRANGE_GOLDEN_WIDE,
-    ACTION_ARRANGE_HEIGHT_FOUR, ACTION_ARRANGE_HEIGHT_FULL, ACTION_ARRANGE_HEIGHT_THREE,
-    ACTION_ARRANGE_HEIGHT_TWO, ACTION_ARRANGE_WIDTH_FULL, ACTION_ARRANGE_WIDTH_HALF,
-    ACTION_ARRANGE_WIDTH_QUARTERS, ACTION_ARRANGE_WIDTH_THIRDS, ACTION_CLEAN_COPY,
-    ACTION_CLOSE_ACTIVE_WORKLANE, ACTION_CLOSE_PANE, ACTION_CLOSE_WINDOW, ACTION_CLOSE_WORKLANE,
-    ACTION_COPY, ACTION_COPY_AS_MARKDOWN, ACTION_COPY_RAW, ACTION_CYCLE_WORKLANE_COLOR,
-    ACTION_DUPLICATE_PANE, ACTION_FIND, ACTION_FIND_NEXT, ACTION_FIND_PREVIOUS,
-    ACTION_FOCUS_PANE_DOWN, ACTION_FOCUS_PANE_LEFT, ACTION_FOCUS_PANE_RIGHT, ACTION_FOCUS_PANE_UP,
-    ACTION_GLOBAL_FIND, ACTION_IGNORE_SERVER_PORT, ACTION_MINIMIZE_WINDOW, ACTION_MOVE_PANE_DOWN,
-    ACTION_MOVE_PANE_LEFT, ACTION_MOVE_PANE_RIGHT, ACTION_MOVE_PANE_TO_NEW_WINDOW,
-    ACTION_MOVE_PANE_UP, ACTION_MOVE_WORKLANE_DOWN, ACTION_MOVE_WORKLANE_UP, ACTION_NAVIGATE_BACK,
-    ACTION_NAVIGATE_FORWARD, ACTION_NEW_PANE_RIGHT, ACTION_NEW_WINDOW, ACTION_NEW_WORKLANE,
-    ACTION_NEXT_PANE, ACTION_NEXT_WORKLANE, ACTION_OPEN_BRANCH_REMOTE, ACTION_OPEN_PULL_REQUEST,
-    ACTION_OPEN_SERVER, ACTION_OPEN_SERVER_BROWSER, ACTION_OPEN_SETTINGS,
-    ACTION_OPEN_SETTINGS_SECTION, ACTION_OPEN_WITH_PRIMARY, ACTION_OPEN_WITH_TARGET,
-    ACTION_PREVIOUS_PANE, ACTION_PREVIOUS_WORKLANE, ACTION_REFRESH_REVIEW_STATUS,
-    ACTION_REFRESH_SERVERS, ACTION_RESET_PANE_LAYOUT, ACTION_RESIZE_PANE_DOWN,
-    ACTION_RESIZE_PANE_LEFT, ACTION_RESIZE_PANE_RIGHT, ACTION_RESIZE_PANE_UP,
-    ACTION_RESTORE_CLOSED_PANE, ACTION_SELECT_ALL, ACTION_SHOW_ABOUT, ACTION_SHOW_AGENT_FLEET,
-    ACTION_SHOW_TASK_MANAGER, ACTION_SPLIT_PANE_BELOW, ACTION_SPLIT_PANE_RIGHT,
-    ACTION_STOP_IGNORING_SERVER_PORT, ACTION_STOP_SERVER, ACTION_TOGGLE_FULLSCREEN,
-    ACTION_TOGGLE_LIGHT_DARK_THEME, ACTION_TOGGLE_SIDEBAR, ACTION_USE_AUTO_THEME,
-    ACTION_USE_DARK_THEME, ACTION_USE_LIGHT_THEME, ACTION_USE_SELECTION_FOR_FIND, ActionRouter,
+    ACTION_ADD_PANE_LEFT, ACTION_ADD_PANE_RIGHT, ACTION_CLOSE_PANE, ACTION_CLOSE_WORKLANE,
+    ACTION_DUPLICATE_PANE, ACTION_IGNORE_SERVER_PORT, ACTION_NAVIGATE_BACK,
+    ACTION_NAVIGATE_FORWARD, ACTION_NEXT_PANE, ACTION_NEXT_WORKLANE, ACTION_OPEN_SERVER,
+    ACTION_OPEN_SERVER_BROWSER, ACTION_OPEN_SETTINGS_SECTION, ACTION_OPEN_WITH_PRIMARY,
+    ACTION_OPEN_WITH_TARGET, ACTION_PREVIOUS_PANE, ACTION_PREVIOUS_WORKLANE,
+    ACTION_SPLIT_PANE_BELOW, ACTION_SPLIT_PANE_RIGHT, ACTION_STOP_IGNORING_SERVER_PORT,
+    ACTION_STOP_SERVER, ActionRouter,
 };
 use agent_events::AgentEventCoordinator;
 use pane_runtime::DetachedPaneRuntime;
@@ -1570,11 +1552,29 @@ impl ApplicationShell {
         let controller = gtk::EventControllerKey::new();
         controller.set_propagation_phase(gtk::PropagationPhase::Capture);
         let weak = Rc::downgrade(shell);
-        controller.connect_key_pressed(move |_, key, _, modifiers| {
+        controller.connect_key_pressed(move |controller, key, _, modifiers| {
             let is_tab = key == gdk::Key::Tab || key == gdk::Key::ISO_Left_Tab;
             let Some(shell) = weak.upgrade() else {
                 return glib::Propagation::Proceed;
             };
+            let visible_palette = {
+                let shell = shell.borrow();
+                shell
+                    .command_palette
+                    .is_visible()
+                    .then(|| shell.command_palette.clone())
+            };
+            if let Some(command_palette) = visible_palette {
+                // GTK action activation may synchronously mutate the shell.
+                // Dispatch only after the RefCell borrow above has ended.
+                let handled =
+                    command_palette.handle_navigation_key(key, controller.current_event_time());
+                return if handled {
+                    glib::Propagation::Stop
+                } else {
+                    glib::Propagation::Proceed
+                };
+            }
             if is_close_window_shortcut(key, modifiers) {
                 shell.borrow().request_quit();
                 return glib::Propagation::Stop;
@@ -2777,7 +2777,13 @@ impl ApplicationShell {
         items.extend(self.command_palette_task_items());
         items.extend(self.command_palette_open_with_items());
         items.extend(self.command_palette_fleet_items());
-        items.extend(Self::command_palette_action_items());
+        items.extend(Self::command_palette_settings_items());
+        if let Some(router) = &self.action_router {
+            items.extend(router.ordinary_palette_items());
+            router
+                .validate_palette_items(&items)
+                .expect("command palette providers must match the installed ActionRouter");
+        }
         (items, current)
     }
 
@@ -2803,6 +2809,14 @@ impl ApplicationShell {
 
     fn command_palette_open_with_items(&self) -> Vec<CommandPaletteItem> {
         let context_available = open_with_runtime::focused_context_is_available(self);
+        if let Some(router) = &self.action_router {
+            router
+                .set_enabled(ACTION_OPEN_WITH_PRIMARY, context_available)
+                .expect("Open With primary action is registered");
+            router
+                .set_enabled(ACTION_OPEN_WITH_TARGET, context_available)
+                .expect("Open With target action is registered");
+        }
         let mut items = Vec::new();
         if let Some(primary) = &self.open_with_runtime.catalog.primary {
             let mut item = CommandPaletteItem::action(
@@ -2946,9 +2960,8 @@ impl ApplicationShell {
             .collect()
     }
 
-    #[allow(clippy::too_many_lines)] // Interim until the source command registry is ported.
-    fn command_palette_action_items() -> Vec<CommandPaletteItem> {
-        let mut items = crate::settings_navigation::SettingsSection::ALL
+    fn command_palette_settings_items() -> Vec<CommandPaletteItem> {
+        crate::settings_navigation::SettingsSection::ALL
             .into_iter()
             .map(|section| {
                 CommandPaletteItem::parameterized_action(
@@ -2960,436 +2973,7 @@ impl ApplicationShell {
                 )
                 .with_recent_eligibility(true)
             })
-            .collect::<Vec<_>>();
-        items.extend([
-            CommandPaletteItem::action(
-                "Settings",
-                "Open Zentty settings",
-                "preferences configuration general",
-                ACTION_OPEN_SETTINGS,
-            ),
-            CommandPaletteItem::action(
-                "About Zentty",
-                "Build identity, documentation, source, and third-party licenses",
-                "version commit license privacy trust",
-                ACTION_SHOW_ABOUT,
-            ),
-            CommandPaletteItem::action(
-                "Toggle Light/Dark Theme",
-                "Switch between the remembered light and dark themes",
-                "appearance colors automatic",
-                ACTION_TOGGLE_LIGHT_DARK_THEME,
-            ),
-            CommandPaletteItem::action(
-                "Use Dark Theme",
-                "Use the remembered dark terminal theme",
-                "appearance colors",
-                ACTION_USE_DARK_THEME,
-            ),
-            CommandPaletteItem::action(
-                "Use Light Theme",
-                "Use the remembered light terminal theme",
-                "appearance colors",
-                ACTION_USE_LIGHT_THEME,
-            ),
-            CommandPaletteItem::action(
-                "Use Auto Theme",
-                "Follow the Linux desktop light or dark appearance",
-                "appearance colors automatic system",
-                ACTION_USE_AUTO_THEME,
-            ),
-            CommandPaletteItem::action(
-                "Task Manager",
-                "Inspect CPU, memory, and process trees for every pane",
-                "diagnostics processes performance",
-                ACTION_SHOW_TASK_MANAGER,
-            ),
-            CommandPaletteItem::action(
-                "Agent Status",
-                "Inspect agent activity across every Zentty window",
-                "fleet waiting running idle approval",
-                ACTION_SHOW_AGENT_FLEET,
-            ),
-            CommandPaletteItem::action(
-                "Refresh Development Servers",
-                "Rescan real listening processes now",
-                "server browser port listener",
-                ACTION_REFRESH_SERVERS,
-            ),
-            CommandPaletteItem::action(
-                "Refresh Git and Review Status",
-                "Refresh repository, branch, dirty tree, and pull-request state",
-                "git github pull request ci approval conflict",
-                ACTION_REFRESH_REVIEW_STATUS,
-            ),
-            CommandPaletteItem::action(
-                "Open Branch on Remote",
-                "Open the focused branch on its configured Git remote",
-                "git github gitlab bitbucket browser",
-                ACTION_OPEN_BRANCH_REMOTE,
-            ),
-            CommandPaletteItem::action(
-                "Open Pull Request",
-                "Open the pull request associated with the focused branch",
-                "git github review browser pr",
-                ACTION_OPEN_PULL_REQUEST,
-            ),
-            CommandPaletteItem::action(
-                "New Window",
-                "Create another Zentty window",
-                "application window",
-                ACTION_NEW_WINDOW,
-            ),
-            CommandPaletteItem::action(
-                "Close Window",
-                "Close this Zentty window",
-                "application window",
-                ACTION_CLOSE_WINDOW,
-            ),
-            CommandPaletteItem::action(
-                "Toggle Full Screen",
-                "Enter or leave compositor-managed full screen",
-                "window fullscreen f11",
-                ACTION_TOGGLE_FULLSCREEN,
-            ),
-            CommandPaletteItem::action(
-                "Minimize Window",
-                "Minimize this window through the compositor",
-                "window hide",
-                ACTION_MINIMIZE_WINDOW,
-            ),
-            CommandPaletteItem::action(
-                "New Worklane",
-                "Create another worklane",
-                "workspace lane",
-                ACTION_NEW_WORKLANE,
-            ),
-            CommandPaletteItem::action(
-                "Split Right",
-                "Split the focused pane into a visible right column",
-                "pane column",
-                ACTION_SPLIT_PANE_RIGHT,
-            ),
-            CommandPaletteItem::action(
-                "Add Pane Right",
-                "Add a pane using the adaptive visible-split or full-width policy",
-                "pane column canvas adaptive",
-                ACTION_NEW_PANE_RIGHT,
-            ),
-            CommandPaletteItem::action(
-                source_ui::ADD_PANE_RIGHT_WITHOUT_RESIZING,
-                "Add a full-width pane without resizing existing columns",
-                "pane column canvas horizontal scroll",
-                ACTION_ADD_PANE_RIGHT,
-            ),
-            CommandPaletteItem::action(
-                "Add Pane Left",
-                "Add a full-width pane to the left of the focused column",
-                "pane column canvas",
-                ACTION_ADD_PANE_LEFT,
-            ),
-            CommandPaletteItem::action(
-                "New Pane Below",
-                "Split the focused pane vertically",
-                "pane split down",
-                ACTION_SPLIT_PANE_BELOW,
-            ),
-            CommandPaletteItem::action(
-                "Toggle Sidebar",
-                "Show or hide the worklane sidebar",
-                "navigation",
-                ACTION_TOGGLE_SIDEBAR,
-            ),
-            CommandPaletteItem::action(
-                source_ui::CLOSE_WORKLANE,
-                "Close the active worklane and all of its panes",
-                "workspace lane remove",
-                ACTION_CLOSE_ACTIVE_WORKLANE,
-            ),
-            CommandPaletteItem::action(
-                "Close Pane",
-                "Close the focused pane",
-                "terminal",
-                ACTION_CLOSE_PANE,
-            ),
-            CommandPaletteItem::action(
-                source_ui::UNDO_CLOSE_PANE,
-                "Reopen the most recently closed pane",
-                "terminal restore reopen",
-                ACTION_RESTORE_CLOSED_PANE,
-            ),
-            CommandPaletteItem::action(
-                "Navigate Back",
-                "Return to the previously focused pane",
-                "history browser previous",
-                ACTION_NAVIGATE_BACK,
-            ),
-            CommandPaletteItem::action(
-                "Navigate Forward",
-                "Move forward through pane focus history",
-                "history browser next",
-                ACTION_NAVIGATE_FORWARD,
-            ),
-            CommandPaletteItem::action(
-                "Focus Next Pane",
-                "Focus the next pane in sidebar order",
-                "navigation terminal",
-                ACTION_NEXT_PANE,
-            ),
-            CommandPaletteItem::action(
-                "Focus Previous Pane",
-                "Focus the previous pane in sidebar order",
-                "navigation terminal",
-                ACTION_PREVIOUS_PANE,
-            ),
-            CommandPaletteItem::action(
-                "Next Worklane",
-                "Focus the next worklane",
-                "navigation workspace lane",
-                ACTION_NEXT_WORKLANE,
-            ),
-            CommandPaletteItem::action(
-                "Previous Worklane",
-                "Focus the previous worklane",
-                "navigation workspace lane",
-                ACTION_PREVIOUS_WORKLANE,
-            ),
-            CommandPaletteItem::action(
-                "Move Worklane Up",
-                "Move the active worklane earlier in the sidebar",
-                "reorder workspace lane",
-                ACTION_MOVE_WORKLANE_UP,
-            ),
-            CommandPaletteItem::action(
-                "Move Worklane Down",
-                "Move the active worklane later in the sidebar",
-                "reorder workspace lane",
-                ACTION_MOVE_WORKLANE_DOWN,
-            ),
-            CommandPaletteItem::action(
-                "Move Pane Left",
-                "Move the focused pane one column left",
-                "reorder terminal column",
-                ACTION_MOVE_PANE_LEFT,
-            ),
-            CommandPaletteItem::action(
-                "Move Pane Right",
-                "Move the focused pane one column right",
-                "reorder terminal column",
-                ACTION_MOVE_PANE_RIGHT,
-            ),
-            CommandPaletteItem::action(
-                "Move Pane Up",
-                "Move the focused pane upward in its column",
-                "reorder terminal split",
-                ACTION_MOVE_PANE_UP,
-            ),
-            CommandPaletteItem::action(
-                "Move Pane Down",
-                "Move the focused pane downward in its column",
-                "reorder terminal split",
-                ACTION_MOVE_PANE_DOWN,
-            ),
-            CommandPaletteItem::action(
-                source_ui::MOVE_PANE_TO_NEW_WINDOW,
-                "Move the focused live terminal into a new Zentty window",
-                "pane terminal window detach",
-                ACTION_MOVE_PANE_TO_NEW_WINDOW,
-            ),
-            CommandPaletteItem::action(
-                "Focus Left Pane",
-                "Focus the neighboring column to the left",
-                "navigation terminal column",
-                ACTION_FOCUS_PANE_LEFT,
-            ),
-            CommandPaletteItem::action(
-                "Focus Right Pane",
-                "Focus the neighboring column to the right",
-                "navigation terminal column",
-                ACTION_FOCUS_PANE_RIGHT,
-            ),
-            CommandPaletteItem::action(
-                "Focus Up In Column",
-                "Focus the pane above in the current column",
-                "navigation terminal split",
-                ACTION_FOCUS_PANE_UP,
-            ),
-            CommandPaletteItem::action(
-                "Focus Down In Column",
-                "Focus the pane below in the current column",
-                "navigation terminal split",
-                ACTION_FOCUS_PANE_DOWN,
-            ),
-            CommandPaletteItem::action(
-                source_ui::RESIZE_PANE_LEFT,
-                "Move the focused pane's horizontal edge left by one terminal cell",
-                "layout pane resize keyboard",
-                ACTION_RESIZE_PANE_LEFT,
-            ),
-            CommandPaletteItem::action(
-                source_ui::RESIZE_PANE_RIGHT,
-                "Move the focused pane's horizontal edge right by one terminal cell",
-                "layout pane resize keyboard",
-                ACTION_RESIZE_PANE_RIGHT,
-            ),
-            CommandPaletteItem::action(
-                source_ui::RESIZE_PANE_UP,
-                "Move the preferred focused-pane divider up by one terminal cell",
-                "layout pane resize keyboard",
-                ACTION_RESIZE_PANE_UP,
-            ),
-            CommandPaletteItem::action(
-                source_ui::RESIZE_PANE_DOWN,
-                "Move the preferred focused-pane divider down by one terminal cell",
-                "layout pane resize keyboard",
-                ACTION_RESIZE_PANE_DOWN,
-            ),
-            CommandPaletteItem::action(
-                "Arrange Width: Full Width",
-                "Make every column one viewport wide",
-                "layout pane columns",
-                ACTION_ARRANGE_WIDTH_FULL,
-            ),
-            CommandPaletteItem::action(
-                "Arrange Width: Half Width",
-                "Fit two equal columns in the viewport",
-                "layout pane columns",
-                ACTION_ARRANGE_WIDTH_HALF,
-            ),
-            CommandPaletteItem::action(
-                "Arrange Width: Thirds",
-                "Fit three equal columns in the viewport",
-                "layout pane columns",
-                ACTION_ARRANGE_WIDTH_THIRDS,
-            ),
-            CommandPaletteItem::action(
-                "Arrange Width: Quarters",
-                "Fit four equal columns in the viewport",
-                "layout pane columns",
-                ACTION_ARRANGE_WIDTH_QUARTERS,
-            ),
-            CommandPaletteItem::action(
-                "Arrange Height: Full Height",
-                "Place one pane in each column",
-                "layout pane rows",
-                ACTION_ARRANGE_HEIGHT_FULL,
-            ),
-            CommandPaletteItem::action(
-                "Arrange Height: 2 Per Column",
-                "Reflow panes two per column",
-                "layout pane rows",
-                ACTION_ARRANGE_HEIGHT_TWO,
-            ),
-            CommandPaletteItem::action(
-                "Arrange Height: 3 Per Column",
-                "Reflow panes three per column",
-                "layout pane rows",
-                ACTION_ARRANGE_HEIGHT_THREE,
-            ),
-            CommandPaletteItem::action(
-                "Arrange Height: 4 Per Column",
-                "Reflow panes four per column",
-                "layout pane rows",
-                ACTION_ARRANGE_HEIGHT_FOUR,
-            ),
-            CommandPaletteItem::action(
-                "Arrange Width: Golden — Focus Wide",
-                "Give the focused column the larger golden share",
-                "layout pane golden ratio",
-                ACTION_ARRANGE_GOLDEN_WIDE,
-            ),
-            CommandPaletteItem::action(
-                "Arrange Width: Golden — Focus Narrow",
-                "Give the focused column the smaller golden share",
-                "layout pane golden ratio",
-                ACTION_ARRANGE_GOLDEN_NARROW,
-            ),
-            CommandPaletteItem::action(
-                "Arrange Height: Golden — Focus Tall",
-                "Give the focused pane the larger golden share",
-                "layout pane golden ratio",
-                ACTION_ARRANGE_GOLDEN_TALL,
-            ),
-            CommandPaletteItem::action(
-                "Arrange Height: Golden — Focus Short",
-                "Give the focused pane the smaller golden share",
-                "layout pane golden ratio",
-                ACTION_ARRANGE_GOLDEN_SHORT,
-            ),
-            CommandPaletteItem::action(
-                "Reset Pane Layout",
-                "Restore default column widths and equal pane heights",
-                "layout pane reset",
-                ACTION_RESET_PANE_LAYOUT,
-            ),
-            CommandPaletteItem::action(
-                "Cycle Worklane Color",
-                "Choose the next worklane identity color",
-                "appearance workspace lane",
-                ACTION_CYCLE_WORKLANE_COLOR,
-            ),
-            CommandPaletteItem::action(
-                "Global Find",
-                "Search across every live pane in this window",
-                "search all panes worklanes",
-                ACTION_GLOBAL_FIND,
-            ),
-            CommandPaletteItem::action(
-                "Find",
-                "Search the focused terminal's real scrollback",
-                "search pane terminal",
-                ACTION_FIND,
-            ),
-            CommandPaletteItem::action(
-                "Use Selection for Find",
-                "Search for the focused terminal selection",
-                "search pane selection terminal",
-                ACTION_USE_SELECTION_FOR_FIND,
-            ),
-            CommandPaletteItem::action(
-                "Find Next",
-                "Select the next terminal search match",
-                "search pane navigation",
-                ACTION_FIND_NEXT,
-            ),
-            CommandPaletteItem::action(
-                "Find Previous",
-                "Select the previous terminal search match",
-                "search pane navigation",
-                ACTION_FIND_PREVIOUS,
-            ),
-            CommandPaletteItem::action(
-                source_ui::COPY,
-                "Copy the focused terminal selection",
-                "clipboard selection default",
-                ACTION_COPY,
-            ),
-            CommandPaletteItem::action(
-                "Clean Copy",
-                "Copy the selection after conservative terminal-text cleanup",
-                "clipboard selection format ansi prompt url path",
-                ACTION_CLEAN_COPY,
-            ),
-            CommandPaletteItem::action(
-                "Copy Raw",
-                "Copy the selection without Zentty transformations",
-                "clipboard selection original escape hatch",
-                ACTION_COPY_RAW,
-            ),
-            CommandPaletteItem::action(
-                "Copy as Markdown",
-                "Reflow a Markdown selection while preserving its structure",
-                "clipboard selection markdown format",
-                ACTION_COPY_AS_MARKDOWN,
-            ),
-            CommandPaletteItem::action(
-                source_ui::SELECT_ALL,
-                "Select all text in the focused terminal",
-                "terminal selection clipboard",
-                ACTION_SELECT_ALL,
-            ),
-        ]);
-        items
+            .collect()
     }
 
     fn perform_focused_binding_action(&self, action: &str, binding: &str) {
@@ -6091,45 +5675,15 @@ fn default_window_recipe(id: &str, working_directory: Option<String>) -> WindowR
 #[cfg(test)]
 mod allocation_tests {
     use super::{
-        ACTION_ADD_PANE_LEFT, ACTION_ADD_PANE_RIGHT, ACTION_NEW_PANE_RIGHT,
-        ACTION_SPLIT_PANE_RIGHT, ApplicationShell, TerminalGesture, UserActivationClock,
-        bounded_pane_viewport_height, codex_terminal_gesture, default_window_recipe,
-        focus_follow_should_apply, is_close_window_shortcut, model_heights_to_pixels,
-        pane_content_width, pane_layout_can_overflow_horizontally,
+        TerminalGesture, UserActivationClock, bounded_pane_viewport_height, codex_terminal_gesture,
+        default_window_recipe, focus_follow_should_apply, is_close_window_shortcut,
+        model_heights_to_pixels, pane_content_width, pane_layout_can_overflow_horizontally,
         pane_width_allocation_is_settled, settings_refresh_section, snapshot_window_frame,
         validated_window_size,
     };
     use crate::sidebar_visibility::Mode as SidebarVisibilityMode;
     use gtk::gdk;
-    use zentty_core::{CommandPaletteTarget, WindowFrame};
-
-    #[test]
-    fn pane_palette_exposes_adaptive_split_and_non_resizing_source_commands() {
-        let items = ApplicationShell::command_palette_action_items();
-        let item = |title: &str| items.iter().find(|item| item.title == title);
-
-        assert_eq!(
-            item("Split Right").map(|item| item.target.clone()),
-            Some(CommandPaletteTarget::Action(ACTION_SPLIT_PANE_RIGHT)),
-        );
-        assert_eq!(
-            item("Add Pane Right").map(|item| item.target.clone()),
-            Some(CommandPaletteTarget::Action(ACTION_NEW_PANE_RIGHT)),
-        );
-        assert!(item("Add Pane Right").is_some_and(|item| item.subtitle.contains("adaptive")));
-        assert_eq!(
-            item("Add Pane Right Without Resizing").map(|item| item.target.clone()),
-            Some(CommandPaletteTarget::Action(ACTION_ADD_PANE_RIGHT)),
-        );
-        assert!(
-            item("Add Pane Right Without Resizing")
-                .is_some_and(|item| item.subtitle.contains("without resizing"))
-        );
-        assert_eq!(
-            item("Add Pane Left").map(|item| item.target.clone()),
-            Some(CommandPaletteTarget::Action(ACTION_ADD_PANE_LEFT)),
-        );
-    }
+    use zentty_core::WindowFrame;
 
     #[test]
     fn pointer_focus_requires_current_generation_active_window_and_no_transient_ui() {

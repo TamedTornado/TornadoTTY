@@ -188,10 +188,10 @@
       "origin": "PORT_PARITY",
       "user_impact": "Many Zentty workflows would be present but undiscoverable or unreachable on Linux.",
       "linux_owner_issue": 7,
-      "implementation_status": "PARTIAL",
-      "focused_tests": ["crates/zentty-core/src/command_palette.rs"],
+      "implementation_status": "IMPLEMENTED",
+      "focused_tests": ["crates/zentty-core/src/command_palette.rs", "crates/zentty-linux/src/application_shell/action_router.rs"],
       "product_scenarios": ["linux/tests/rust-source-ux-x11"],
-      "test_plan": "Port deterministic result resolution, then open the real palette and invoke worklane, pane, and agent commands through named GTK actions.",
+      "test_plan": "The ActionRouter catalog owns ordinary palette metadata, schema, availability, and explicit contextual/excluded disposition. Closed-world tests reject missing actions, wrong parameter schemas, duplicate presentation, and enabled-state drift. The existing nested-X11 source-UX actor physically opens the real palette over a Ghostty PTY, invokes pane and ordinary actions through named GTK actions, and proves a live-disabled action cannot execute.",
       "alternative_or_blocker": null
     },
     {

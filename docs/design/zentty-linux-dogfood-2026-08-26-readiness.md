@@ -52,14 +52,21 @@ only CPU, memory, process-tree, and interaction behavior already present in the
 product. The two qualification-matrix `NOT_IMPLEMENTED` cells owned by GH-65
 remain unchanged.
 
-`commands.palette-routing` remains honestly `PARTIAL`. The palette is usable
+**Superseded 2026-08-27 by GH-125:** the paragraph and inventory totals below
+record the 2026-08-26 pre-repair state. The authoritative inventory now marks
+`commands.palette-routing` `IMPLEMENTED`; see
+`zentty-linux-dogfood-2026-08-27-command-catalog.md` for the deleted duplicate,
+closed-world tests, and real-product receipt.
+
+At the time of this readiness snapshot, `commands.palette-routing` remained
+honestly `PARTIAL`. The palette was usable
 and routes many real workspace, pane, settings, task, server, Git/review,
 Open-With, and agent-fleet actions, but `command_palette_action_items` is still
 an explicitly interim hand-maintained registry rather than the intended single
 source command/availability registry. That is a real closeout item, not a
 reason to postpone daily use.
 
-After reconciliation the 60-entry inventory contains:
+At that snapshot, the 60-entry inventory contained:
 
 - 47 `IMPLEMENTED`;
 - 2 `PARTIAL` (`commands.palette-routing` initial-release and `agent.copilot`
@@ -72,9 +79,10 @@ After reconciliation the 60-entry inventory contains:
 - `linux/tests/feature-inventory`: PASS.
 - Machine summary: 60 entries, 47 implemented, 2 partial, 11 not implemented.
 
-The runner test now pins the reconciled entries individually, verifies that
+The runner test at that snapshot pinned the reconciled entries individually,
+and its exact palette assertion was superseded by GH-125. It verified that
 performance diagnostics are not smuggled into Ghostty-foundation completion,
-verifies Task Manager's network exclusion and GH-65 ownership, and requires the
+Task Manager's network exclusion and GH-65 ownership, and the requirement that
 palette to remain partial until its registry is genuinely consolidated.
 
 No full Linux qualification was run or claimed for this documentation/status

@@ -109,6 +109,48 @@ impl CommandPaletteView {
         eprintln!("zentty-linux: command-palette=hidden");
     }
 
+    pub(crate) fn handle_navigation_key(&self, key: gtk::gdk::Key, event_time: u32) -> bool {
+        if let Some(handler) = self.user_activation.borrow().as_ref() {
+            handler(event_time);
+        }
+        match key {
+            gtk::gdk::Key::Escape => {
+                let _ = self
+                    .root
+                    .activate_action("workspace.dismiss-command-palette", None);
+                true
+            }
+            gtk::gdk::Key::Down => {
+                if let Some(row) = self.first_result_row() {
+                    self.list.select_row(Some(&row));
+                    row.grab_focus();
+                }
+                true
+            }
+            gtk::gdk::Key::Return | gtk::gdk::Key::KP_Enter => {
+                // Filtering replaces every row. GTK can briefly retain a
+                // detached selected-row handle, so Enter must resolve the
+                // first currently rendered result rather than execute a stale
+                // pre-filter selection.
+                let row = self.first_result_row();
+                if let Some(button) = row
+                    .and_then(|row| row.child())
+                    .and_then(|child| child.downcast::<gtk::Button>().ok())
+                {
+                    if button.is_sensitive() {
+                        button.emit_clicked();
+                    } else {
+                        eprintln!(
+                            "zentty-linux: command-palette=activation-blocked reason=disabled"
+                        );
+                    }
+                }
+                true
+            }
+            _ => false,
+        }
+    }
+
     fn install_handlers(&self) {
         let changed = self.clone();
         self.entry
@@ -137,48 +179,6 @@ impl CommandPaletteView {
             }
         });
         self.root.add_controller(outside);
-        let key = gtk::EventControllerKey::new();
-        key.set_propagation_phase(gtk::PropagationPhase::Capture);
-        let keyed = self.clone();
-        key.connect_key_pressed(move |controller, key, _, _| {
-            if let Some(handler) = keyed.user_activation.borrow().as_ref() {
-                let event_time = controller
-                    .current_event()
-                    .map_or_else(|| controller.current_event_time(), |event| event.time());
-                handler(event_time);
-            }
-            match key {
-                gtk::gdk::Key::Escape => {
-                    let _ = keyed
-                        .root
-                        .activate_action("workspace.dismiss-command-palette", None);
-                    glib::Propagation::Stop
-                }
-                gtk::gdk::Key::Down => {
-                    if let Some(row) = keyed.first_result_row() {
-                        keyed.list.select_row(Some(&row));
-                        row.grab_focus();
-                    }
-                    glib::Propagation::Stop
-                }
-                gtk::gdk::Key::Return | gtk::gdk::Key::KP_Enter => {
-                    // Filtering replaces every row. GTK can briefly retain a
-                    // detached selected-row handle, so Enter must resolve the
-                    // first currently rendered result rather than execute a
-                    // stale pre-filter selection.
-                    let row = keyed.first_result_row();
-                    if let Some(button) = row
-                        .and_then(|row| row.child())
-                        .and_then(|child| child.downcast::<gtk::Button>().ok())
-                    {
-                        button.emit_clicked();
-                    }
-                    glib::Propagation::Stop
-                }
-                _ => glib::Propagation::Proceed,
-            }
-        });
-        self.entry.add_controller(key);
     }
 
     fn render(&self, query: &str) {
@@ -233,8 +233,8 @@ impl CommandPaletteView {
 
     fn append_item(&self, section_title: &str, item: &CommandPaletteItem) {
         eprintln!(
-            "zentty-linux: command-palette-item section={section_title:?} title={:?}",
-            item.title
+            "zentty-linux: command-palette-item section={section_title:?} title={:?} enabled={}",
+            item.title, item.enabled
         );
         let row = gtk::ListBoxRow::new();
         let button = gtk::Button::new();

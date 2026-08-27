@@ -4,7 +4,9 @@ use std::rc::Rc;
 use gtk::glib;
 use gtk::prelude::*;
 use gtk::{gio, prelude::ActionMapExt};
-use zentty_core::WorklaneColor;
+use zentty_core::{CommandPaletteItem, CommandPaletteTarget, WorklaneColor};
+
+use crate::source_ui;
 
 use super::ApplicationShell;
 
@@ -41,6 +43,37 @@ pub(super) enum Availability {
     MultipleWorkspacePanes,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) struct PaletteMetadata {
+    pub(super) title: &'static str,
+    pub(super) subtitle: &'static str,
+    pub(super) keywords: &'static str,
+    pub(super) recent_eligible: bool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum PaletteDisposition {
+    Ordinary(PaletteMetadata),
+    Contextual(&'static str),
+    Excluded(&'static str),
+}
+
+impl PaletteDisposition {
+    pub(super) const fn ordinary(
+        title: &'static str,
+        subtitle: &'static str,
+        keywords: &'static str,
+        recent_eligible: bool,
+    ) -> Self {
+        Self::Ordinary(PaletteMetadata {
+            title,
+            subtitle,
+            keywords,
+            recent_eligible,
+        })
+    }
+}
+
 impl Availability {
     pub(super) const fn enabled(
         self,
@@ -62,21 +95,62 @@ pub(super) struct ActionSpec {
     pub(super) name: &'static str,
     pub(super) parameter: ParameterSchema,
     pub(super) availability: Availability,
+    pub(super) palette: PaletteDisposition,
 }
 
-macro_rules! action {
-    ($constant:ident, $name:literal, $parameter:ident) => {
+macro_rules! ordinary_action {
+    ($constant:ident, $name:literal, $parameter:ident, $title:expr, $subtitle:literal, $keywords:literal, $recent:literal) => {
         ActionSpec {
             name: $name,
             parameter: ParameterSchema::$parameter,
             availability: Availability::Always,
+            palette: PaletteDisposition::ordinary($title, $subtitle, $keywords, $recent),
         }
     };
-    ($constant:ident, $name:literal, $parameter:ident, $availability:ident) => {
+    ($constant:ident, $name:literal, $parameter:ident, $availability:ident, $title:expr, $subtitle:literal, $keywords:literal, $recent:literal) => {
         ActionSpec {
             name: $name,
             parameter: ParameterSchema::$parameter,
             availability: Availability::$availability,
+            palette: PaletteDisposition::ordinary($title, $subtitle, $keywords, $recent),
+        }
+    };
+}
+
+macro_rules! contextual_action {
+    ($constant:ident, $name:literal, $parameter:ident, $owner:literal) => {
+        ActionSpec {
+            name: $name,
+            parameter: ParameterSchema::$parameter,
+            availability: Availability::Always,
+            palette: PaletteDisposition::Contextual($owner),
+        }
+    };
+    ($constant:ident, $name:literal, $parameter:ident, $availability:ident, $owner:literal) => {
+        ActionSpec {
+            name: $name,
+            parameter: ParameterSchema::$parameter,
+            availability: Availability::$availability,
+            palette: PaletteDisposition::Contextual($owner),
+        }
+    };
+}
+
+macro_rules! excluded_action {
+    ($constant:ident, $name:literal, $parameter:ident, $reason:literal) => {
+        ActionSpec {
+            name: $name,
+            parameter: ParameterSchema::$parameter,
+            availability: Availability::Always,
+            palette: PaletteDisposition::Excluded($reason),
+        }
+    };
+    ($constant:ident, $name:literal, $parameter:ident, $availability:ident, $reason:literal) => {
+        ActionSpec {
+            name: $name,
+            parameter: ParameterSchema::$parameter,
+            availability: Availability::$availability,
+            palette: PaletteDisposition::Excluded($reason),
         }
     };
 }
@@ -205,225 +279,974 @@ pub(super) const ACTION_EXPORT_TEMPLATE: &str = "export-template";
 pub(super) const ACTION_EDIT_TEMPLATE: &str = "edit-template";
 
 pub(super) const ACTION_SPECS: &[ActionSpec] = &[
-    action!(ACTION_NEW_WINDOW, "new-window", None),
-    action!(ACTION_CLOSE_WINDOW, "close-window", None),
-    action!(ACTION_TOGGLE_FULLSCREEN, "toggle-fullscreen", None),
-    action!(ACTION_MINIMIZE_WINDOW, "minimize-window", None),
-    action!(ACTION_TOGGLE_SIDEBAR, "toggle-sidebar", None),
-    action!(ACTION_SHOW_COMMAND_PALETTE, "show-command-palette", None),
-    action!(ACTION_OPEN_SETTINGS, "open-settings", None),
-    action!(ACTION_SHOW_ABOUT, "show-about", None),
-    action!(
+    ordinary_action!(
+        ACTION_NEW_WINDOW,
+        "new-window",
+        None,
+        "New Window",
+        "Create another Zentty window",
+        "application window",
+        true
+    ),
+    ordinary_action!(
+        ACTION_CLOSE_WINDOW,
+        "close-window",
+        None,
+        "Close Window",
+        "Close this Zentty window",
+        "application window",
+        true
+    ),
+    ordinary_action!(
+        ACTION_TOGGLE_FULLSCREEN,
+        "toggle-fullscreen",
+        None,
+        "Toggle Full Screen",
+        "Enter or leave compositor-managed full screen",
+        "window fullscreen f11",
+        true
+    ),
+    ordinary_action!(
+        ACTION_MINIMIZE_WINDOW,
+        "minimize-window",
+        None,
+        "Minimize Window",
+        "Minimize this window through the compositor",
+        "window hide",
+        true
+    ),
+    ordinary_action!(
+        ACTION_TOGGLE_SIDEBAR,
+        "toggle-sidebar",
+        None,
+        "Toggle Sidebar",
+        "Show or hide the worklane sidebar",
+        "navigation",
+        true
+    ),
+    excluded_action!(
+        ACTION_SHOW_COMMAND_PALETTE,
+        "show-command-palette",
+        None,
+        "the open palette cannot invoke itself"
+    ),
+    ordinary_action!(
+        ACTION_OPEN_SETTINGS,
+        "open-settings",
+        None,
+        "Settings",
+        "Open Zentty settings",
+        "preferences configuration general",
+        true
+    ),
+    ordinary_action!(
+        ACTION_SHOW_ABOUT,
+        "show-about",
+        None,
+        "About Zentty",
+        "Build identity, documentation, source, and third-party licenses",
+        "version commit license privacy trust",
+        true
+    ),
+    contextual_action!(
         ACTION_OPEN_SETTINGS_SECTION,
         "open-settings-section",
-        String
+        String,
+        "settings navigation provider"
     ),
-    action!(ACTION_RELOAD_CONFIG, "reload-config", None),
-    action!(
+    ordinary_action!(
+        ACTION_RELOAD_CONFIG,
+        "reload-config",
+        None,
+        "Reload Configuration",
+        "Reload Ghostty configuration in every existing terminal",
+        "settings config ghostty refresh",
+        true
+    ),
+    ordinary_action!(
         ACTION_TOGGLE_LIGHT_DARK_THEME,
         "toggle-light-dark-theme",
-        None
+        None,
+        "Toggle Light/Dark Theme",
+        "Switch between the remembered light and dark themes",
+        "appearance colors automatic",
+        true
     ),
-    action!(ACTION_USE_DARK_THEME, "use-dark-theme", None),
-    action!(ACTION_USE_LIGHT_THEME, "use-light-theme", None),
-    action!(ACTION_USE_AUTO_THEME, "use-auto-theme", None),
-    action!(ACTION_OPEN_BOOKMARKS, "open-bookmarks", None),
-    action!(ACTION_JUMP_LATEST_ATTENTION, "jump-latest-attention", None),
-    action!(
+    ordinary_action!(
+        ACTION_USE_DARK_THEME,
+        "use-dark-theme",
+        None,
+        "Use Dark Theme",
+        "Use the remembered dark terminal theme",
+        "appearance colors",
+        true
+    ),
+    ordinary_action!(
+        ACTION_USE_LIGHT_THEME,
+        "use-light-theme",
+        None,
+        "Use Light Theme",
+        "Use the remembered light terminal theme",
+        "appearance colors",
+        true
+    ),
+    ordinary_action!(
+        ACTION_USE_AUTO_THEME,
+        "use-auto-theme",
+        None,
+        "Use Auto Theme",
+        "Follow the Linux desktop light or dark appearance",
+        "appearance colors automatic system",
+        true
+    ),
+    ordinary_action!(
+        ACTION_OPEN_BOOKMARKS,
+        "open-bookmarks",
+        None,
+        "Show Bookmarks & Presets",
+        "Open the bookmarks and presets browser",
+        "bookmark preset workspace template",
+        true
+    ),
+    ordinary_action!(
+        ACTION_JUMP_LATEST_ATTENTION,
+        "jump-latest-attention",
+        None,
+        "Jump to Latest Attention Item",
+        "Focus the newest unresolved agent notification",
+        "notification agent needs input approval",
+        true
+    ),
+    contextual_action!(
         ACTION_ACTIVATE_ATTENTION,
         "activate-attention",
-        StringTriple
+        StringTriple,
+        "attention inbox provider"
     ),
-    action!(ACTION_DISMISS_ATTENTION, "dismiss-attention", U64),
-    action!(ACTION_CLEAR_ATTENTION, "clear-attention", None),
-    action!(
+    contextual_action!(
+        ACTION_DISMISS_ATTENTION,
+        "dismiss-attention",
+        U64,
+        "attention inbox provider"
+    ),
+    excluded_action!(
+        ACTION_CLEAR_ATTENTION,
+        "clear-attention",
+        None,
+        "attention inbox bulk control only"
+    ),
+    contextual_action!(
         ACTION_ACTIVATE_FLEET_PANE,
         "activate-fleet-pane",
-        StringTriple
+        StringTriple,
+        "agent fleet provider"
     ),
-    action!(ACTION_SHOW_AGENT_FLEET, "show-agent-fleet", None),
-    action!(ACTION_QUIT_APPLICATION, "quit-application", None),
-    action!(ACTION_NEW_WORKLANE, "new-worklane", None),
-    action!(ACTION_SELECT_WORKLANE, "select-worklane", String),
-    action!(ACTION_SPLIT_PANE_RIGHT, "split-pane-right", None),
-    action!(ACTION_NEW_PANE_RIGHT, "new-pane-right", None),
-    action!(ACTION_ADD_PANE_RIGHT, "add-pane-right", None),
-    action!(ACTION_ADD_PANE_LEFT, "add-pane-left", None),
-    action!(ACTION_SPLIT_PANE_BELOW, "split-pane-below", None),
-    action!(ACTION_CLOSE_PANE, "close-pane", None),
-    action!(ACTION_RENAME_WORKLANE, "rename-worklane", StringPair),
-    action!(ACTION_RENAME_PANE, "rename-pane", StringPair),
-    action!(
+    ordinary_action!(
+        ACTION_SHOW_AGENT_FLEET,
+        "show-agent-fleet",
+        None,
+        "Agent Status",
+        "Inspect agent activity across every Zentty window",
+        "fleet waiting running idle approval",
+        true
+    ),
+    excluded_action!(
+        ACTION_QUIT_APPLICATION,
+        "quit-application",
+        None,
+        "destructive application-global chrome action"
+    ),
+    ordinary_action!(
+        ACTION_NEW_WORKLANE,
+        "new-worklane",
+        None,
+        "New Worklane",
+        "Create another worklane",
+        "workspace lane",
+        true
+    ),
+    contextual_action!(
+        ACTION_SELECT_WORKLANE,
+        "select-worklane",
+        String,
+        "live pane/worklane provider"
+    ),
+    ordinary_action!(
+        ACTION_SPLIT_PANE_RIGHT,
+        "split-pane-right",
+        None,
+        "Split Right",
+        "Split the focused pane into a visible right column",
+        "pane column",
+        true
+    ),
+    ordinary_action!(
+        ACTION_NEW_PANE_RIGHT,
+        "new-pane-right",
+        None,
+        "Add Pane Right",
+        "Add a pane using the adaptive visible-split or full-width policy",
+        "pane column canvas adaptive",
+        true
+    ),
+    ordinary_action!(
+        ACTION_ADD_PANE_RIGHT,
+        "add-pane-right",
+        None,
+        source_ui::ADD_PANE_RIGHT_WITHOUT_RESIZING,
+        "Add a full-width pane without resizing existing columns",
+        "pane column canvas horizontal scroll",
+        true
+    ),
+    ordinary_action!(
+        ACTION_ADD_PANE_LEFT,
+        "add-pane-left",
+        None,
+        "Add Pane Left",
+        "Add a full-width pane to the left of the focused column",
+        "pane column canvas",
+        true
+    ),
+    ordinary_action!(
+        ACTION_SPLIT_PANE_BELOW,
+        "split-pane-below",
+        None,
+        "New Pane Below",
+        "Split the focused pane vertically",
+        "pane split down",
+        true
+    ),
+    ordinary_action!(
+        ACTION_CLOSE_PANE,
+        "close-pane",
+        None,
+        "Close Pane",
+        "Close the focused pane",
+        "terminal",
+        true
+    ),
+    contextual_action!(
+        ACTION_RENAME_WORKLANE,
+        "rename-worklane",
+        StringPair,
+        "worklane context menu"
+    ),
+    contextual_action!(
+        ACTION_RENAME_PANE,
+        "rename-pane",
+        StringPair,
+        "pane context menu"
+    ),
+    ordinary_action!(
         ACTION_RENAME_CURRENT_WORKLANE,
         "rename-current-worklane",
-        None
+        None,
+        "Rename Worklane…",
+        "Rename the active worklane",
+        "workspace lane title label",
+        true
     ),
-    action!(ACTION_RENAME_CURRENT_PANE, "rename-current-pane", None),
-    action!(ACTION_COPY_PANE_PATH, "copy-pane-path", None),
-    action!(ACTION_DUPLICATE_PANE, "duplicate-pane", None),
-    action!(ACTION_CYCLE_WORKLANE_COLOR, "cycle-worklane-color", None),
-    action!(ACTION_SET_WORKLANE_COLOR, "set-worklane-color", StringPair),
-    action!(ACTION_CLOSE_WORKLANE, "close-worklane", String),
-    action!(ACTION_CLOSE_ACTIVE_WORKLANE, "close-active-worklane", None),
-    action!(ACTION_MOVE_WORKLANE, "move-worklane", StringPair),
-    action!(ACTION_REORDER_WORKLANE, "reorder-worklane", StringPair),
-    action!(ACTION_MOVE_WORKLANE_UP, "move-worklane-up", None),
-    action!(ACTION_MOVE_WORKLANE_DOWN, "move-worklane-down", None),
-    action!(ACTION_MOVE_PANE_LEFT, "move-pane-left", None),
-    action!(ACTION_MOVE_PANE_RIGHT, "move-pane-right", None),
-    action!(ACTION_MOVE_PANE_UP, "move-pane-up", None),
-    action!(ACTION_MOVE_PANE_DOWN, "move-pane-down", None),
-    action!(
+    ordinary_action!(
+        ACTION_RENAME_CURRENT_PANE,
+        "rename-current-pane",
+        None,
+        "Rename Pane…",
+        "Rename the focused pane",
+        "terminal title label",
+        true
+    ),
+    ordinary_action!(
+        ACTION_COPY_PANE_PATH,
+        "copy-pane-path",
+        None,
+        "Copy Path",
+        "Copy the focused pane working directory",
+        "clipboard directory cwd",
+        true
+    ),
+    ordinary_action!(
+        ACTION_DUPLICATE_PANE,
+        "duplicate-pane",
+        None,
+        "Duplicate This Pane",
+        "Create another pane with the same launch context",
+        "terminal copy clone",
+        true
+    ),
+    ordinary_action!(
+        ACTION_CYCLE_WORKLANE_COLOR,
+        "cycle-worklane-color",
+        None,
+        "Cycle Worklane Color",
+        "Choose the next worklane identity color",
+        "appearance workspace lane",
+        true
+    ),
+    contextual_action!(
+        ACTION_SET_WORKLANE_COLOR,
+        "set-worklane-color",
+        StringPair,
+        "worklane color menu"
+    ),
+    contextual_action!(
+        ACTION_CLOSE_WORKLANE,
+        "close-worklane",
+        String,
+        "worklane context menu"
+    ),
+    ordinary_action!(
+        ACTION_CLOSE_ACTIVE_WORKLANE,
+        "close-active-worklane",
+        None,
+        source_ui::CLOSE_WORKLANE,
+        "Close the active worklane and all of its panes",
+        "workspace lane remove",
+        true
+    ),
+    contextual_action!(
+        ACTION_MOVE_WORKLANE,
+        "move-worklane",
+        StringPair,
+        "worklane drag provider"
+    ),
+    contextual_action!(
+        ACTION_REORDER_WORKLANE,
+        "reorder-worklane",
+        StringPair,
+        "worklane reorder controls"
+    ),
+    ordinary_action!(
+        ACTION_MOVE_WORKLANE_UP,
+        "move-worklane-up",
+        None,
+        "Move Worklane Up",
+        "Move the active worklane earlier in the sidebar",
+        "reorder workspace lane",
+        true
+    ),
+    ordinary_action!(
+        ACTION_MOVE_WORKLANE_DOWN,
+        "move-worklane-down",
+        None,
+        "Move Worklane Down",
+        "Move the active worklane later in the sidebar",
+        "reorder workspace lane",
+        true
+    ),
+    ordinary_action!(
+        ACTION_MOVE_PANE_LEFT,
+        "move-pane-left",
+        None,
+        "Move Pane Left",
+        "Move the focused pane one column left",
+        "reorder terminal column",
+        true
+    ),
+    ordinary_action!(
+        ACTION_MOVE_PANE_RIGHT,
+        "move-pane-right",
+        None,
+        "Move Pane Right",
+        "Move the focused pane one column right",
+        "reorder terminal column",
+        true
+    ),
+    ordinary_action!(
+        ACTION_MOVE_PANE_UP,
+        "move-pane-up",
+        None,
+        "Move Pane Up",
+        "Move the focused pane upward in its column",
+        "reorder terminal split",
+        true
+    ),
+    ordinary_action!(
+        ACTION_MOVE_PANE_DOWN,
+        "move-pane-down",
+        None,
+        "Move Pane Down",
+        "Move the focused pane downward in its column",
+        "reorder terminal split",
+        true
+    ),
+    contextual_action!(
         ACTION_MOVE_PANE_TO_WORKLANE,
         "move-pane-to-worklane",
-        String
+        String,
+        "pane destination provider"
     ),
-    action!(
+    contextual_action!(
         ACTION_MOVE_PANE_TO_WINDOW_WORKLANE,
         "move-pane-to-window-worklane",
-        StringPair
+        StringPair,
+        "cross-window pane destination provider"
     ),
-    action!(
+    ordinary_action!(
         ACTION_MOVE_PANE_TO_NEW_WORKLANE,
         "move-pane-to-new-worklane",
         None,
-        MultipleWorkspacePanes
+        MultipleWorkspacePanes,
+        "Move Pane to New Worklane",
+        "Move the focused pane into a new worklane",
+        "pane terminal workspace detach",
+        true
     ),
-    action!(
+    ordinary_action!(
         ACTION_MOVE_PANE_TO_NEW_WINDOW,
         "move-pane-to-new-window",
         None,
-        MultipleWorkspacePanes
+        MultipleWorkspacePanes,
+        source_ui::MOVE_PANE_TO_NEW_WINDOW,
+        "Move the focused live terminal into a new Zentty window",
+        "pane terminal window detach",
+        true
     ),
-    action!(ACTION_SELECT_PANE, "select-pane", StringPair),
-    action!(ACTION_NAVIGATE_BACK, "navigate-back", None),
-    action!(ACTION_NAVIGATE_FORWARD, "navigate-forward", None),
-    action!(ACTION_NEXT_PANE, "next-pane", None),
-    action!(ACTION_PREVIOUS_PANE, "previous-pane", None),
-    action!(ACTION_NEXT_WORKLANE, "next-worklane", None),
-    action!(ACTION_PREVIOUS_WORKLANE, "previous-worklane", None),
-    action!(
+    contextual_action!(
+        ACTION_SELECT_PANE,
+        "select-pane",
+        StringPair,
+        "live pane/worklane provider"
+    ),
+    ordinary_action!(
+        ACTION_NAVIGATE_BACK,
+        "navigate-back",
+        None,
+        "Navigate Back",
+        "Return to the previously focused pane",
+        "history browser previous",
+        true
+    ),
+    ordinary_action!(
+        ACTION_NAVIGATE_FORWARD,
+        "navigate-forward",
+        None,
+        "Navigate Forward",
+        "Move forward through pane focus history",
+        "history browser next",
+        true
+    ),
+    ordinary_action!(
+        ACTION_NEXT_PANE,
+        "next-pane",
+        None,
+        "Focus Next Pane",
+        "Focus the next pane in sidebar order",
+        "navigation terminal",
+        true
+    ),
+    ordinary_action!(
+        ACTION_PREVIOUS_PANE,
+        "previous-pane",
+        None,
+        "Focus Previous Pane",
+        "Focus the previous pane in sidebar order",
+        "navigation terminal",
+        true
+    ),
+    ordinary_action!(
+        ACTION_NEXT_WORKLANE,
+        "next-worklane",
+        None,
+        "Next Worklane",
+        "Focus the next worklane",
+        "navigation workspace lane",
+        true
+    ),
+    ordinary_action!(
+        ACTION_PREVIOUS_WORKLANE,
+        "previous-worklane",
+        None,
+        "Previous Worklane",
+        "Focus the previous worklane",
+        "navigation workspace lane",
+        true
+    ),
+    excluded_action!(
         ACTION_DISMISS_COMMAND_PALETTE,
         "dismiss-command-palette",
-        None
+        None,
+        "palette lifecycle control"
     ),
-    action!(ACTION_FIND, "find", None),
-    action!(
+    ordinary_action!(
+        ACTION_FIND,
+        "find",
+        None,
+        "Find",
+        "Search the focused terminal's real scrollback",
+        "search pane terminal",
+        true
+    ),
+    ordinary_action!(
         ACTION_USE_SELECTION_FOR_FIND,
         "use-selection-for-find",
-        None
+        None,
+        "Use Selection for Find",
+        "Search for the focused terminal selection",
+        "search pane selection terminal",
+        true
     ),
-    action!(ACTION_FIND_NEXT, "find-next", None),
-    action!(ACTION_FIND_PREVIOUS, "find-previous", None),
-    action!(ACTION_COPY, "copy", None),
-    action!(ACTION_CLEAN_COPY, "clean-copy", None),
-    action!(ACTION_COPY_RAW, "copy-raw", None),
-    action!(ACTION_COPY_AS_MARKDOWN, "copy-as-markdown", None),
-    action!(ACTION_SELECT_ALL, "select-all", None),
-    action!(ACTION_GLOBAL_FIND, "global-find", None),
-    action!(ACTION_CLEAR_GLOBAL_FIND, "clear-global-find", None),
-    action!(ACTION_GLOBAL_FIND_NEXT, "global-find-next", None),
-    action!(ACTION_GLOBAL_FIND_PREVIOUS, "global-find-previous", None),
-    action!(ACTION_FOCUS_PANE_LEFT, "focus-pane-left", None),
-    action!(ACTION_FOCUS_PANE_RIGHT, "focus-pane-right", None),
-    action!(ACTION_FOCUS_PANE_UP, "focus-pane-up", None),
-    action!(ACTION_FOCUS_PANE_DOWN, "focus-pane-down", None),
-    action!(
+    ordinary_action!(
+        ACTION_FIND_NEXT,
+        "find-next",
+        None,
+        "Find Next",
+        "Select the next terminal search match",
+        "search pane navigation",
+        true
+    ),
+    ordinary_action!(
+        ACTION_FIND_PREVIOUS,
+        "find-previous",
+        None,
+        "Find Previous",
+        "Select the previous terminal search match",
+        "search pane navigation",
+        true
+    ),
+    ordinary_action!(
+        ACTION_COPY,
+        "copy",
+        None,
+        source_ui::COPY,
+        "Copy the focused terminal selection",
+        "clipboard selection default",
+        true
+    ),
+    ordinary_action!(
+        ACTION_CLEAN_COPY,
+        "clean-copy",
+        None,
+        "Clean Copy",
+        "Copy the selection after conservative terminal-text cleanup",
+        "clipboard selection format ansi prompt url path",
+        true
+    ),
+    ordinary_action!(
+        ACTION_COPY_RAW,
+        "copy-raw",
+        None,
+        "Copy Raw",
+        "Copy the selection without Zentty transformations",
+        "clipboard selection original escape hatch",
+        true
+    ),
+    ordinary_action!(
+        ACTION_COPY_AS_MARKDOWN,
+        "copy-as-markdown",
+        None,
+        "Copy as Markdown",
+        "Reflow a Markdown selection while preserving its structure",
+        "clipboard selection markdown format",
+        true
+    ),
+    ordinary_action!(
+        ACTION_SELECT_ALL,
+        "select-all",
+        None,
+        source_ui::SELECT_ALL,
+        "Select all text in the focused terminal",
+        "terminal selection clipboard",
+        true
+    ),
+    ordinary_action!(
+        ACTION_GLOBAL_FIND,
+        "global-find",
+        None,
+        "Global Find",
+        "Search across every live pane in this window",
+        "search all panes worklanes",
+        true
+    ),
+    excluded_action!(
+        ACTION_CLEAR_GLOBAL_FIND,
+        "clear-global-find",
+        None,
+        "global-search overlay lifecycle control"
+    ),
+    excluded_action!(
+        ACTION_GLOBAL_FIND_NEXT,
+        "global-find-next",
+        None,
+        "global-search overlay navigation control"
+    ),
+    excluded_action!(
+        ACTION_GLOBAL_FIND_PREVIOUS,
+        "global-find-previous",
+        None,
+        "global-search overlay navigation control"
+    ),
+    ordinary_action!(
+        ACTION_FOCUS_PANE_LEFT,
+        "focus-pane-left",
+        None,
+        "Focus Left Pane",
+        "Focus the neighboring column to the left",
+        "navigation terminal column",
+        true
+    ),
+    ordinary_action!(
+        ACTION_FOCUS_PANE_RIGHT,
+        "focus-pane-right",
+        None,
+        "Focus Right Pane",
+        "Focus the neighboring column to the right",
+        "navigation terminal column",
+        true
+    ),
+    ordinary_action!(
+        ACTION_FOCUS_PANE_UP,
+        "focus-pane-up",
+        None,
+        "Focus Up In Column",
+        "Focus the pane above in the current column",
+        "navigation terminal split",
+        true
+    ),
+    ordinary_action!(
+        ACTION_FOCUS_PANE_DOWN,
+        "focus-pane-down",
+        None,
+        "Focus Down In Column",
+        "Focus the pane below in the current column",
+        "navigation terminal split",
+        true
+    ),
+    ordinary_action!(
         ACTION_RESIZE_PANE_LEFT,
         "resize-pane-left",
         None,
-        MultipleColumns
+        MultipleColumns,
+        source_ui::RESIZE_PANE_LEFT,
+        "Move the focused pane's horizontal edge left by one terminal cell",
+        "layout pane resize keyboard",
+        true
     ),
-    action!(
+    ordinary_action!(
         ACTION_RESIZE_PANE_RIGHT,
         "resize-pane-right",
         None,
-        MultipleColumns
+        MultipleColumns,
+        source_ui::RESIZE_PANE_RIGHT,
+        "Move the focused pane's horizontal edge right by one terminal cell",
+        "layout pane resize keyboard",
+        true
     ),
-    action!(
+    ordinary_action!(
         ACTION_RESIZE_PANE_UP,
         "resize-pane-up",
         None,
-        MultiplePanesInFocusedColumn
+        MultiplePanesInFocusedColumn,
+        source_ui::RESIZE_PANE_UP,
+        "Move the preferred focused-pane divider up by one terminal cell",
+        "layout pane resize keyboard",
+        true
     ),
-    action!(
+    ordinary_action!(
         ACTION_RESIZE_PANE_DOWN,
         "resize-pane-down",
         None,
-        MultiplePanesInFocusedColumn
+        MultiplePanesInFocusedColumn,
+        source_ui::RESIZE_PANE_DOWN,
+        "Move the preferred focused-pane divider down by one terminal cell",
+        "layout pane resize keyboard",
+        true
     ),
-    action!(ACTION_ARRANGE_WIDTH_FULL, "arrange-width-full", None),
-    action!(ACTION_ARRANGE_WIDTH_HALF, "arrange-width-half", None),
-    action!(ACTION_ARRANGE_WIDTH_THIRDS, "arrange-width-thirds", None),
-    action!(
+    ordinary_action!(
+        ACTION_ARRANGE_WIDTH_FULL,
+        "arrange-width-full",
+        None,
+        "Arrange Width: Full Width",
+        "Make every column one viewport wide",
+        "layout pane columns",
+        true
+    ),
+    ordinary_action!(
+        ACTION_ARRANGE_WIDTH_HALF,
+        "arrange-width-half",
+        None,
+        "Arrange Width: Half Width",
+        "Fit two equal columns in the viewport",
+        "layout pane columns",
+        true
+    ),
+    ordinary_action!(
+        ACTION_ARRANGE_WIDTH_THIRDS,
+        "arrange-width-thirds",
+        None,
+        "Arrange Width: Thirds",
+        "Fit three equal columns in the viewport",
+        "layout pane columns",
+        true
+    ),
+    ordinary_action!(
         ACTION_ARRANGE_WIDTH_QUARTERS,
         "arrange-width-quarters",
-        None
+        None,
+        "Arrange Width: Quarters",
+        "Fit four equal columns in the viewport",
+        "layout pane columns",
+        true
     ),
-    action!(ACTION_ARRANGE_HEIGHT_FULL, "arrange-height-full", None),
-    action!(ACTION_ARRANGE_HEIGHT_TWO, "arrange-height-two", None),
-    action!(ACTION_ARRANGE_HEIGHT_THREE, "arrange-height-three", None),
-    action!(ACTION_ARRANGE_HEIGHT_FOUR, "arrange-height-four", None),
-    action!(
+    ordinary_action!(
+        ACTION_ARRANGE_HEIGHT_FULL,
+        "arrange-height-full",
+        None,
+        "Arrange Height: Full Height",
+        "Place one pane in each column",
+        "layout pane rows",
+        true
+    ),
+    ordinary_action!(
+        ACTION_ARRANGE_HEIGHT_TWO,
+        "arrange-height-two",
+        None,
+        "Arrange Height: 2 Per Column",
+        "Reflow panes two per column",
+        "layout pane rows",
+        true
+    ),
+    ordinary_action!(
+        ACTION_ARRANGE_HEIGHT_THREE,
+        "arrange-height-three",
+        None,
+        "Arrange Height: 3 Per Column",
+        "Reflow panes three per column",
+        "layout pane rows",
+        true
+    ),
+    ordinary_action!(
+        ACTION_ARRANGE_HEIGHT_FOUR,
+        "arrange-height-four",
+        None,
+        "Arrange Height: 4 Per Column",
+        "Reflow panes four per column",
+        "layout pane rows",
+        true
+    ),
+    ordinary_action!(
         ACTION_ARRANGE_GOLDEN_WIDE,
         "arrange-golden-wide",
         None,
-        MultipleColumns
+        MultipleColumns,
+        "Arrange Width: Golden — Focus Wide",
+        "Give the focused column the larger golden share",
+        "layout pane golden ratio",
+        true
     ),
-    action!(
+    ordinary_action!(
         ACTION_ARRANGE_GOLDEN_NARROW,
         "arrange-golden-narrow",
         None,
-        MultipleColumns
+        MultipleColumns,
+        "Arrange Width: Golden — Focus Narrow",
+        "Give the focused column the smaller golden share",
+        "layout pane golden ratio",
+        true
     ),
-    action!(
+    ordinary_action!(
         ACTION_ARRANGE_GOLDEN_TALL,
         "arrange-golden-tall",
         None,
-        MultiplePanesInFocusedColumn
+        MultiplePanesInFocusedColumn,
+        "Arrange Height: Golden — Focus Tall",
+        "Give the focused pane the larger golden share",
+        "layout pane golden ratio",
+        true
     ),
-    action!(
+    ordinary_action!(
         ACTION_ARRANGE_GOLDEN_SHORT,
         "arrange-golden-short",
         None,
-        MultiplePanesInFocusedColumn
+        MultiplePanesInFocusedColumn,
+        "Arrange Height: Golden — Focus Short",
+        "Give the focused pane the smaller golden share",
+        "layout pane golden ratio",
+        true
     ),
-    action!(ACTION_RESET_PANE_LAYOUT, "reset-pane-layout", None),
-    action!(ACTION_RESTORE_CLOSED_PANE, "restore-closed-pane", None),
-    action!(ACTION_OPEN_SERVER, "open-server", String),
-    action!(ACTION_OPEN_SELECTED_SERVER, "open-selected-server", None),
-    action!(ACTION_OPEN_SERVER_BROWSER, "open-server-browser", String),
-    action!(ACTION_IGNORE_SERVER_PORT, "ignore-server-port", String),
-    action!(ACTION_REFRESH_SERVERS, "refresh-servers", None),
-    action!(
+    ordinary_action!(
+        ACTION_RESET_PANE_LAYOUT,
+        "reset-pane-layout",
+        None,
+        "Reset Pane Layout",
+        "Restore default column widths and equal pane heights",
+        "layout pane reset",
+        true
+    ),
+    ordinary_action!(
+        ACTION_RESTORE_CLOSED_PANE,
+        "restore-closed-pane",
+        None,
+        source_ui::UNDO_CLOSE_PANE,
+        "Reopen the most recently closed pane",
+        "terminal restore reopen",
+        true
+    ),
+    contextual_action!(
+        ACTION_OPEN_SERVER,
+        "open-server",
+        String,
+        "development-server provider"
+    ),
+    contextual_action!(
+        ACTION_OPEN_SELECTED_SERVER,
+        "open-selected-server",
+        None,
+        "development-server provider"
+    ),
+    contextual_action!(
+        ACTION_OPEN_SERVER_BROWSER,
+        "open-server-browser",
+        String,
+        "development-server provider"
+    ),
+    contextual_action!(
+        ACTION_IGNORE_SERVER_PORT,
+        "ignore-server-port",
+        String,
+        "development-server provider"
+    ),
+    ordinary_action!(
+        ACTION_REFRESH_SERVERS,
+        "refresh-servers",
+        None,
+        "Refresh Development Servers",
+        "Rescan real listening processes now",
+        "server browser port listener",
+        true
+    ),
+    contextual_action!(
         ACTION_STOP_IGNORING_SERVER_PORT,
         "stop-ignoring-server-port",
-        String
+        String,
+        "development-server provider"
     ),
-    action!(ACTION_STOP_SERVER, "stop-server", String),
-    action!(ACTION_RUN_TASK, "run-task", String),
-    action!(ACTION_SHOW_TASK_MANAGER, "show-task-manager", None),
-    action!(ACTION_REFRESH_REVIEW_STATUS, "refresh-review-status", None),
-    action!(ACTION_OPEN_BRANCH_REMOTE, "open-branch-remote", None),
-    action!(ACTION_OPEN_PULL_REQUEST, "open-pull-request", None),
-    action!(ACTION_OPEN_WITH_PRIMARY, "open-with-primary", None),
-    action!(ACTION_OPEN_WITH_TARGET, "open-with-target", String),
-    action!(ACTION_SAVE_TEMPLATE, "save-template", StringPair),
-    action!(ACTION_ACTIVATE_TEMPLATE, "activate-template", String),
-    action!(ACTION_RENAME_TEMPLATE, "rename-template", StringPair),
-    action!(ACTION_TOGGLE_TEMPLATE_PIN, "toggle-template-pin", String),
-    action!(ACTION_DUPLICATE_TEMPLATE, "duplicate-template", String),
-    action!(ACTION_CONVERT_TEMPLATE, "convert-template", String),
-    action!(ACTION_DELETE_TEMPLATE, "delete-template", String),
-    action!(
+    contextual_action!(
+        ACTION_STOP_SERVER,
+        "stop-server",
+        String,
+        "development-server provider"
+    ),
+    contextual_action!(ACTION_RUN_TASK, "run-task", String, "task-runner provider"),
+    ordinary_action!(
+        ACTION_SHOW_TASK_MANAGER,
+        "show-task-manager",
+        None,
+        "Task Manager",
+        "Inspect CPU, memory, and process trees for every pane",
+        "diagnostics processes performance",
+        true
+    ),
+    ordinary_action!(
+        ACTION_REFRESH_REVIEW_STATUS,
+        "refresh-review-status",
+        None,
+        "Refresh Git and Review Status",
+        "Refresh repository, branch, dirty tree, and pull-request state",
+        "git github pull request ci approval conflict",
+        true
+    ),
+    ordinary_action!(
+        ACTION_OPEN_BRANCH_REMOTE,
+        "open-branch-remote",
+        None,
+        "Open Branch on Remote",
+        "Open the focused branch on its configured Git remote",
+        "git github gitlab bitbucket browser",
+        true
+    ),
+    ordinary_action!(
+        ACTION_OPEN_PULL_REQUEST,
+        "open-pull-request",
+        None,
+        "Open Pull Request",
+        "Open the pull request associated with the focused branch",
+        "git github review browser pr",
+        true
+    ),
+    contextual_action!(
+        ACTION_OPEN_WITH_PRIMARY,
+        "open-with-primary",
+        None,
+        "Open With provider"
+    ),
+    contextual_action!(
+        ACTION_OPEN_WITH_TARGET,
+        "open-with-target",
+        String,
+        "Open With provider"
+    ),
+    excluded_action!(
+        ACTION_SAVE_TEMPLATE,
+        "save-template",
+        StringPair,
+        "bookmark and preset editor"
+    ),
+    excluded_action!(
+        ACTION_ACTIVATE_TEMPLATE,
+        "activate-template",
+        String,
+        "bookmark and preset browser"
+    ),
+    excluded_action!(
+        ACTION_RENAME_TEMPLATE,
+        "rename-template",
+        StringPair,
+        "bookmark and preset editor"
+    ),
+    excluded_action!(
+        ACTION_TOGGLE_TEMPLATE_PIN,
+        "toggle-template-pin",
+        String,
+        "bookmark and preset browser"
+    ),
+    excluded_action!(
+        ACTION_DUPLICATE_TEMPLATE,
+        "duplicate-template",
+        String,
+        "bookmark and preset browser"
+    ),
+    excluded_action!(
+        ACTION_CONVERT_TEMPLATE,
+        "convert-template",
+        String,
+        "bookmark and preset browser"
+    ),
+    excluded_action!(
+        ACTION_DELETE_TEMPLATE,
+        "delete-template",
+        String,
+        "bookmark and preset browser"
+    ),
+    excluded_action!(
         ACTION_UPDATE_LINKED_TEMPLATE,
         "update-linked-template",
-        None
+        None,
+        "bookmark and preset editor"
     ),
-    action!(ACTION_UNLINK_TEMPLATE, "unlink-template", None),
-    action!(ACTION_IMPORT_TEMPLATE, "import-template", None),
-    action!(ACTION_EXPORT_TEMPLATE, "export-template", String),
-    action!(ACTION_EDIT_TEMPLATE, "edit-template", StringPair),
+    excluded_action!(
+        ACTION_UNLINK_TEMPLATE,
+        "unlink-template",
+        None,
+        "bookmark and preset editor"
+    ),
+    excluded_action!(
+        ACTION_IMPORT_TEMPLATE,
+        "import-template",
+        None,
+        "bookmark and preset editor"
+    ),
+    excluded_action!(
+        ACTION_EXPORT_TEMPLATE,
+        "export-template",
+        String,
+        "bookmark and preset editor"
+    ),
+    excluded_action!(
+        ACTION_EDIT_TEMPLATE,
+        "edit-template",
+        StringPair,
+        "bookmark and preset editor"
+    ),
 ];
 
 pub(super) struct ActionRouter {
@@ -467,6 +1290,99 @@ impl ActionRouter {
             action.set_enabled(enabled);
         }
     }
+
+    pub(super) fn ordinary_palette_items(&self) -> Vec<CommandPaletteItem> {
+        ordinary_palette_items_for_group(&self.group)
+            .expect("the installed ActionRouter group was validated during construction")
+    }
+
+    pub(super) fn set_enabled(&self, name: &str, enabled: bool) -> Result<(), String> {
+        let action = self
+            .group
+            .lookup_action(name)
+            .and_then(|action| action.downcast::<gio::SimpleAction>().ok())
+            .ok_or_else(|| format!("cannot update unavailable registered action: {name}"))?;
+        action.set_enabled(enabled);
+        Ok(())
+    }
+
+    pub(super) fn validate_palette_items(
+        &self,
+        items: &[CommandPaletteItem],
+    ) -> Result<(), String> {
+        validate_palette_items_for_group(&self.group, items)
+    }
+}
+
+fn ordinary_palette_items_for_group(
+    group: &gio::SimpleActionGroup,
+) -> Result<Vec<CommandPaletteItem>, String> {
+    ACTION_SPECS
+        .iter()
+        .filter_map(|spec| match spec.palette {
+            PaletteDisposition::Ordinary(metadata) => Some((spec, metadata)),
+            PaletteDisposition::Contextual(_) | PaletteDisposition::Excluded(_) => None,
+        })
+        .map(|(spec, metadata)| {
+            let action = group.lookup_action(spec.name).ok_or_else(|| {
+                format!(
+                    "ordinary palette action is absent from the installed ActionRouter: {}",
+                    spec.name
+                )
+            })?;
+            let mut item = CommandPaletteItem::action(
+                metadata.title,
+                metadata.subtitle,
+                metadata.keywords,
+                spec.name,
+            )
+            .with_recent_eligibility(metadata.recent_eligible);
+            item.enabled = action.is_enabled();
+            Ok(item)
+        })
+        .collect()
+}
+
+fn validate_palette_items_for_group(
+    group: &gio::SimpleActionGroup,
+    items: &[CommandPaletteItem],
+) -> Result<(), String> {
+    for item in items {
+        let (action_name, actual_schema) = match &item.target {
+            CommandPaletteTarget::Pane(_) => (ACTION_SELECT_PANE, ParameterSchema::StringPair),
+            CommandPaletteTarget::Action(action) => (*action, ParameterSchema::None),
+            CommandPaletteTarget::ParameterizedAction { action, .. } => {
+                (*action, ParameterSchema::String)
+            }
+            CommandPaletteTarget::TripleParameterizedAction { action, .. } => {
+                (*action, ParameterSchema::StringTriple)
+            }
+        };
+        let spec = ACTION_SPECS
+            .iter()
+            .find(|spec| spec.name == action_name)
+            .ok_or_else(|| format!("palette item references unknown action: {action_name}"))?;
+        if spec.parameter != actual_schema {
+            return Err(format!(
+                "palette item parameter mismatch for {action_name}: expected {:?}, got {actual_schema:?}",
+                spec.parameter
+            ));
+        }
+        if matches!(spec.palette, PaletteDisposition::Excluded(_)) {
+            return Err(format!(
+                "palette item references explicitly excluded action: {action_name}"
+            ));
+        }
+        let action = group.lookup_action(action_name).ok_or_else(|| {
+            format!("palette item action is absent from installed ActionRouter: {action_name}")
+        })?;
+        if action.is_enabled() != item.enabled {
+            return Err(format!(
+                "palette availability differs from installed action for {action_name}"
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn populate(shell: &Rc<RefCell<ApplicationShell>>, group: &gio::SimpleActionGroup) {
@@ -1780,12 +2696,16 @@ mod tests {
     use std::collections::BTreeSet;
 
     use gtk::glib::variant::ToVariant;
-    use gtk::prelude::ActionMapExt;
+    use gtk::prelude::{ActionMapExt, Cast};
     use gtk::{gio, glib};
+    use zentty_core::{CommandPaletteItem, CommandPaletteTarget};
 
     use super::{
-        ACTION_SPECS, ActionSpec, Availability, ParameterSchema, fleet_target,
-        validate_registered_group,
+        ACTION_ADD_PANE_LEFT, ACTION_ADD_PANE_RIGHT, ACTION_DISMISS_COMMAND_PALETTE,
+        ACTION_NEW_PANE_RIGHT, ACTION_NEW_WINDOW, ACTION_OPEN_SETTINGS_SECTION, ACTION_SELECT_PANE,
+        ACTION_SPECS, ACTION_SPLIT_PANE_RIGHT, ActionSpec, Availability, PaletteDisposition,
+        ParameterSchema, fleet_target, ordinary_palette_items_for_group,
+        validate_palette_items_for_group, validate_registered_group,
     };
 
     fn spec(name: &str) -> Option<&'static ActionSpec> {
@@ -1848,6 +2768,151 @@ mod tests {
                 "edit-template",
             ]
         );
+    }
+
+    #[test]
+    fn every_registered_action_has_explicit_palette_policy() {
+        let mut classified = 0;
+        for spec in ACTION_SPECS {
+            match spec.palette {
+                PaletteDisposition::Ordinary(metadata) => {
+                    classified += 1;
+                    assert_eq!(spec.parameter, ParameterSchema::None, "{}", spec.name);
+                    assert!(!metadata.title.trim().is_empty(), "{}", spec.name);
+                    assert!(!metadata.subtitle.trim().is_empty(), "{}", spec.name);
+                    assert!(!metadata.keywords.trim().is_empty(), "{}", spec.name);
+                }
+                PaletteDisposition::Contextual(owner) | PaletteDisposition::Excluded(owner) => {
+                    classified += 1;
+                    assert!(!owner.trim().is_empty(), "{}", spec.name);
+                }
+            }
+        }
+        assert_eq!(classified, ACTION_SPECS.len());
+    }
+
+    #[test]
+    fn ordinary_palette_projection_uses_registered_actions_and_live_enabled_state() {
+        let group = gio::SimpleActionGroup::new();
+        for spec in ACTION_SPECS {
+            let parameter = match spec.parameter {
+                ParameterSchema::None => None,
+                ParameterSchema::String => Some(glib::VariantTy::STRING),
+                ParameterSchema::StringPair => {
+                    Some(glib::VariantTy::new("(ss)").expect("static type is valid"))
+                }
+                ParameterSchema::StringTriple => {
+                    Some(glib::VariantTy::new("(sss)").expect("static type is valid"))
+                }
+                ParameterSchema::U64 => Some(glib::VariantTy::UINT64),
+            };
+            let action = gio::SimpleAction::new(spec.name, parameter);
+            if spec.name == "move-pane-to-new-window" {
+                action.set_enabled(false);
+            }
+            group.add_action(&action);
+        }
+
+        let items = ordinary_palette_items_for_group(&group).unwrap();
+        let titles = items
+            .iter()
+            .map(|item| item.title.as_str())
+            .collect::<BTreeSet<_>>();
+        assert_eq!(titles.len(), items.len(), "palette titles must be unique");
+        assert!(titles.contains("Reload Configuration"));
+        assert!(titles.contains("Show Bookmarks & Presets"));
+        assert!(titles.contains("Duplicate This Pane"));
+        let item = |title: &str| items.iter().find(|item| item.title == title).unwrap();
+        assert_eq!(
+            item("Split Right").target,
+            CommandPaletteTarget::Action(ACTION_SPLIT_PANE_RIGHT)
+        );
+        assert_eq!(
+            item("Add Pane Right").target,
+            CommandPaletteTarget::Action(ACTION_NEW_PANE_RIGHT)
+        );
+        assert!(item("Add Pane Right").subtitle.contains("adaptive"));
+        assert_eq!(
+            item("Add Pane Right Without Resizing").target,
+            CommandPaletteTarget::Action(ACTION_ADD_PANE_RIGHT)
+        );
+        assert!(
+            item("Add Pane Right Without Resizing")
+                .subtitle
+                .contains("without resizing")
+        );
+        assert_eq!(
+            item("Add Pane Left").target,
+            CommandPaletteTarget::Action(ACTION_ADD_PANE_LEFT)
+        );
+        assert!(
+            !items
+                .iter()
+                .find(|item| item.title == "Move Pane to New Window")
+                .unwrap()
+                .enabled
+        );
+
+        group.remove_action("new-window");
+        assert!(ordinary_palette_items_for_group(&group).is_err());
+    }
+
+    #[test]
+    fn contextual_palette_targets_are_registered_typed_enabled_and_not_excluded() {
+        let group = gio::SimpleActionGroup::new();
+        for spec in ACTION_SPECS {
+            let parameter = match spec.parameter {
+                ParameterSchema::None => None,
+                ParameterSchema::String => Some(glib::VariantTy::STRING),
+                ParameterSchema::StringPair => {
+                    Some(glib::VariantTy::new("(ss)").expect("static type is valid"))
+                }
+                ParameterSchema::StringTriple => {
+                    Some(glib::VariantTy::new("(sss)").expect("static type is valid"))
+                }
+                ParameterSchema::U64 => Some(glib::VariantTy::UINT64),
+            };
+            group.add_action(&gio::SimpleAction::new(spec.name, parameter));
+        }
+        let valid = CommandPaletteItem::parameterized_action(
+            "General Settings",
+            "Jump to General",
+            "settings",
+            ACTION_OPEN_SETTINGS_SECTION,
+            "general",
+        );
+        assert!(validate_palette_items_for_group(&group, &[valid]).is_ok());
+
+        let wrong_schema = CommandPaletteItem::parameterized_action(
+            "Pane",
+            "Wrong schema",
+            "pane",
+            ACTION_SELECT_PANE,
+            "pane-1",
+        );
+        assert!(validate_palette_items_for_group(&group, &[wrong_schema]).is_err());
+
+        let excluded = CommandPaletteItem::action(
+            "Dismiss",
+            "Excluded lifecycle action",
+            "dismiss",
+            ACTION_DISMISS_COMMAND_PALETTE,
+        );
+        assert!(validate_palette_items_for_group(&group, &[excluded]).is_err());
+
+        let disabled_action = group
+            .lookup_action(ACTION_NEW_WINDOW)
+            .unwrap()
+            .downcast::<gio::SimpleAction>()
+            .unwrap();
+        disabled_action.set_enabled(false);
+        let stale = CommandPaletteItem::action(
+            "New Window",
+            "Create another window",
+            "window",
+            ACTION_NEW_WINDOW,
+        );
+        assert!(validate_palette_items_for_group(&group, &[stale]).is_err());
     }
 
     #[test]
