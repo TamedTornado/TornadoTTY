@@ -404,6 +404,22 @@ judgment of the animation's speed, color, and visual polish remains
 intentionally queued for the next operator batch; this is not a claim of
 operator visual acceptance or broad Linux qualification.
 
+### GH-82 supersession note
+
+Subsequent installed GNOME dogfood supplied the missing human judgment: the
+Linux choice to replace complete GTK label text every 100 ms visibly flickered
+in window, worklane, and pane projections, and could duplicate stable and
+animated spellings in the window context. Upstream's custom CoreText view
+retains its layout and paints animation independently, so the earlier Linux
+implementation was not behaviorally equivalent despite its state-safety.
+
+GH-82 supersedes only that projection detail. Stable labels now retain layout
+and accessibility, a fixed-width pane activity cell alone receives spinner
+frames, worklane context is not rewritten per frame, and focused chrome remains
+semantic and stable. The shared frame clock, title ownership, parser, and agent
+state contracts remain unchanged. See
+`zentty-linux-dogfood-2026-08-27-title-flicker.md` for the repair and evidence.
+
 ## GH-124 real IME Backspace composition parity
 
 The upstream repair is AppKit key-routing code, so copying it into Rust without

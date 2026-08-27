@@ -1140,10 +1140,8 @@ fn make_pane_row(
     marker.add_css_class("pane-marker");
     let labels = gtk::Box::new(gtk::Orientation::Vertical, 0);
     labels.set_hexpand(true);
-    let pane_title = gtk::Label::new(Some(&pane.primary_text));
-    pane_title.set_widget_name(&widget_name("pane-title", &pane.pane_id));
-    pane_title.set_xalign(0.0);
-    pane_title.set_ellipsize(gtk::pango::EllipsizeMode::End);
+    let pane_title_name = widget_name("pane-title", &pane.pane_id);
+    let pane_title = crate::activity_title::widget(&pane_title_name, &pane.primary_text);
     let working_directory = gtk::Label::new(None);
     working_directory.set_widget_name(&widget_name("pane-working-directory", &pane.pane_id));
     working_directory.add_css_class("pane-working-directory");
@@ -1344,22 +1342,11 @@ pub(crate) fn update_codex_activity_titles(
     let mut rendered_activity = false;
     for summary in summaries {
         for pane in &summary.pane_rows {
-            let text = titles
-                .get(&pane.pane_id)
-                .map_or(pane.primary_text.as_str(), String::as_str);
-            if let Some(label) = find_named_label(
-                sidebar.upcast_ref(),
-                &widget_name("pane-title", &pane.pane_id),
-            ) {
-                label.set_text(text);
-                rendered_activity |= titles.contains_key(&pane.pane_id);
+            let name = widget_name("pane-title", &pane.pane_id);
+            if let Some(text) = titles.get(&pane.pane_id) {
+                rendered_activity |=
+                    crate::activity_title::show_activity(sidebar.upcast_ref(), &name, text);
             }
-        }
-        if let Some(context) = find_named_label(
-            sidebar.upcast_ref(),
-            &widget_name("worklane-context", &summary.worklane_id),
-        ) {
-            context.set_text(&worklane_context_text(summary));
         }
     }
     rendered_activity
@@ -1423,13 +1410,10 @@ fn update_pane_metadata(sidebar: &gtk::Box, pane: &zentty_core::SidebarPaneSumma
         return false;
     };
     marker.set_text(if pane.is_focused { "●" } else { "○" });
-    let Some(title) = find_named_label(
-        sidebar.upcast_ref(),
-        &widget_name("pane-title", &pane.pane_id),
-    ) else {
+    let title_name = widget_name("pane-title", &pane.pane_id);
+    if !crate::activity_title::show_stable(sidebar.upcast_ref(), &title_name, &pane.primary_text) {
         return false;
-    };
-    title.set_text(&pane.primary_text);
+    }
     let Some(working_directory) = find_named_label(
         sidebar.upcast_ref(),
         &widget_name("pane-working-directory", &pane.pane_id),

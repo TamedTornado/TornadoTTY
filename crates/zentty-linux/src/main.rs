@@ -2,6 +2,7 @@
 
 mod about_catalog;
 mod about_view;
+mod activity_title;
 mod agent_fleet;
 mod agent_runtime;
 mod agent_status_view;

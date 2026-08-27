@@ -1478,9 +1478,13 @@ zentty_product_wait_for_log "${log}" \
     "the shared GTK frame clock did not animate the stationary Codex title" ||
     fail "fleet spinner presentation missing"
 zentty_product_wait_for_log "${log}" \
-    'zentty-linux: codex-title-animation-render sidebar=true focused-chrome=true' \
-    "the deterministic activity frame did not reach both real GTK title projections" ||
+    'zentty-linux: codex-title-animation-render sidebar=true focused-chrome=false' \
+    "the deterministic activity frame did not stay confined to the pane activity cell" ||
     fail "fleet spinner GTK render evidence missing"
+zentty_product_wait_for_log "${log}" \
+    'zentty-linux: window-chrome-context=Working · Bro' \
+    "focused chrome did not retain the stable semantic title" ||
+    fail "fleet stable chrome title missing"
 [[ "$(grep -Fc 'zentty-linux: title-pane=pane-2 value=Working ⠋ Bro' "${log}" || true)" == 1 ]] ||
     fail "spinner fixture emitted more than one terminal metadata frame"
 [[ "$(grep -Fc 'zentty-linux: sidebar-card ' "${log}" || true)" == "${sidebar_render_before}" ]] ||

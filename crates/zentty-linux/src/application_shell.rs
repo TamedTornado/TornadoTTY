@@ -3654,6 +3654,15 @@ impl ApplicationShell {
         let changed = self
             .codex_title_animation
             .reconcile(pane_id, title, eligible);
+        if eligible {
+            // A semantic title update refreshes the stable label first. Put
+            // the activity layer back in the same GTK transaction so task
+            // progress cannot flash through the stable child while waiting
+            // for the next compositor frame.
+            let titles = std::collections::BTreeMap::from([(pane_id.to_owned(), title.to_owned())]);
+            let summaries = self.sidebar_summaries();
+            let _ = sidebar::update_codex_activity_titles(&self.sidebar, &summaries, &titles);
+        }
         if changed {
             eprintln!(
                 "zentty-linux: codex-title-animation pane={pane_id} state={}",

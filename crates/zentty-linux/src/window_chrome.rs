@@ -458,16 +458,14 @@ impl WindowChrome {
 
     pub(crate) fn render_codex_activity_titles(
         &self,
-        summaries: &[SidebarWorklaneSummary],
-        titles: &BTreeMap<String, String>,
+        _summaries: &[SidebarWorklaneSummary],
+        _titles: &BTreeMap<String, String>,
     ) -> bool {
-        let focused_activity = summaries
-            .iter()
-            .find(|summary| summary.is_active)
-            .and_then(|summary| summary.pane_rows.iter().find(|pane| pane.is_focused))
-            .is_some_and(|pane| titles.contains_key(&pane.pane_id));
-        self.render_context(&context_text(summaries, titles));
-        focused_activity
+        // The focused chrome is an identity label. Replacing its complete text
+        // on every spinner frame makes GTK remeasure and visibly repaint it.
+        // The pane row owns the fixed-width activity glyph; semantic title
+        // changes still arrive through `render` above.
+        false
     }
 
     fn render_context(&self, text: &str) {
@@ -502,7 +500,12 @@ fn context_text(
                         .get(&pane.pane_id)
                         .map_or(pane.primary_text.as_str(), String::as_str)
                 });
-            pane.filter(|pane| *pane != lane)
+            let stable_pane = summary
+                .pane_rows
+                .iter()
+                .find(|pane| pane.is_focused)
+                .map(|pane| pane.primary_text.as_str());
+            pane.filter(|_| stable_pane != Some(lane))
                 .map_or_else(|| lane.to_owned(), |pane| format!("{lane}  ·  {pane}"))
         })
         .unwrap_or_default()
@@ -773,7 +776,7 @@ mod tests {
     }
 
     #[test]
-    fn activity_title_changes_focused_chrome_presentation_without_mutating_summary() {
+    fn activity_title_does_not_duplicate_the_same_stable_chrome_identity() {
         let summaries = vec![SidebarWorklaneSummary {
             worklane_id: "lane".to_owned(),
             top_label: Some("Bro".to_owned()),
@@ -794,5 +797,28 @@ mod tests {
         let activity = BTreeMap::from([("pane".to_owned(), "Working ⠧ Bro".to_owned())]);
         assert_eq!(context_text(&summaries, &activity), "Bro  ·  Working ⠧ Bro");
         assert_eq!(summaries[0].pane_rows[0].primary_text, "Working · Bro");
+    }
+
+    #[test]
+    fn activity_frame_does_not_duplicate_an_unnamed_worklane_fallback() {
+        let summaries = vec![SidebarWorklaneSummary {
+            worklane_id: "lane".to_owned(),
+            top_label: None,
+            primary_text: "Working · Bro".to_owned(),
+            pane_rows: vec![SidebarPaneSummary {
+                pane_id: "pane".to_owned(),
+                primary_text: "Working · Bro".to_owned(),
+                custom_title: None,
+                working_directory: None,
+                is_focused: true,
+                agent_status: None,
+                project_context: None,
+                project_icon_path: None,
+            }],
+            is_active: true,
+            color: None,
+        }];
+        let activity = BTreeMap::from([("pane".to_owned(), "Working ⠧ Bro".to_owned())]);
+        assert_eq!(context_text(&summaries, &activity), "Working · Bro");
     }
 }
