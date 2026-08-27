@@ -1160,6 +1160,87 @@ fn copilot_question_title_beats_osc_and_preserves_durable_identity() {
 }
 
 #[test]
+fn explicit_session_start_rekeys_only_a_matching_provisional_tool_and_pid() {
+    let mut store = AgentStatusStore::default();
+    store.apply(
+        event_for(
+            "pane-a",
+            br#"{"version":1,"event":"session.start","agent":{"name":"Amp","pid":4242},"context":{"launch":{"arguments":["--mode","smart"]}}}"#,
+        ),
+        1_000,
+    );
+    store.apply(
+        event_for(
+            "pane-a",
+            br#"{"version":1,"event":"agent.running","agent":{"name":"Amp","pid":4242},"context":{"launch":{"arguments":["--mode","smart"]}}}"#,
+        ),
+        1_010,
+    );
+    assert_eq!(
+        store.status_for_pane("pane-a").unwrap().session_id,
+        "pane-default"
+    );
+
+    store.apply(
+        event_for(
+            "pane-a",
+            br#"{"version":1,"event":"session.start","agent":{"name":"Amp","pid":4242},"session":{"id":"T-real"},"context":{"launch":{"arguments":["--mode","smart"]}}}"#,
+        ),
+        1_020,
+    );
+    store.apply(
+        event_for(
+            "pane-a",
+            br#"{"version":1,"event":"agent.idle","agent":{"name":"Amp","pid":4242},"session":{"id":"T-real"}}"#,
+        ),
+        1_030,
+    );
+    let status = store.status_for_pane("pane-a").unwrap();
+    assert_eq!(status.session_id, "T-real");
+    assert_eq!(status.phase, AgentPhase::Idle);
+    assert_eq!(
+        status.agent_launch_snapshot.as_ref().unwrap().arguments,
+        ["--mode", "smart"]
+    );
+
+    store.apply(
+        event_for(
+            "pane-a",
+            br#"{"version":1,"event":"session.end","agent":{"name":"Amp","pid":4242},"session":{"id":"T-real"}}"#,
+        ),
+        1_040,
+    );
+    assert!(store.status_for_pane("pane-a").is_none());
+
+    let mut mismatch = AgentStatusStore::default();
+    mismatch.apply(
+        event_for(
+            "pane-a",
+            br#"{"version":1,"event":"agent.running","agent":{"name":"Amp","pid":4242}}"#,
+        ),
+        2_000,
+    );
+    mismatch.apply(
+        event_for(
+            "pane-a",
+            br#"{"version":1,"event":"session.start","agent":{"name":"Amp","pid":9999},"session":{"id":"T-other"}}"#,
+        ),
+        2_010,
+    );
+    mismatch.apply(
+        event_for(
+            "pane-a",
+            br#"{"version":1,"event":"session.end","agent":{"name":"Amp","pid":9999},"session":{"id":"T-other"}}"#,
+        ),
+        2_020,
+    );
+    assert_eq!(
+        mismatch.status_for_pane("pane-a").unwrap().session_id,
+        "pane-default"
+    );
+}
+
+#[test]
 fn sessionless_codex_completion_reconciles_the_existing_pane_session() {
     let mut store = AgentStatusStore::default();
     store.apply(

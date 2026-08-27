@@ -73,8 +73,11 @@ for target in amp-hooks cursor-hooks droid-hooks kimi-hooks grok-hooks agy-hooks
     HERMES_HOME="${integration_home}/.hermes" \
         "${stage_dir}/bin/zentty" uninstall "${target}" >/dev/null
 done
-! grep -R -E "zentty-(amp-plugin|agy-hook)|adapter=(cursor|droid|kimi|grok|vibe)|zentty hermes" \
-    "${integration_home}" --exclude='*.lock' >/dev/null
+if grep -R -E "zentty-(amp-plugin|agy-hook)|adapter=(cursor|droid|kimi|grok|vibe)|zentty hermes" \
+    "${integration_home}" --exclude='*.lock' >/dev/null; then
+    echo "staged-bundle: uninstall retained a managed agent integration" >&2
+    exit 1
+fi
 
 for wrapper in \
     amp/amp claude/claude codex/codex copilot/copilot cursor/cursor-agent \
@@ -92,7 +95,9 @@ mkdir -p "$(dirname "${fake_amp}")"
 cat >"${fake_amp}" <<'FAKE_AMP'
 #!/usr/bin/env bash
 set -euo pipefail
-printf 'args=<%s> agent=<%s> pid=<%s>\n' "$*" "${ZENTTY_AGENT_TOOL:-}" "${ZENTTY_AMP_PID:-}" >"${ZENTTY_TEST_RECEIPT}"
+printf 'args=<%s> agent=<%s> pid=<%s> plugins=<%s> snapshot=<%s>\n' \
+    "$*" "${ZENTTY_AGENT_TOOL:-}" "${ZENTTY_AMP_PID:-}" "${PLUGINS:-}" \
+    "${ZENTTY_AMP_RESUME_ARGUMENTS_JSON:-}" >"${ZENTTY_TEST_RECEIPT}"
 FAKE_AMP
 chmod 0700 "${fake_amp}"
 HOME="${integration_home}" \
@@ -107,7 +112,25 @@ ZENTTY_PANE_ID="staged-pane" \
     "${stage_dir}/bin/zentty" launch amp --project "hostile path" >/dev/null
 grep -F 'args=<--project hostile path> agent=<amp> pid=<' \
     "${integration_home}/amp-launch.receipt" >/dev/null
+grep -F 'plugins=<all> snapshot=<>' "${integration_home}/amp-launch.receipt" >/dev/null
 grep -F 'zentty-amp-plugin-v1' \
+    "${integration_home}/.config/amp/plugins/zentty-amp-zentty.ts" >/dev/null
+
+printf '%s\n' '// user-owned Amp plugin' \
+    >"${integration_home}/.config/amp/plugins/zentty-amp-zentty.ts"
+HOME="${integration_home}" \
+XDG_CONFIG_HOME="${integration_home}/.config" \
+ZENTTY_REAL_BINARY="${fake_amp}" \
+ZENTTY_CLI_BIN="${stage_dir}/bin/zentty" \
+ZENTTY_TEST_RECEIPT="${integration_home}/amp-conflict-launch.receipt" \
+ZENTTY_INSTANCE_SOCKET="${integration_home}/instance.sock" \
+ZENTTY_PANE_TOKEN="staged-token" \
+ZENTTY_WORKLANE_ID="staged-lane" \
+ZENTTY_PANE_ID="staged-pane" \
+    "${stage_dir}/bin/zentty" launch amp --mode smart >/dev/null
+grep -F 'args=<--mode smart> agent=<> pid=<> plugins=<> snapshot=<>' \
+    "${integration_home}/amp-conflict-launch.receipt" >/dev/null
+grep -Fx '// user-owned Amp plugin' \
     "${integration_home}/.config/amp/plugins/zentty-amp-zentty.ts" >/dev/null
 
 shim="${stage_dir}/libexec/zentty/tmux-shim/tmux"

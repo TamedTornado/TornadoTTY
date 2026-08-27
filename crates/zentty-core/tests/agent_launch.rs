@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 use zentty_core::{
     AgentLaunchTool, build_agent_launch_plan, build_copilot_config, build_gemini_settings,
-    build_small_harness_hooks,
+    build_small_harness_hooks, sanitize_amp_resume_arguments,
 };
 
 const SESSION_ID: &str = "12345678-1234-4234-8234-123456789abc";
@@ -139,6 +139,165 @@ fn persistent_agent_management_commands_are_direct_but_grok_flags_remain_integra
     )
     .unwrap();
     assert_eq!(grok.set_environment["ZENTTY_AGENT_TOOL"], "grok");
+}
+
+#[test]
+fn amp_resume_arguments_match_the_source_allow_drop_and_reject_policy() {
+    let strings = |values: &[&str]| {
+        values
+            .iter()
+            .map(|value| (*value).to_owned())
+            .collect::<Vec<_>>()
+    };
+    for (input, expected) in [
+        (
+            vec![
+                "amp",
+                "--mode",
+                "smart",
+                "--effort=high",
+                "--settings-file",
+                "/tmp/amp settings.json",
+            ],
+            Some(vec![
+                "--mode",
+                "smart",
+                "--effort=high",
+                "--settings-file",
+                "/tmp/amp settings.json",
+            ]),
+        ),
+        (
+            vec![
+                "threads",
+                "continue",
+                "T-old",
+                "-m",
+                "rush",
+                "--visibility",
+                "private",
+            ],
+            Some(vec!["-m", "rush", "--visibility", "private"]),
+        ),
+        (
+            vec!["t", "c", "--log-level=debug", "--mcp-config", "mcp.json"],
+            Some(vec!["--log-level=debug", "--mcp-config", "mcp.json"]),
+        ),
+        (
+            vec![
+                "--label",
+                "old",
+                "-l",
+                "discard",
+                "--archive",
+                "--json",
+                "--output-format",
+                "json",
+                "--log-file",
+                "amp.log",
+            ],
+            Some(vec!["--log-file", "amp.log"]),
+        ),
+        (vec!["--mode"], Some(vec![])),
+        (
+            vec!["--mode", "safe", "hostile; touch /tmp/no"],
+            Some(vec!["--mode", "safe"]),
+        ),
+    ] {
+        assert_eq!(
+            sanitize_amp_resume_arguments(&strings(&input)),
+            expected.map(|values| strings(&values)),
+            "input={input:?}"
+        );
+    }
+    for input in [
+        vec!["login"],
+        vec!["amp", "permissions"],
+        vec!["--execute", "echo hi"],
+        vec!["--print=secret"],
+        vec!["-x"],
+        vec!["--help"],
+        vec!["-V"],
+        vec!["--jetbrains"],
+    ] {
+        assert_eq!(
+            sanitize_amp_resume_arguments(&strings(&input)),
+            None,
+            "input={input:?}"
+        );
+    }
+}
+
+#[test]
+fn amp_plan_activates_the_owned_plugin_and_publishes_ordered_launch_identity() {
+    let arguments = [
+        "amp".to_owned(),
+        "threads".to_owned(),
+        "continue".to_owned(),
+        "T-old".to_owned(),
+        "--mode".to_owned(),
+        "smart".to_owned(),
+        "--label".to_owned(),
+        "discard".to_owned(),
+    ];
+    let plan = build_agent_launch_plan(
+        AgentLaunchTool::Amp,
+        "/real/amp",
+        &arguments,
+        "/stage/bin/zentty",
+        SESSION_ID,
+        &pane_environment(),
+    )
+    .unwrap();
+
+    assert_eq!(plan.arguments, arguments);
+    assert_eq!(plan.set_environment["ZENTTY_AGENT_TOOL"], "amp");
+    assert_eq!(plan.set_environment["PLUGINS"], "all");
+    assert_eq!(
+        serde_json::from_str::<Vec<String>>(
+            &plan.set_environment["ZENTTY_AMP_RESUME_ARGUMENTS_JSON"]
+        )
+        .unwrap(),
+        ["--mode", "smart"]
+    );
+    assert_eq!(plan.pre_launch_actions.len(), 2);
+    for (action, event) in plan
+        .pre_launch_actions
+        .iter()
+        .zip(["session.start", "agent.running"])
+    {
+        let rendered = action.standard_input.replace("__ZENTTY_SELF_PID__", "4242");
+        let payload: serde_json::Value = serde_json::from_str(&rendered).unwrap();
+        assert_eq!(payload["version"], 1);
+        assert_eq!(payload["event"], event);
+        assert_eq!(payload["agent"]["name"], "Amp");
+        assert_eq!(payload["agent"]["pid"], 4242);
+        assert_eq!(
+            payload["context"]["launch"]["arguments"],
+            serde_json::json!(["--mode", "smart"])
+        );
+    }
+
+    let rejected_snapshot = build_agent_launch_plan(
+        AgentLaunchTool::Amp,
+        "/real/amp",
+        &["--execute=echo hi".to_owned()],
+        "/stage/bin/zentty",
+        SESSION_ID,
+        &pane_environment(),
+    )
+    .unwrap();
+    assert!(
+        !rejected_snapshot
+            .set_environment
+            .contains_key("ZENTTY_AMP_RESUME_ARGUMENTS_JSON")
+    );
+    assert!(
+        rejected_snapshot
+            .pre_launch_actions
+            .iter()
+            .all(|action| action.standard_input.contains("\"arguments\":[]"))
+    );
 }
 
 #[test]

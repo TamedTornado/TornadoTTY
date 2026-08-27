@@ -4,8 +4,11 @@ use std::collections::BTreeMap;
 use std::fmt;
 use std::path::Path;
 
+mod amp;
 mod remaining;
 
+use amp::plan as amp_plan;
+pub use amp::sanitize_resume_arguments as sanitize_amp_resume_arguments;
 pub use remaining::{build_copilot_config, build_small_harness_hooks};
 use remaining::{copilot_plan, opencode_plan, pi_family_plan, small_harness_plan};
 
@@ -224,6 +227,7 @@ pub fn build_agent_launch_plan(
             arguments,
             environment,
         )),
+        AgentLaunchTool::Amp => amp_plan(executable_path.into(), arguments),
         tool => Ok(persistent_plan(tool, executable_path.into(), arguments)),
     }
 }

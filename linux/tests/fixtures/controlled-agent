@@ -3,6 +3,7 @@ set -euo pipefail
 
 profile="${ZENTTY_CONTROLLED_AGENT_PROFILE:-}"
 helper="${ZENTTY_CLI_BIN:-}"
+fixture_dir="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
 sleep_seconds="${ZENTTY_CONTROLLED_AGENT_SLEEP_SECONDS:-2}"
 start_delay_seconds="${ZENTTY_CONTROLLED_AGENT_START_DELAY_SECONDS:-0}"
 start_gate="${ZENTTY_CONTROLLED_AGENT_START_GATE:-}"
@@ -32,11 +33,11 @@ require_helper() {
 if [[ -n "${ZENTTY_CONTROLLED_AGENT_START_RECEIPT:-}" ]]; then
     printf 'started pid:%s profile:%s\n' "$$" "${profile}" \
         >>"${ZENTTY_CONTROLLED_AGENT_START_RECEIPT}"
-    printf 'launch agent:%s canonical:%s socket:%s token:%s lane:%s pane:%s pi-disabled:%s args:<%s>\n' \
+    printf 'launch agent:%s canonical:%s socket:%s token:%s lane:%s pane:%s pi-disabled:%s amp-disabled:%s args:<%s>\n' \
         "${ZENTTY_AGENT_TOOL:-}" \
         "${ZENTTY_AGENT_CANONICAL_NAME:-}" "${ZENTTY_INSTANCE_SOCKET:-}" \
         "${ZENTTY_PANE_TOKEN:-}" "${ZENTTY_WORKLANE_ID:-}" "${ZENTTY_PANE_ID:-}" \
-        "${ZENTTY_PI_HOOKS_DISABLED:-}" "$*" \
+        "${ZENTTY_PI_HOOKS_DISABLED:-}" "${ZENTTY_AMP_HOOKS_DISABLED:-}" "$*" \
         >>"${ZENTTY_CONTROLLED_AGENT_START_RECEIPT}"
     if [[ "${ZENTTY_AGENT_TOOL:-}" == opencode ]]; then
         printf 'opencode-config:%s\n' "${OPENCODE_CONFIG_DIR:-}" \
@@ -63,6 +64,22 @@ codex_has_hook() {
 }
 
 case "${profile}" in
+    amp-plugin)
+        require_helper
+        [[ "${PLUGINS:-}" == all ]] || fail "Amp plugin activation is missing"
+        [[ "${ZENTTY_AGENT_TOOL:-}" == amp ]] || fail "Amp tool identity is missing"
+        [[ "${ZENTTY_AMP_RESUME_ARGUMENTS_JSON:-}" == '["--mode","smart"]' ]] ||
+            fail "Amp sanitized launch snapshot is incorrect"
+        plugin_root="${XDG_CONFIG_HOME:-${HOME}/.config}"
+        plugin="${plugin_root}/amp/plugins/zentty-amp-zentty.ts"
+        [[ -f "${plugin}" ]] || fail "installed Amp plugin is missing"
+        [[ -x "${fixture_dir}/amp-cli-audit" ]] || fail "Amp CLI audit fixture is missing"
+        [[ -n "${ZENTTY_AMP_AUDIT_RECEIPT:-}" ]] || fail "Amp audit receipt is required"
+        AMP_API_KEY="controlled-secret-never-log" \
+            ZENTTY_CLI_BIN="${fixture_dir}/amp-cli-audit" \
+            ZENTTY_AMP_AUDIT_REAL_HELPER="${helper}" \
+            bun "${fixture_dir}/amp-plugin-driver.ts" "${plugin}"
+        ;;
     restore-immediate-failure)
         printf 'restore-failure pid:%s pane:%s\n' "$$" "${ZENTTY_PANE_ID:-}" \
             >>"${ZENTTY_CONTROLLED_AGENT_START_RECEIPT}"

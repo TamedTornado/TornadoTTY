@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+[[ -n "${ZENTTY_AMP_AUDIT_RECEIPT:-}" ]] || {
+    echo "amp-cli-audit: receipt is required" >&2
+    exit 64
+}
+[[ -x "${ZENTTY_AMP_AUDIT_REAL_HELPER:-}" ]] || {
+    echo "amp-cli-audit: real staged helper is required" >&2
+    exit 64
+}
+if [[ -v AMP_API_KEY ]]; then
+    printf 'api-key=present\n' >>"${ZENTTY_AMP_AUDIT_RECEIPT}"
+    exit 65
+fi
+printf 'api-key=absent helper=exec\n' >>"${ZENTTY_AMP_AUDIT_RECEIPT}"
+exec "${ZENTTY_AMP_AUDIT_REAL_HELPER}" "$@"

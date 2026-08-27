@@ -46,7 +46,7 @@ pub use agent_fleet::{
 pub use agent_launch::{
     AgentLaunchAction, AgentLaunchError, AgentLaunchPlan, AgentLaunchTool,
     agent_launch_requires_bootstrap, build_agent_launch_plan, build_copilot_config,
-    build_gemini_settings, build_small_harness_hooks,
+    build_gemini_settings, build_small_harness_hooks, sanitize_amp_resume_arguments,
 };
 pub use agent_protocol::{
     AgentArtifactKind, AgentArtifactLink, AgentEvent, AgentInteractionKind, AgentProtocolError,

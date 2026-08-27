@@ -556,6 +556,43 @@ impl AgentStatusStore {
             .unwrap_or_else(|| "pane-default".to_owned())
     }
 
+    fn rekey_matching_provisional_session(
+        &mut self,
+        pane_id: &str,
+        session_id: &str,
+        event: &crate::AgentEvent,
+    ) {
+        if session_id == "pane-default" || event.kind() != "session.start" {
+            return;
+        }
+        let (Some(agent_name), Some(agent_pid)) = (event.agent_name(), event.agent_pid()) else {
+            return;
+        };
+        let matches = self
+            .panes
+            .get(pane_id)
+            .and_then(|sessions| sessions.get("pane-default"))
+            .is_some_and(|status| {
+                status.agent_name.eq_ignore_ascii_case(agent_name)
+                    && status.tracked_pid == Some(agent_pid)
+            });
+        if !matches {
+            return;
+        }
+        if let Some(sessions) = self.panes.get_mut(pane_id)
+            && let Some(mut provisional) = sessions.remove("pane-default")
+        {
+            session_id.clone_into(&mut provisional.session_id);
+            sessions.entry(session_id.to_owned()).or_insert(provisional);
+        }
+        let provisional_key = SessionKey::new(pane_id, "pane-default");
+        if let Some(bookkeeping) = self.session_bookkeeping.remove(&provisional_key) {
+            self.session_bookkeeping
+                .entry(SessionKey::new(pane_id, session_id))
+                .or_insert(bookkeeping);
+        }
+    }
+
     pub fn apply(&mut self, authenticated: AuthenticatedAgentEvent, now: u64) {
         let target = authenticated.target;
         let event = authenticated.event;
@@ -591,6 +628,7 @@ impl AgentStatusStore {
     ) {
         let pane_id = target.pane_id;
         let session_id = self.resolve_session_id(&pane_id, event);
+        self.rekey_matching_provisional_session(&pane_id, &session_id, event);
         let session_key = SessionKey::new(&pane_id, &session_id);
         if self
             .session_bookkeeping

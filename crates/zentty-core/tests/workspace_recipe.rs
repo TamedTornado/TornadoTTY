@@ -80,6 +80,35 @@ fn supported_agent_restore_commands_are_source_compatible_and_injection_safe() {
         draft.resume_command().as_deref(),
         Some("opencode --session ses_AbC123")
     );
+
+    draft.tool_name = "Amp".to_owned();
+    draft.session_id = "T-ZenttyBenchRestore".to_owned();
+    draft.agent_launch_snapshot = Some(zentty_core::AgentLaunchSnapshot {
+        arguments: vec![
+            "--mode".to_owned(),
+            "smart".to_owned(),
+            "--settings-file".to_owned(),
+            "/tmp/amp settings.json".to_owned(),
+        ],
+        environment: None,
+    });
+    assert_eq!(
+        draft.resume_command().as_deref(),
+        Some(
+            "amp threads continue --mode smart --settings-file '/tmp/amp settings.json' T-ZenttyBenchRestore"
+        )
+    );
+    for session_id in ["T-", "thread-safe", "T-safe;touch", "-T-safe"] {
+        draft.session_id = session_id.to_owned();
+        assert_eq!(draft.resume_command(), None, "session_id={session_id}");
+    }
+    draft.session_id = "T-safe_123".to_owned();
+    draft.agent_launch_snapshot = Some(zentty_core::AgentLaunchSnapshot {
+        arguments: vec!["--execute=touch /tmp/no".to_owned()],
+        environment: None,
+    });
+    assert_eq!(draft.resume_command(), None);
+
     for (tool, expected) in [
         ("Pi", "pi -c"),
         ("Oh My Pi", "omp -c"),

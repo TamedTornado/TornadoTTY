@@ -14,12 +14,19 @@ real_gemini_bin=""
 private_home=""
 start_receipt=""
 model_log=""
+amp_audit_receipt=""
 actor="${repo_root}/linux/tests/fixtures/controlled-agent"
 # shellcheck disable=SC1091
 source "${repo_root}/linux/tests/lib/product-input"
 
 fail() {
     [[ -z "${log}" || ! -f "${log}" ]] || cat "${log}" >&2
+    if [[ -n "${start_receipt}" && -f "${start_receipt}" ]]; then
+        sed -E 's#socket:[^ ]+ token:[^ ]+#socket:<redacted> token:<redacted>#' \
+            "${start_receipt}" >&2
+    fi
+    [[ -z "${amp_audit_receipt}" || ! -f "${amp_audit_receipt}" ]] ||
+        cat "${amp_audit_receipt}" >&2
     echo "rust-agent-ipc: error: $*" >&2
     exit 1
 }
@@ -73,12 +80,13 @@ cleanup() {
     [[ -z "${fake_bin}" ]] || rm -rf -- "${fake_bin}"
     [[ -z "${private_home}" ]] || rm -rf -- "${private_home}"
     [[ -z "${start_receipt}" ]] || rm -f -- "${start_receipt}"
+    [[ -z "${amp_audit_receipt}" ]] || rm -f -- "${amp_audit_receipt}"
 }
 trap cleanup EXIT
 
 case "${scenario}" in
-    full | installed-gemini | copilot-presentation) ;;
-    *) fail "ZENTTY_AGENT_IPC_SCENARIO must be full, installed-gemini, or copilot-presentation" ;;
+    full | installed-gemini | copilot-presentation | amp-plugin) ;;
+    *) fail "ZENTTY_AGENT_IPC_SCENARIO must be full, installed-gemini, copilot-presentation, or amp-plugin" ;;
 esac
 
 case "${backend}" in
@@ -159,7 +167,7 @@ ln -s "${actor}" "${fake_bin}/codex"
 ln -s "${actor}" "${fake_bin}/claude"
 ln -s "${actor}" "${fake_bin}/gemini"
 ln -s "${actor}" "${fake_bin}/plain-title"
-for binary in copilot opencode pi omp small-harness cursor-agent droid kimi grok agy hermes vibe; do
+for binary in amp copilot opencode pi omp small-harness cursor-agent droid kimi grok agy hermes vibe; do
     ln -s "${actor}" "${fake_bin}/${binary}"
 done
 
@@ -572,6 +580,69 @@ run_copilot_presentation() {
     state_directory=""
 }
 
+run_amp_plugin() {
+    command -v bun >/dev/null || fail "Bun is required to execute the real staged Amp plugin"
+    log="$(mktemp)"
+    start_receipt="$(mktemp)"
+    amp_audit_receipt="$(mktemp)"
+    state_directory="$(mktemp -d)"
+    private_home="$(mktemp -d)"
+    PATH="${fake_bin}:${PATH}" GDK_SCALE=1 GDK_DPI_SCALE=1 \
+        HOME="${private_home}" \
+        XDG_CONFIG_HOME="${private_home}/xdg-config" \
+        ZENTTY_CLI_DEBUG=1 \
+        ZENTTY_CONTROLLED_AGENT_START_RECEIPT="${start_receipt}" \
+        ZENTTY_CONTROLLED_AGENT_PROFILE=amp-plugin \
+        ZENTTY_AMP_AUDIT_RECEIPT="${amp_audit_receipt}" \
+        "${product}" \
+        --command "amp threads continue T-old --mode smart --label discard" \
+        --state-directory "${state_directory}" \
+        --no-session-restore >"${log}" 2>&1 &
+    product_pid=$!
+
+    zentty_product_wait_for_log "${log}" \
+        'kind=session.start session=T-ZenttyAmpE2E' \
+        "real staged Amp plugin did not emit authenticated session identity" ||
+        fail "real staged Amp plugin did not emit authenticated session identity"
+    zentty_product_wait_for_log "${log}" \
+        'sidebar-agent-status pane=pane-1 phase=Running interaction=None attention=false' \
+        "real staged Amp plugin did not project running state" ||
+        fail "real staged Amp plugin did not project running state"
+    zentty_product_wait_for_log "${log}" \
+        'sidebar-agent-status pane=pane-1 phase=Idle interaction=None attention=false' \
+        "real staged Amp plugin did not project final idle state" ||
+        fail "real staged Amp plugin did not project final idle state"
+    wait_for_product "Amp real-plugin product run" 200
+    amp_event_order="$(
+        grep -F 'agent-event pane=pane-1 worklane=worklane-1 kind=' "${log}" |
+            grep -F 'session=T-ZenttyAmpE2E' |
+            sed -n 's/.* kind=\([^ ]*\) session=.*/\1/p' |
+            paste -sd, -
+    )"
+    [[ "${amp_event_order}" == 'session.start,agent.running,agent.idle,agent.running,agent.idle' ]] ||
+        fail "real Amp plugin event order drifted: ${amp_event_order}"
+    grep -Fqx 'api-key=absent helper=exec' "${amp_audit_receipt}" ||
+        fail "Amp plugin did not strip API credentials before invoking the helper"
+    [[ "$(grep -Fc 'api-key=absent helper=exec' "${amp_audit_receipt}")" -eq 5 ]] ||
+        fail "not every Amp plugin event crossed the audited real-helper boundary"
+    grep -Fq 'args:<threads continue T-old --mode smart --label discard>' "${start_receipt}" ||
+        fail "Amp wrapper did not preserve original launch arguments"
+    grep -Fq 'launch agent:amp ' "${start_receipt}" ||
+        fail "Amp wrapper omitted canonical tool identity"
+    if grep -Fq 'controlled-secret-never-log' \
+        "${log}" "${start_receipt}" "${amp_audit_receipt}"; then
+        fail "Amp API credential appeared in a product or test receipt"
+    fi
+
+    rm -f -- "${log}" "${start_receipt}" "${amp_audit_receipt}"
+    rm -rf -- "${state_directory}" "${private_home}"
+    log=""
+    start_receipt=""
+    state_directory=""
+    private_home=""
+    amp_audit_receipt=""
+}
+
 run_gemini_terminal_notifications() {
     log="$(mktemp)"
     state_directory="$(mktemp -d)"
@@ -659,6 +730,7 @@ run_adapter \
     copilot-question \
     'zentty-linux: sidebar-agent-status pane=pane-1 phase=NeedsInput interaction=Question attention=true' \
     'Choose the Copilot path?'
+run_amp_plugin
 run_adapter \
     small-harness \
     'small-harness' \
@@ -724,6 +796,10 @@ fi
 
 if [[ "${scenario}" == copilot-presentation ]]; then
     run_copilot_presentation
+fi
+
+if [[ "${scenario}" == amp-plugin ]]; then
+    run_amp_plugin
 fi
 
 if [[ "${ZENTTY_REQUIRE_REAL_GEMINI:-false}" == true ]]; then
@@ -880,9 +956,11 @@ if [[ "${ZENTTY_REQUIRE_REAL_GEMINI:-false}" == true ]]; then
 fi
 
 if [[ "${scenario}" == full ]]; then
-    adapters="codex+codex-notify+claude+copilot+opencode+pi+omp+small-harness+gemini+cursor+droid+kimi+grok+agy+hermes+vibe"
+    adapters="codex+codex-notify+claude+copilot+amp-real-plugin+opencode+pi+omp+small-harness+gemini+cursor+droid+kimi+grok+agy+hermes+vibe"
 elif [[ "${scenario}" == copilot-presentation ]]; then
     adapters="copilot-presentation"
+elif [[ "${scenario}" == amp-plugin ]]; then
+    adapters="amp-real-plugin"
 else
     adapters="not-run-in-installed-gemini-scenario"
 fi

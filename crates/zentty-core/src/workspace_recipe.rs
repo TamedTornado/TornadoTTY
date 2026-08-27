@@ -3,6 +3,8 @@ use std::path::{Component, Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+use crate::agent_launch::sanitize_amp_resume_arguments;
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WorkspaceRecipe {
@@ -313,6 +315,24 @@ impl PaneRestoreDraft {
             let session_id = validated_opencode_session_id(&self.session_id)?;
             return Some(format!("opencode --session {session_id}"));
         }
+        if self.tool_name.eq_ignore_ascii_case("amp") {
+            let session_id = validated_amp_thread_id(&self.session_id)?;
+            let resume_arguments = sanitize_amp_resume_arguments(
+                self.agent_launch_snapshot
+                    .as_ref()
+                    .map_or(&[], |snapshot| snapshot.arguments.as_slice()),
+            )?;
+            return Some(
+                ["amp", "threads", "continue"]
+                    .into_iter()
+                    .map(str::to_owned)
+                    .chain(resume_arguments)
+                    .chain([session_id])
+                    .map(|argument| shell_quoted_argument(&argument))
+                    .collect::<Vec<_>>()
+                    .join(" "),
+            );
+        }
         if self.tool_name.eq_ignore_ascii_case("pi") {
             self.require_working_directory()?;
             return Some("pi -c".to_owned());
@@ -374,6 +394,26 @@ fn validated_opencode_session_id(value: &str) -> Option<String> {
             .chars()
             .all(|character| character.is_ascii_alphanumeric()))
     .then(|| value.to_owned())
+}
+
+fn validated_amp_thread_id(value: &str) -> Option<String> {
+    let suffix = value.strip_prefix("T-")?;
+    (!suffix.is_empty()
+        && suffix.chars().all(|character| {
+            character.is_ascii_alphanumeric() || character == '_' || character == '-'
+        }))
+    .then(|| value.to_owned())
+}
+
+fn shell_quoted_argument(argument: &str) -> String {
+    if !argument.is_empty()
+        && argument
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric() || "_./:=+-".contains(character))
+    {
+        return argument.to_owned();
+    }
+    format!("'{}'", argument.replace('\'', "'\\''"))
 }
 
 fn validated_uuid(value: &str) -> Option<String> {

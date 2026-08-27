@@ -360,13 +360,11 @@ fn uninstall_amp(home: &Path) -> Result<String, String> {
 
 fn integration_resource(relative: &str) -> Result<PathBuf, String> {
     let executable = invoking_cli()?;
-    let root = executable
-        .parent()
-        .and_then(Path::parent)
-        .ok_or_else(|| "could not resolve staged resource root".to_owned())?;
-    let path = root.join("share/zentty").join(relative);
-    path.is_file()
-        .then_some(path)
+    executable
+        .ancestors()
+        .skip(1)
+        .map(|ancestor| ancestor.join("share/zentty").join(relative))
+        .find(|candidate| candidate.is_file())
         .ok_or_else(|| format!("staged integration resource {relative:?} is missing"))
 }
 

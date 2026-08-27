@@ -841,12 +841,12 @@
       "swift_tests": ["ZenttyLogicTests/AgentStatusSupportTests.swift", "ZenttyLogicTests/AgentResumeCommandBuilderTests.swift"],
       "classification": "REQUIRED_LATER",
       "origin": "PORT_PARITY",
-      "user_impact": "Amp remains usable as a terminal CLI initially but lacks Zentty-managed status and resume integration.",
-      "linux_owner_issue": 7,
-      "implementation_status": "NOT_IMPLEMENTED",
-      "focused_tests": [],
-      "product_scenarios": [],
-      "test_plan": "Use a real temporary Amp configuration and plugin install path plus a real terminal session.",
+      "user_impact": "Amp launches install and execute Zentty's owned plugin, publish real thread status, preserve safe launch options, and restore the thread without replaying execute or management arguments.",
+      "linux_owner_issue": 127,
+      "implementation_status": "IMPLEMENTED",
+      "focused_tests": ["crates/zentty-core/tests/agent_launch.rs", "crates/zentty-core/tests/workspace_recipe.rs", "crates/zentty-core/tests/agent_status.rs", "crates/zentty-agent-ipc/tests/product_cli.rs", "linux/tests/staged-bundle"],
+      "product_scenarios": ["linux/tests/rust-agent-ipc"],
+      "test_plan": "Table-driven Rust tests cover source allow/drop/reject sanitization, exact prelaunch events, thread-ID validation, quoting, identity-preserving provisional-session rekey, and hostile inputs. Staged-bundle proves owned install and unmarked-conflict fallback. The focused rust-agent-ipc nested-X11 journey runs the real pane wrapper, bundled helper, installed TypeScript plugin under Bun, five authenticated plugin events, real PTY/socket/Ghostty/sidebar projection, final Idle, preserved original argv, and an exec audit proving AMP_API_KEY is absent from every real helper invocation.",
       "alternative_or_blocker": null
     },
     {
