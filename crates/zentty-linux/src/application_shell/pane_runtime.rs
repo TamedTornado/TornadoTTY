@@ -643,6 +643,31 @@ impl PaneRuntimeCoordinator {
         });
         Self::connect_surface_progress_callback(shell, pane_id, surface);
         Self::connect_surface_notification_callback(shell, pane_id, surface);
+        let menu_id = pane_id.to_owned();
+        let weak = Rc::downgrade(shell);
+        surface.on_context_menu(move || {
+            let Some(shell) = weak.upgrade() else {
+                return;
+            };
+            let has_selection = {
+                let shell_ref = shell.borrow();
+                shell_ref
+                    .pane_runtime
+                    .surface(&menu_id)
+                    .is_some_and(|surface| {
+                        surface
+                            .read_selection()
+                            .is_ok_and(|selection| !selection.is_empty())
+                    })
+            };
+            let shell_ref = shell.borrow();
+            if let Some(router) = &shell_ref.action_router {
+                router.set_native_copy_enabled(has_selection);
+            }
+            eprintln!(
+                "zentty-linux: terminal-context-menu pane={menu_id} selection={has_selection}"
+            );
+        });
         let weak = Rc::downgrade(shell);
         let exited_id = pane_id.to_owned();
         surface.on_child_exited(move || {

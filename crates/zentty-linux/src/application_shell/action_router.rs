@@ -1251,6 +1251,7 @@ pub(super) const ACTION_SPECS: &[ActionSpec] = &[
 
 pub(super) struct ActionRouter {
     group: gio::SimpleActionGroup,
+    native_window_group: gio::SimpleActionGroup,
 }
 
 impl ActionRouter {
@@ -1262,12 +1263,23 @@ impl ActionRouter {
             .borrow()
             .window
             .insert_action_group("workspace", Some(&group));
-        Ok(Self { group })
+        let native_window_group = gio::SimpleActionGroup::new();
+        populate_native_window_actions(shell, &native_window_group);
+        shell
+            .borrow()
+            .window
+            .insert_action_group("win", Some(&native_window_group));
+        Ok(Self {
+            group,
+            native_window_group,
+        })
     }
 
     pub(super) fn uninstall(self, window: &gtk::Window) {
         window.insert_action_group("workspace", None::<&gio::SimpleActionGroup>);
+        window.insert_action_group("win", None::<&gio::SimpleActionGroup>);
         drop(self.group);
+        drop(self.native_window_group);
     }
 
     pub(super) fn refresh_availability(
@@ -1306,12 +1318,73 @@ impl ActionRouter {
         Ok(())
     }
 
+    pub(super) fn set_native_copy_enabled(&self, enabled: bool) {
+        if let Some(action) = self
+            .native_window_group
+            .lookup_action("copy")
+            .and_then(|action| action.downcast::<gio::SimpleAction>().ok())
+        {
+            action.set_enabled(enabled);
+        }
+    }
+
     pub(super) fn validate_palette_items(
         &self,
         items: &[CommandPaletteItem],
     ) -> Result<(), String> {
         validate_palette_items_for_group(&self.group, items)
     }
+}
+
+fn populate_native_window_actions(
+    shell: &Rc<RefCell<ApplicationShell>>,
+    group: &gio::SimpleActionGroup,
+) {
+    let copy = gio::SimpleAction::new("copy", None);
+    copy.set_enabled(false);
+    let weak = Rc::downgrade(shell);
+    copy.connect_activate(move |_, _| {
+        if let Some(shell) = weak.upgrade() {
+            ApplicationShell::copy_focused_selection(
+                &shell,
+                super::clipboard_actions::CopyStyle::Default,
+            );
+        }
+    });
+    group.add_action(&copy);
+
+    for (name, binding) in [
+        ("paste", "paste_from_clipboard"),
+        ("clear", "clear_screen"),
+        ("reset", "reset"),
+    ] {
+        let action = gio::SimpleAction::new(name, None);
+        let weak = Rc::downgrade(shell);
+        action.connect_activate(move |_, _| {
+            if let Some(shell) = weak.upgrade() {
+                shell.borrow().perform_focused_binding_action(name, binding);
+            }
+        });
+        group.add_action(&action);
+    }
+
+    let new_window = gio::SimpleAction::new("new-window", None);
+    let weak = Rc::downgrade(shell);
+    new_window.connect_activate(move |_, _| {
+        if let Some(shell) = weak.upgrade() {
+            shell.borrow().request_new_window();
+        }
+    });
+    group.add_action(&new_window);
+
+    let close = gio::SimpleAction::new("close", None);
+    let weak = Rc::downgrade(shell);
+    close.connect_activate(move |_, _| {
+        if let Some(shell) = weak.upgrade() {
+            shell.borrow().request_close_window();
+        }
+    });
+    group.add_action(&close);
 }
 
 fn ordinary_palette_items_for_group(

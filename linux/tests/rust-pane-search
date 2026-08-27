@@ -655,6 +655,33 @@ run_palette_action 'Select All' \
 if [[ "${ZENTTY_CLIPBOARD_ONLY:-false}" == true ]]; then
     assert_primary_clipboard 'https://example.com/reset?token=noisegamma&utm_source=mail'
 fi
+if uses_xdotool; then
+    # Ghostty's embedded context menu addresses host actions as `win.copy`.
+    # A standalone Ghostty window supplies that action itself; Zentty must do
+    # so as the embedding window and synchronize it from the live native
+    # selection before the popover resolves availability.
+    set_standard_clipboard 'context-menu-copy-was-disabled'
+    context_before="$(grep -Fc 'zentty-linux: terminal-context-menu pane=pane-1 selection=true' "${log}" || true)"
+    copy_before="$(grep -Fc 'zentty-linux: action=copy pane=pane-1 bytes=' "${log}" || true)"
+    xdotool mousemove --sync --window "${window_id}" 600 350 click 3
+    wait_for_count_greater \
+        'zentty-linux: terminal-context-menu pane=pane-1 selection=true' \
+        "${context_before}" \
+        'right-click menu did not observe the live Ghostty selection'
+    # GTK does not move keyboard focus into a pointer-opened popover, so Home
+    # and Return would still be delivered to the terminal. Activate the first
+    # visible row through the same physical pointer path the user exercises.
+    xdotool mousemove_relative --sync -- 48 24 click 1
+    wait_for_count_greater \
+        'zentty-linux: action=copy pane=pane-1 bytes=' \
+        "${copy_before}" \
+        'enabled terminal context-menu Copy did not reach the Zentty clipboard action'
+    assert_standard_clipboard 'https://example.com/reset?token=noisegamma'
+    if [[ "${ZENTTY_CONTEXT_MENU_ONLY:-false}" == true ]]; then
+        echo "Rust terminal context menu passed: ${backend}, real-pty=true, physical-pointer=true"
+        exit 0
+    fi
+fi
 run_palette_action 'Copy' 'zentty-linux: action=copy pane=pane-1' 5
 grep -F 'zentty-linux: action=copy pane=pane-1 bytes=' "${log}" | tail -1 |
     grep -Fq 'modified=true' || fail "automatic Copy did not run the configured clean pipeline"

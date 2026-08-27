@@ -696,6 +696,20 @@ impl GhosttySurface {
         self.handlers.borrow_mut().push(handler);
     }
 
+    /// Registers a callback emitted immediately before Ghostty opens its
+    /// terminal context menu.
+    ///
+    /// Embedders use this boundary to synchronize host-owned actions such as
+    /// `win.copy` with the live terminal selection before GTK resolves menu
+    /// availability.
+    pub fn on_context_menu(&self, callback: impl Fn() + 'static) {
+        let handler = self.widget.connect_local("menu", false, move |_| {
+            callback();
+            None
+        });
+        self.handlers.borrow_mut().push(handler);
+    }
+
     pub fn on_child_exited(&self, callback: impl Fn() + 'static) {
         let handler = self
             .widget
