@@ -59,7 +59,17 @@ pub struct CleanCopyResult {
 
 #[must_use]
 pub fn clean_copy(input: &str, options: CleanCopyOptions) -> CleanCopyResult {
+    clean_copy_with_columns(input, options, None)
+}
+
+#[must_use]
+pub fn clean_copy_with_columns(
+    input: &str,
+    options: CleanCopyOptions,
+    columns: Option<usize>,
+) -> CleanCopyResult {
     let mut text = strip_ansi(input);
+    let wrap_width = WrapWidthEvidence::new(&text, columns);
     let padded_short_rows = has_multiple_padded_short_rows(&text);
     text = trim_trailing_whitespace(&text);
     text = trim_trailing_blank_lines(&text);
@@ -67,7 +77,7 @@ pub fn clean_copy(input: &str, options: CleanCopyOptions) -> CleanCopyResult {
     if options.remove_box_drawing {
         text = strip_box_chrome(&text).unwrap_or(text);
     }
-    text = strip_agent_prompt(&text, padded_short_rows).unwrap_or(text);
+    text = strip_agent_prompt(&text, padded_short_rows, wrap_width).unwrap_or(text);
     if options.flatten_slash_command_selections {
         text = strip_slash_command_decoration(&text).unwrap_or(text);
     }
@@ -82,11 +92,39 @@ pub fn clean_copy(input: &str, options: CleanCopyOptions) -> CleanCopyResult {
     if options.flatten_multi_line_commands {
         text = transform_multi_line_command(&text, options, padded_short_rows).unwrap_or(text);
     }
-    text = reflow_plain_prose(&text, padded_short_rows).unwrap_or(text);
+    text = reflow_plain_prose(&text, padded_short_rows, wrap_width).unwrap_or(text);
     text = dedent_common_prefix(&text);
     CleanCopyResult {
         was_modified: text != input,
         text,
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct WrapWidthEvidence {
+    width: Option<usize>,
+}
+
+impl WrapWidthEvidence {
+    fn new(input: &str, columns: Option<usize>) -> Self {
+        let longest = input
+            .split('\n')
+            .filter(|line| !line.is_empty())
+            .map(|line| line.trim().chars().count())
+            .max()
+            .unwrap_or(0);
+        let width = columns.unwrap_or(usize::MAX).min(longest);
+        Self {
+            width: (width > 0).then_some(width),
+        }
+    }
+
+    fn ends_before_wrap_edge(self, line: &str) -> bool {
+        let Some(width) = self.width else {
+            return false;
+        };
+        let slack = 16.max(width / 4);
+        line.trim().chars().count() < width.saturating_sub(slack)
     }
 }
 
@@ -390,7 +428,11 @@ fn agent_marker(line: &str) -> Option<char> {
         .filter(|character| matches!(character, '›' | '❯' | '•' | '⏺' | '●'))
 }
 
-fn strip_agent_prompt(input: &str, padded_short_rows: bool) -> Option<String> {
+fn strip_agent_prompt(
+    input: &str,
+    padded_short_rows: bool,
+    wrap_width: WrapWidthEvidence,
+) -> Option<String> {
     let lines = input.split('\n').collect::<Vec<_>>();
     let nonempty = lines
         .iter()
@@ -406,7 +448,7 @@ fn strip_agent_prompt(input: &str, padded_short_rows: bool) -> Option<String> {
         .count();
     if marker_count > 1 {
         if first_marker == '•' {
-            return reflow_separated_bullets(&lines);
+            return reflow_separated_bullets(&lines, wrap_width);
         }
         return None;
     }
@@ -440,7 +482,7 @@ fn strip_agent_prompt(input: &str, padded_short_rows: bool) -> Option<String> {
     {
         return None;
     }
-    let flattened = flatten_wrapped_paragraphs(&candidate);
+    let flattened = flatten_wrapped_paragraphs(&candidate, wrap_width);
     (flattened != input).then_some(flattened)
 }
 
@@ -490,7 +532,7 @@ fn strip_slash_command_decoration(input: &str) -> Option<String> {
     None
 }
 
-fn reflow_separated_bullets(lines: &[&str]) -> Option<String> {
+fn reflow_separated_bullets(lines: &[&str], wrap_width: WrapWidthEvidence) -> Option<String> {
     let blocks = lines
         .split(|line| line.trim().is_empty())
         .filter(|block| !block.is_empty())
@@ -513,14 +555,18 @@ fn reflow_separated_bullets(lines: &[&str]) -> Option<String> {
             .map(|block| {
                 let mut content = block.iter().map(|line| line.trim()).collect::<Vec<_>>();
                 content[0] = content[0].trim_start_matches('•').trim_start();
-                format!("• {}", content.join(" "))
+                format!("• {}", flatten_paragraph(&content, wrap_width))
             })
             .collect::<Vec<_>>()
             .join("\n\n"),
     )
 }
 
-fn reflow_plain_prose(input: &str, padded_short_rows: bool) -> Option<String> {
+fn reflow_plain_prose(
+    input: &str,
+    padded_short_rows: bool,
+    wrap_width: WrapWidthEvidence,
+) -> Option<String> {
     let mut lines = input.split('\n').map(str::trim).collect::<Vec<_>>();
     while lines.first() == Some(&"") {
         lines.remove(0);
@@ -536,6 +582,7 @@ fn reflow_plain_prose(input: &str, padded_short_rows: bool) -> Option<String> {
     let has_candidate = lines.split(|line| line.is_empty()).any(|paragraph| {
         paragraph.len() >= 2
             && !paragraph.iter().all(|line| is_list_item(line))
+            && !paragraph.iter().all(|line| is_structured_record_line(line))
             && paragraph
                 .iter()
                 .any(|line| line.len() >= 60 && line.contains(' '))
@@ -564,11 +611,11 @@ fn reflow_plain_prose(input: &str, padded_short_rows: bool) -> Option<String> {
             })
             .collect();
     }
-    let flattened = flatten_wrapped_paragraphs(&lines);
+    let flattened = flatten_wrapped_paragraphs(&lines, wrap_width);
     (flattened != input).then_some(flattened)
 }
 
-fn flatten_wrapped_paragraphs<T: AsRef<str>>(lines: &[T]) -> String {
+fn flatten_wrapped_paragraphs<T: AsRef<str>>(lines: &[T], wrap_width: WrapWidthEvidence) -> String {
     let first = lines
         .iter()
         .position(|line| !line.as_ref().trim().is_empty())
@@ -587,7 +634,7 @@ fn flatten_wrapped_paragraphs<T: AsRef<str>>(lines: &[T]) -> String {
                 if !output.is_empty() {
                     output.push_str(&"\n".repeat(blanks + 1));
                 }
-                output.push_str(&flatten_paragraph(&paragraph));
+                output.push_str(&flatten_paragraph(&paragraph, wrap_width));
                 paragraph.clear();
                 blanks = 0;
             }
@@ -600,16 +647,22 @@ fn flatten_wrapped_paragraphs<T: AsRef<str>>(lines: &[T]) -> String {
         if !output.is_empty() {
             output.push_str(&"\n".repeat(blanks + 1));
         }
-        output.push_str(&flatten_paragraph(&paragraph));
+        output.push_str(&flatten_paragraph(&paragraph, wrap_width));
     }
     output
 }
 
-fn flatten_paragraph(lines: &[&str]) -> String {
+fn flatten_paragraph(lines: &[&str], wrap_width: WrapWidthEvidence) -> String {
+    if lines.iter().all(|line| is_structured_record_line(line)) {
+        return lines.join("\n");
+    }
     let mut output = Vec::new();
     let mut current = String::new();
-    for line in lines {
-        if is_list_item(line) && !current.is_empty() {
+    for (index, line) in lines.iter().enumerate() {
+        let preceding_real_newline = index > 0
+            && !lines[index - 1].trim_end().ends_with('\\')
+            && wrap_width.ends_before_wrap_edge(lines[index - 1]);
+        if (is_list_item(line) || preceding_real_newline) && !current.is_empty() {
             output.push(std::mem::take(&mut current));
         }
         if !current.is_empty() && !should_join_wrapped_token(&current, line) {
@@ -621,6 +674,31 @@ fn flatten_paragraph(lines: &[&str]) -> String {
         output.push(current);
     }
     output.join("\n")
+}
+
+fn is_structured_record_line(line: &str) -> bool {
+    let trimmed = line.trim();
+    if trimmed.starts_with('#')
+        || (trimmed.starts_with('[') && trimmed.ends_with(']') && trimmed.len() > 2)
+    {
+        return true;
+    }
+    let key_length = trimmed
+        .chars()
+        .take_while(|character| {
+            character.is_ascii_alphanumeric() || matches!(character, '_' | '.' | '-')
+        })
+        .count();
+    if key_length == 0
+        || !trimmed
+            .chars()
+            .next()
+            .is_some_and(|character| character.is_ascii_alphabetic() || character == '_')
+    {
+        return false;
+    }
+    let remainder = trimmed[key_length..].trim_start();
+    remainder.starts_with('=') || remainder.starts_with(": ")
 }
 
 fn should_join_wrapped_token(left: &str, right: &str) -> bool {
@@ -1331,17 +1409,18 @@ mod classifier_tests {
 
     #[test]
     fn separated_bullet_classifier_requires_multiple_valid_blocks() {
-        assert_eq!(reflow_separated_bullets(&["• one"]), None);
+        let no_width = WrapWidthEvidence { width: None };
+        assert_eq!(reflow_separated_bullets(&["• one"], no_width), None);
         assert_eq!(
-            reflow_separated_bullets(&["• one", "", "• two"]),
+            reflow_separated_bullets(&["• one", "", "• two"], no_width),
             Some("• one\n\n• two".to_owned())
         );
         assert_eq!(
-            reflow_separated_bullets(&["• one", "", "continuation", "• two"]),
+            reflow_separated_bullets(&["• one", "", "continuation", "• two"], no_width,),
             None
         );
         assert_eq!(
-            reflow_separated_bullets(&["• one", "• extra", "", "• two"]),
+            reflow_separated_bullets(&["• one", "• extra", "", "• two"], no_width),
             None
         );
     }
@@ -1468,7 +1547,7 @@ mod classifier_tests {
             "fourth ordinary line that remains part of the same wrapped paragraph"
         );
         assert_eq!(
-            reflow_plain_prose(input, false),
+            reflow_plain_prose(input, false, WrapWidthEvidence { width: None }),
             Some(input.replace('\n', " "))
         );
     }

@@ -139,7 +139,7 @@ pub use agent_adapters::{
 };
 pub use clean_copy::{
     CleanCopyOptions, CleanCopyResult, CommandFlattenAggressiveness, clean_copy,
-    is_likely_markdown, reformat_markdown,
+    clean_copy_with_columns, is_likely_markdown, reformat_markdown,
 };
 pub use close_decision::{
     CloseDecision, CloseEvidence, ClosePaneEvidence, CloseReason, CloseTarget, decide_close,

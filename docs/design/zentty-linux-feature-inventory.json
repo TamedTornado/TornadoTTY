@@ -377,17 +377,17 @@
     {
       "id": "clipboard.clean-raw-markdown",
       "category": "search_clipboard",
-      "behavior": "Provide configurable Clean Copy, exact Copy Raw, automatic clean-copy override, URL/path cleanup, and Copy as Markdown while preserving prose, commands, indentation, blank lines, columns, IPv6 and functional URL parameters.",
+      "behavior": "Provide configurable Clean Copy, exact Copy Raw, automatic clean-copy override, URL/path cleanup, and Copy as Markdown while preserving real program newlines, structured records, prose, commands, indentation, blank lines, columns, IPv6 and functional URL parameters.",
       "source": ["Zentty/Terminal/CleanCopyPipeline.swift", "Zentty/Terminal/CleanCopyCommandFlattening.swift", "Zentty/Terminal/CleanCopyURLHelpers.swift", "Zentty/Terminal/MarkdownReformatter.swift", "Zentty/Terminal/TerminalClipboard.swift"],
       "swift_tests": ["ZenttyLogicTests/CleanCopyPipelineTests.swift", "ZenttyLogicTests/CleanCopyCommandFlatteningTests.swift", "ZenttyLogicTests/CleanCopyURLHelpersTests.swift", "ZenttyLogicTests/MarkdownReformatterTests.swift", "ZenttyLogicTests/TerminalClipboardTests.swift"],
       "classification": "REQUIRED_INITIAL_RELEASE",
       "origin": "PORT_PARITY",
       "user_impact": "Clean Copy is a named public Zentty feature; corruption or omission forces users back to manually repairing terminal output.",
       "linux_owner_issue": 122,
-      "implementation_status": "PARTIAL",
+      "implementation_status": "IMPLEMENTED",
       "focused_tests": ["crates/zentty-core/tests/clean_copy.rs", "crates/zentty-linux/src/platform.rs", "crates/zentty-linux/src/application_shell/clipboard_actions.rs", "crates/zentty-linux/src/application_shell/action_router.rs", "crates/zentty-linux/src/sidebar.rs"],
       "product_scenarios": ["linux/tests/rust-pane-search"],
-      "test_plan": "Preserve source-derived cleanup and bailout goldens plus mutation coverage; in controlled X11 and Wayland, preserve an independent non-text owner when no Ghostty selection exists, select real terminal text through Select All, read the exact primary selection externally, invoke automatic Copy, Copy Raw and Copy as Markdown through the real command palette, read exact standard-clipboard bytes externally, paste cleaned bytes back through the real PTY, and prove distinct selections remain isolated across two real windows. GH-122 must add the current source's terminal-width-aware structured-newline cases before this returns to IMPLEMENTED. The process-level clipboard config snapshot and automatic clean-copy substitution use the single GH-20 settings owner. Remote non-text paste/upload remains owned by its separately qualified GH-17 workflow."
+      "test_plan": "Preserve source-derived cleanup and bailout goldens plus mutation coverage, including terminal-width evidence, longest-line fallback, short real newlines, width-reaching prose, systemd/unit, key=value, key: value, section and comment records, mixed prose/record selections, and prose whose first line contains '='. In controlled X11 and Wayland, preserve an independent non-text owner when no Ghostty selection exists, select real terminal text through Select All, read the exact primary selection externally, invoke automatic Copy, Copy Raw and Copy as Markdown through the real command palette, read exact standard-clipboard bytes externally, paste cleaned bytes back through the real PTY, and prove distinct selections remain isolated across two real windows. The X11 clipboard journey additionally requires a numeric column receipt derived from the selected live Ghostty surface, exact raw program bytes, width-aware prose folding, and verbatim structured-record newlines. The process-level clipboard config snapshot and automatic clean-copy substitution use the single GH-20 settings owner. Remote non-text paste/upload remains owned by its separately qualified GH-17 workflow."
     },
     {
       "id": "project.git-review-icons",

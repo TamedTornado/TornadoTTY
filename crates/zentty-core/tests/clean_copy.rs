@@ -1,10 +1,116 @@
 use zentty_core::{
-    CleanCopyOptions, CommandFlattenAggressiveness, clean_copy, is_likely_markdown,
-    reformat_markdown,
+    CleanCopyOptions, CommandFlattenAggressiveness, clean_copy, clean_copy_with_columns,
+    is_likely_markdown, reformat_markdown,
 };
 
 fn clean(input: &str) -> String {
     clean_copy(input, CleanCopyOptions::default()).text
+}
+
+fn clean_at(input: &str, columns: usize) -> String {
+    clean_copy_with_columns(input, CleanCopyOptions::default(), Some(columns)).text
+}
+
+#[test]
+fn clean_copy_preserves_structured_record_blocks() {
+    let systemd = concat!(
+        "# /etc/systemd/system/tailscale-local-lan-route.service\n",
+        "[Unit]\n",
+        "Description=Prefer local HQ LAN over overlapping Tailscale route\n",
+        "After=network-online.target tailscaled.service\n",
+        "Wants=network-online.target\n\n",
+        "[Service]\n",
+        "Type=oneshot\n",
+        "ExecStart=-/usr/sbin/ip rule add to 10.0.0.0/24 priority 2500 lookup main\n",
+        "ExecStop=-/usr/sbin/ip rule del to 10.0.0.0/24 priority 2500 lookup main\n",
+        "RemainAfterExit=yes\n\n",
+        "[Install]\n",
+        "WantedBy=multi-user.target",
+    );
+    assert_eq!(clean(systemd), systemd);
+
+    let colon_records = concat!(
+        "name: tailscale-local-lan-route\n",
+        "description: Prefer the local HQ LAN over the overlapping Tailscale route\n",
+        "command: /usr/sbin/ip rule add to 10.0.0.0/24 priority 2500 lookup main\n",
+        "enabled: true",
+    );
+    assert_eq!(clean(colon_records), colon_records);
+
+    let mixed = concat!(
+        "Summary:\n",
+        "The route helper adds a policy rule so the local HQ LAN wins over the wider\n",
+        "Tailscale route, and removes it again when the unit is stopped or the host\n",
+        "reboots.\n\n",
+        "[Service]\n",
+        "Type=oneshot\n",
+        "ExecStart=-/usr/sbin/ip rule add to 10.0.0.0/24 priority 2500 lookup main\n",
+        "RemainAfterExit=yes",
+    );
+    assert_eq!(
+        clean_at(mixed, 71),
+        concat!(
+            "Summary:\n",
+            "The route helper adds a policy rule so the local HQ LAN wins over the wider ",
+            "Tailscale route, and removes it again when the unit is stopped or the host reboots.\n\n",
+            "[Service]\n",
+            "Type=oneshot\n",
+            "ExecStart=-/usr/sbin/ip rule add to 10.0.0.0/24 priority 2500 lookup main\n",
+            "RemainAfterExit=yes",
+        )
+    );
+}
+
+#[test]
+fn clean_copy_still_reflows_prose_whose_first_line_contains_equals() {
+    let input = concat!(
+        "Set DEBUG=1 in the environment before starting the service so the route helper\n",
+        "prints every rule it adds and removes to the journal.",
+    );
+    assert_eq!(
+        clean(input),
+        "Set DEBUG=1 in the environment before starting the service so the route helper prints every rule it adds and removes to the journal."
+    );
+}
+
+#[test]
+fn clean_copy_uses_terminal_width_to_preserve_real_newlines() {
+    let input = concat!(
+        "Summary:\n",
+        "The route helper adds a policy rule so the local HQ LAN wins over the wider\n",
+        "Tailscale route, and removes it again when the unit is stopped or the host\n",
+        "reboots.",
+    );
+    assert_eq!(
+        clean_at(input, 80),
+        concat!(
+            "Summary:\n",
+            "The route helper adds a policy rule so the local HQ LAN wins over the wider ",
+            "Tailscale route, and removes it again when the unit is stopped or the host reboots.",
+        )
+    );
+}
+
+#[test]
+fn clean_copy_falls_back_to_longest_line_when_width_is_unknown() {
+    let input = concat!(
+        "Ran the migration on staging\n",
+        "Done in 4.2s\n",
+        "Another command output line that is fairly long for a terminal",
+    );
+    assert_eq!(clean(input), input);
+}
+
+#[test]
+fn clean_copy_folds_lines_that_reach_or_exceed_terminal_width() {
+    let input = concat!(
+        "This line was soft-wrapped by the terminal and copied back as one long line over\n",
+        "the pane width.",
+    );
+    assert_eq!(
+        clean_at(input, 40),
+        "This line was soft-wrapped by the terminal and copied back as one long line over the pane width."
+    );
 }
 
 fn padded(line: &str, width: usize) -> String {
@@ -301,12 +407,12 @@ fn plain_prose_reflow_obeys_every_source_bailout_and_quote_threshold() {
 
     let minority = format!("> {long}\nplain continuation\nplain ending");
     assert_eq!(
-        clean(&minority),
+        clean_at(&minority, 20),
         format!("> {long} plain continuation plain ending")
     );
     let majority = format!("> {long}\n> quoted continuation\nplain ending");
     assert_eq!(
-        clean(&majority),
+        clean_at(&majority, 20),
         format!("{long} quoted continuation plain ending")
     );
 }
@@ -320,7 +426,7 @@ fn prose_reflow_preserves_repeated_gaps_and_markdown_item_boundaries() {
     );
     let mixed = "A deliberately long opening sentence that exceeds sixty characters for reflow.\nIt has a continuation.\n\n- first item wraps\n  onto another line\n- second item";
     assert_eq!(
-        clean(mixed),
+        clean_at(mixed, 20),
         "A deliberately long opening sentence that exceeds sixty characters for reflow. It has a continuation.\n\n- first item wraps onto another line\n- second item"
     );
 }
@@ -336,7 +442,7 @@ fn numbered_items_require_nonempty_ascii_digits_and_a_space() {
     for not_a_list in [". item", "x. item", "1.item"] {
         let input = format!("{long}\ncontinuation\n\n{not_a_list}\nwrapped");
         assert_eq!(
-            clean(&input),
+            clean_at(&input, 20),
             format!("{long} continuation\n\n{not_a_list} wrapped")
         );
     }

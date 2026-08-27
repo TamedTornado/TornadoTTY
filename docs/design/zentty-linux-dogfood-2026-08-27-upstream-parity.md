@@ -314,3 +314,45 @@ existing preset, chooser, theme, reload, persistence, and raw-byte journey.
 Feature inventory after reconciliation: 63 entries, 47 IMPLEMENTED, 4 PARTIAL,
 and 12 NOT_IMPLEMENTED. The installed dogfood application was not replaced or
 restarted; operator QA remains queued for the next explicit batch stop.
+
+## GH-122 width-aware Clean Copy and real newlines
+
+Upstream commit `0d0a3eff` established that libghostty already rejoins terminal
+soft wraps, so Clean Copy must not infer that every newline in a paragraph is a
+wrap. The Rust pipeline now carries one width-evidence value from entry to
+agent prompts, separated bullets, lists, and ordinary prose. The public
+compatibility entry point uses longest-line fallback; the live product calls
+the same pipeline with the selected Ghostty widget width divided into native
+cell widths. Missing or invalid metrics fail to `None` rather than inventing a
+column count. No Ghostty ABI expansion or second transformer was introduced.
+
+The translated source tests failed first because the width-aware entry point
+did not exist. They now cover systemd units, key/value and colon records,
+section headers, comments, prose beginning with `DEBUG=1`, short real newlines,
+unknown-width fallback, and lines reaching or exceeding the terminal width.
+Three older positive prose fixtures initially failed because they had asserted
+wrapping without a terminal width; they now supply their intended narrow-pane
+context while retaining their original expected text. The complete 32-case
+Clean Copy target remains green.
+
+Clippy rejected the first bounded float-to-column cast. It was replaced rather
+than suppressed: positive finite cell widths are counted across the integer
+GTK allocation, preserving fractional metrics without a lossy cast. Focused
+Linux tests pin exact, fractional-boundary, zero, sub-pixel, and NaN cases, and
+both core and Linux Clippy pass with warnings denied.
+
+The first controlled X11 clipboard run supplied a real `columns=71` receipt but
+found a mixed-selection false positive: a prose paragraph triggered the shared
+flatten pass, which then joined a long `ExecStart=` record to
+`RemainAfterExit=` even though a record-only selection was already protected.
+The single paragraph flattener now returns all-structured paragraphs verbatim,
+and a focused mixed prose/systemd regression test pins that repair.
+
+The final clipboard-only journey passes with a real Ghostty Select All, exact
+Copy Raw program bytes, a numeric live column receipt, exact width-aware Clean
+Copy bytes read by external `xclip`, primary selection, paste back through the
+real PTY, and two-window clipboard isolation. `Summary:` keeps its real newline,
+width-reaching prose folds, and every systemd record newline survives. Feature
+inventory after reconciliation: 63 entries, 48 IMPLEMENTED, 3 PARTIAL, and 12
+NOT_IMPLEMENTED. The installed dogfood application was not replaced or
+restarted; operator QA remains queued for the next explicit batch stop.

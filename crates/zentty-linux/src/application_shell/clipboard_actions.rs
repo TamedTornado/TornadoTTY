@@ -3,7 +3,9 @@ use std::rc::Rc;
 
 use gtk::prelude::*;
 use sha2::{Digest, Sha256};
-use zentty_core::{ClipboardConfig, clean_copy, is_likely_markdown, reformat_markdown};
+use zentty_core::{
+    ClipboardConfig, clean_copy_with_columns, is_likely_markdown, reformat_markdown,
+};
 
 use super::ApplicationShell;
 
@@ -28,7 +30,7 @@ impl CopyStyle {
 
 impl ApplicationShell {
     pub(super) fn copy_focused_selection(shell: &Rc<RefCell<Self>>, style: CopyStyle) {
-        let (pane_id, raw) = {
+        let (pane_id, raw, columns) = {
             let shell = shell.borrow();
             let Some(pane_id) = shell.state.focused_pane_id() else {
                 eprintln!(
@@ -54,11 +56,15 @@ impl ApplicationShell {
                     return;
                 }
             };
-            (pane_id.to_owned(), raw)
+            let columns = surface
+                .cell_size()
+                .ok()
+                .and_then(|cell| terminal_columns(surface.widget().width(), cell.width));
+            (pane_id.to_owned(), raw, columns)
         };
         shell.borrow().focus_selected_surface();
         let clipboard = shell.borrow().config.clipboard;
-        let Some(transformed) = prepared_payload(&raw, style, clipboard) else {
+        let Some(transformed) = prepared_payload(&raw, style, clipboard, columns) else {
             eprintln!(
                 "zentty-linux: action={} pane={pane_id} error=selection-empty",
                 style.action_name()
@@ -78,15 +84,35 @@ impl ApplicationShell {
         }
         let digest = Sha256::digest(transformed.as_bytes());
         eprintln!(
-            "zentty-linux: action={} pane={pane_id} bytes={} modified={modified} sha256={digest:x}",
+            "zentty-linux: action={} pane={pane_id} bytes={} modified={modified} columns={} sha256={digest:x}",
             style.action_name(),
-            transformed.len()
+            transformed.len(),
+            columns.map_or_else(|| "unknown".to_owned(), |value| value.to_string())
         );
     }
 }
 
-fn prepared_payload(raw: &str, style: CopyStyle, clipboard: ClipboardConfig) -> Option<String> {
-    (!raw.is_empty()).then(|| transform_selection(raw, style, clipboard))
+fn terminal_columns(widget_width: i32, cell_width: f64) -> Option<usize> {
+    if widget_width <= 0 || !cell_width.is_finite() || cell_width < 1.0 {
+        return None;
+    }
+    let width = f64::from(widget_width);
+    let mut used = cell_width;
+    let mut columns = 0_usize;
+    while used <= width {
+        columns = columns.checked_add(1)?;
+        used += cell_width;
+    }
+    (columns > 0).then_some(columns)
+}
+
+fn prepared_payload(
+    raw: &str,
+    style: CopyStyle,
+    clipboard: ClipboardConfig,
+    columns: Option<usize>,
+) -> Option<String> {
+    (!raw.is_empty()).then(|| transform_selection(raw, style, clipboard, columns))
 }
 
 fn resolved_style(style: CopyStyle, clipboard: ClipboardConfig) -> CopyStyle {
@@ -97,9 +123,14 @@ fn resolved_style(style: CopyStyle, clipboard: ClipboardConfig) -> CopyStyle {
     }
 }
 
-fn transform_selection(raw: &str, style: CopyStyle, clipboard: ClipboardConfig) -> String {
+fn transform_selection(
+    raw: &str,
+    style: CopyStyle,
+    clipboard: ClipboardConfig,
+    columns: Option<usize>,
+) -> String {
     match resolved_style(style, clipboard) {
-        CopyStyle::Clean => clean_copy(raw, clipboard.clean_options).text,
+        CopyStyle::Clean => clean_copy_with_columns(raw, clipboard.clean_options, columns).text,
         CopyStyle::Markdown if is_likely_markdown(raw) => reformat_markdown(raw),
         CopyStyle::Default | CopyStyle::Raw | CopyStyle::Markdown => raw.to_owned(),
     }
@@ -107,7 +138,9 @@ fn transform_selection(raw: &str, style: CopyStyle, clipboard: ClipboardConfig) 
 
 #[cfg(test)]
 mod tests {
-    use super::{CopyStyle, prepared_payload, resolved_style, transform_selection};
+    use super::{
+        CopyStyle, prepared_payload, resolved_style, terminal_columns, transform_selection,
+    };
     use zentty_core::{ClipboardConfig, reformat_markdown};
 
     #[test]
@@ -153,19 +186,22 @@ mod tests {
             ..ClipboardConfig::default()
         };
         assert_eq!(
-            transform_selection(raw, CopyStyle::Default, clipboard),
+            transform_selection(raw, CopyStyle::Default, clipboard, None),
             "https://example.test/path"
         );
-        assert_eq!(transform_selection(raw, CopyStyle::Raw, clipboard), raw);
+        assert_eq!(
+            transform_selection(raw, CopyStyle::Raw, clipboard, None),
+            raw
+        );
 
         let markdown = "## Heading\n\nwrapped\nbody";
         assert_eq!(
-            transform_selection(markdown, CopyStyle::Markdown, clipboard),
+            transform_selection(markdown, CopyStyle::Markdown, clipboard, None),
             reformat_markdown(markdown)
         );
         let prose = "ordinary\nwrapped prose";
         assert_eq!(
-            transform_selection(prose, CopyStyle::Markdown, clipboard),
+            transform_selection(prose, CopyStyle::Markdown, clipboard, None),
             prose
         );
     }
@@ -173,12 +209,22 @@ mod tests {
     #[test]
     fn empty_selection_never_replaces_an_existing_clipboard_owner() {
         assert_eq!(
-            prepared_payload("", CopyStyle::Default, ClipboardConfig::default()),
+            prepared_payload("", CopyStyle::Default, ClipboardConfig::default(), None),
             None
         );
         assert_eq!(
-            prepared_payload(" ", CopyStyle::Raw, ClipboardConfig::default()),
+            prepared_payload(" ", CopyStyle::Raw, ClipboardConfig::default(), None),
             Some(" ".to_owned())
         );
+    }
+
+    #[test]
+    fn terminal_columns_use_live_widget_and_cell_metrics() {
+        assert_eq!(terminal_columns(800, 8.0), Some(100));
+        assert_eq!(terminal_columns(799, 8.0), Some(99));
+        assert_eq!(terminal_columns(0, 8.0), None);
+        assert_eq!(terminal_columns(800, 0.0), None);
+        assert_eq!(terminal_columns(800, 0.5), None);
+        assert_eq!(terminal_columns(800, f64::NAN), None);
     }
 }

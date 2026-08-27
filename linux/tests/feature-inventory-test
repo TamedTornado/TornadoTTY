@@ -60,8 +60,8 @@ jq -e '
     .result == "PASS" and
     .entry_count == 63 and
     .classifications.REQUIRED_INITIAL_RELEASE == 37 and
-    .implementation_statuses.IMPLEMENTED == 47 and
-    .implementation_statuses.PARTIAL == 4 and
+    .implementation_statuses.IMPLEMENTED == 48 and
+    .implementation_statuses.PARTIAL == 3 and
     .implementation_statuses.NOT_IMPLEMENTED == 12 and
     .evidence.app_commands == 70 and
     .evidence.pane_commands == 33 and
@@ -87,7 +87,8 @@ jq -e '
         "agent.claude-code",
         "agent.opencode",
         "worklane.titles-colors",
-        "configuration.settings-window-lifecycle"
+        "configuration.settings-window-lifecycle",
+        "clipboard.clean-raw-markdown"
     ] as $reconciled |
     all($reconciled[]; . as $id |
         ([$inventory.entries[] | select(.id == $id and .implementation_status == "IMPLEMENTED")] | length) == 1) and
@@ -167,8 +168,10 @@ jq -e '
 jq -e '
     .entries[] | select(.id == "clipboard.clean-raw-markdown") |
     .linux_owner_issue == 122 and
-    .implementation_status == "PARTIAL" and
+    .implementation_status == "IMPLEMENTED" and
     (.test_plan | contains("non-text owner")) and
+    (.test_plan | contains("numeric column receipt")) and
+    (.test_plan | contains("structured-record newlines")) and
     (.test_plan | contains("two real windows"))
 ' "${source_inventory}" >/dev/null || {
     echo "feature-inventory-test: clipboard closeout evidence regressed" >&2

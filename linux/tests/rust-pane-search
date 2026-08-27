@@ -391,7 +391,7 @@ fi
     cd "${state_directory}/working-directory"
     exec env "${product_environment[@]}" \
     "${product}" \
-    --command 'printf "https://example.com/reset?token=noisegamma&utm_source=mail"; while IFS= read -r line; do case "$line" in markdown) printf "\033[2J\033[3J\033[H## Clipboard Notes\n\nOne wrapped\nparagraph"; printf "\033]2;focus:markdown-ready\a" ;; clipboard-second) printf "\033[2J\033[3J\033[Hhttps://second.example/reset?utm_source=other-window"; printf "\033]2;focus:clipboard-second-ready\a" ;; search-corpus) printf "\033[2J\033[3J\033[Hselectable alpha\nnoise\nselectable beta\nselectable gamma\n"; printf "\033]2;focus:search-ready\a" ;; terminal-input-corpus) printf "\033[2J\033[3J\033[H"; for row in $(seq -w 1 160); do printf "AUTOSCROLL-%s\n" "$row"; done; printf "\033]2;focus:terminal-input-ready\a" ;; *) printf "\033]2;focus:%s\a" "$line" ;; esac; done' \
+    --command 'printf "https://example.com/reset?token=noisegamma&utm_source=mail"; while IFS= read -r line; do case "$line" in markdown) printf "\033[2J\033[3J\033[H## Clipboard Notes\n\nOne wrapped\nparagraph"; printf "\033]2;focus:markdown-ready\a" ;; clean-newlines) printf "\033[2J\033[3J\033[HSummary:\nThe route helper adds a policy rule so the local HQ LAN wins over the wider\nTailscale route, and removes it again when the unit is stopped or the host\nreboots.\n\n[Service]\nType=oneshot\nExecStart=-/usr/sbin/ip rule add to 10.0.0.0/24 priority 2500 lookup main\nRemainAfterExit=yes"; printf "\033]2;focus:clean-newlines-ready\a" ;; clipboard-second) printf "\033[2J\033[3J\033[Hhttps://second.example/reset?utm_source=other-window"; printf "\033]2;focus:clipboard-second-ready\a" ;; search-corpus) printf "\033[2J\033[3J\033[Hselectable alpha\nnoise\nselectable beta\nselectable gamma\n"; printf "\033]2;focus:search-ready\a" ;; terminal-input-corpus) printf "\033[2J\033[3J\033[H"; for row in $(seq -w 1 160); do printf "AUTOSCROLL-%s\n" "$row"; done; printf "\033]2;focus:terminal-input-ready\a" ;; *) printf "\033]2;focus:%s\a" "$line" ;; esac; done' \
     --state-directory "${state_directory}" \
     --no-session-restore
 ) >"${log}" 2>&1 &
@@ -677,6 +677,21 @@ press_key Return
 wait_for_fixed \
     'zentty-linux: title-pane=pane-1 value=focus:https://example.com/reset?token=noisegamma' \
     "cleaned compositor clipboard bytes did not paste back through the real PTY"
+
+type_text clean-newlines
+press_key Return
+wait_for_fixed 'zentty-linux: title-pane=pane-1 value=focus:clean-newlines-ready' \
+    "the real PTY did not present the width-aware Clean Copy fixture"
+run_palette_action 'Select All' \
+    'zentty-linux: action=select-all pane=pane-1 binding="select_all"'
+run_palette_action 'Copy Raw' 'zentty-linux: action=copy-raw pane=pane-1 bytes='
+assert_standard_clipboard $'Summary:\nThe route helper adds a policy rule so the local HQ LAN wins over the wider\nTailscale route, and removes it again when the unit is stopped or the host\nreboots.\n\n[Service]\nType=oneshot\nExecStart=-/usr/sbin/ip rule add to 10.0.0.0/24 priority 2500 lookup main\nRemainAfterExit=yes'
+run_palette_action 'Clean Copy' 'zentty-linux: action=clean-copy pane=pane-1 bytes='
+clean_newline_receipt="$(grep -F 'zentty-linux: action=clean-copy pane=pane-1 bytes=' "${log}" | tail -1)"
+clean_newline_columns="$(sed -n 's/.* columns=\([0-9][0-9]*\) .*/\1/p' <<<"${clean_newline_receipt}")"
+[[ "${clean_newline_columns}" =~ ^[1-9][0-9]*$ ]] ||
+    fail "Clean Copy did not receive the selected live Ghostty column count"
+assert_standard_clipboard $'Summary:\nThe route helper adds a policy rule so the local HQ LAN wins over the wider Tailscale route, and removes it again when the unit is stopped or the host reboots.\n\n[Service]\nType=oneshot\nExecStart=-/usr/sbin/ip rule add to 10.0.0.0/24 priority 2500 lookup main\nRemainAfterExit=yes'
 
 type_text markdown
 press_key Return
