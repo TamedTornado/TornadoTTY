@@ -448,3 +448,73 @@ ShellCheck and the feature-inventory runner passed. The broader
 `staged-shell-integration` inline-agent finding; GH-124 did not touch that
 actor or add an integration layer, so the unrelated failure was recorded but
 not folded into this behavioral issue.
+
+## Operator repair: Shortcuts Settings layout and palette
+
+The first installed parity batch exposed a page-level visual defect rather
+than the previously tested single keyboard-width condition. Shortcuts forced
+`#17191d` and `#202329` surfaces inside the otherwise light Settings window,
+centered naturally oversized command labels inside a fixed browser width,
+kept all six header actions in one rigid row, and allowed the detail pane to
+hide overflow behind a horizontal scrollbar. The operator observed clipped
+left labels, a clipped keyboard, contradictory light/dark surfaces, and
+padding unlike every adjacent Settings page.
+
+The page now inherits the Settings/libadwaita palette. Browser and keyboard
+cards use named palette colors, selected rows use the named accent foreground
+and background, and error text uses the named error color. Command labels are
+left-aligned and ellipsized. Keycaps can shrink inside a horizontally
+non-scrolling detail viewport; supporting labels wrap. The six header actions
+use an explicit three-column/two-row grid so all actions remain visible and
+physically traversable at the default width. Page margins now match the other
+Settings content rather than the prior isolated dark panel.
+
+The first real nested-Wayland journey proved the corrected keyboard geometry
+(`viewport=470 content=470 keyboard=414 fits=true`) but failed when the rigid
+header made Reset unreachable after Export. The responsive grid repaired that
+failure. A later run reached an existing asynchronous AlertDialog mapping race
+where an immediate synthetic Return preceded the response; no product timer or
+focus hack was added. The final unchanged journey passed end to end with real
+GTK Settings, physical traversal, native import/export choosers, persistence,
+restart, a real Ghostty surface/PTY, and a final geometry receipt of
+`viewport=410 content=410 keyboard=354 fits=true`. Six focused shortcut tests,
+strict Linux Clippy, direct changed-file rustfmt, and the staged ReleaseSafe
+build passed. This is focused evidence, not broad qualification.
+
+## Operator repair: true Move Pane cascading submenu
+
+The operator observed that **Move Pane to Worklane** destroyed the pane menu
+and replaced it with a separate one-item destination page. Source inspection
+confirmed macOS uses a real `NSMenuItem.submenu`; Linux explicitly called
+`parent_popover.set_child(...)`. The replacement page was functional but was
+not source-parity desktop behavior.
+
+Linux now keeps the parent context menu intact and opens a distinct
+right-positioned child `GtkPopover` parented to the Move Pane row. A normal GTK
+button opens that nested surface explicitly; an attempted `GtkMenuButton`
+inside the already-open custom popover did not activate in the controlled
+journey and was removed rather than patched with a gesture workaround. The
+submenu receives focus after the current GTK activation queue drains, without
+a timer. Destination activation first dismisses the nested and parent surfaces
+and dispatches selection/movement only from the parent's real `closed` signal.
+This prevents menu refresh from preserving a visible but stale one-pane
+catalog during a transfer.
+
+The existing X11 sidebar actor was extended rather than adding a harness. Its
+first revision correctly rejected the unactivated `GtkMenuButton`. The next
+proved parent and submenu visibility plus a named live-PTY transfer, then
+exposed stale repeated-open state. Event-driven close ownership repaired that.
+A controlled screenshot proved the final New Worklane row was visibly
+rendered; the remaining failures were harness mistakes: an activation claim
+was asserted before the click, native popovers were scanned in client-window
+coordinates, and eight Tabs wrapped an eight-item submenu instead of selecting
+its last item. Those requirements were corrected without weakening product
+assertions; the temporary screenshot hook was removed.
+
+The final actor passed with nine real Ghostty PTYs, real pointer activation of
+a named destination, simultaneous parent/submenu visibility, stable rows,
+repeated reopening, physical keyboard traversal to **New Worklane in This
+Window**, exact pane movement, and live PTY continuity. ShellCheck, strict
+Linux Clippy, direct changed-file rustfmt, and the staged ReleaseSafe build
+passed. The installed dogfood application was not replaced or restarted, and
+no full qualification was run or claimed.

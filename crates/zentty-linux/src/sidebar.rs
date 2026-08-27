@@ -1,6 +1,6 @@
 use gtk::glib::variant::ToVariant;
 use gtk::prelude::*;
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::collections::BTreeMap;
 use std::rc::Rc;
 use zentty_core::{ClipboardConfig, RankedServer, ServerRelevanceTier, SidebarWorklaneSummary};
@@ -1640,39 +1640,54 @@ fn make_move_to_worklane_button(
             );
         }
     });
+    let submenu = gtk::Popover::new();
+    submenu.set_position(gtk::PositionType::Right);
+    submenu.set_has_arrow(false);
+    let popovers = MovePanePopovers {
+        parent: parent_popover.clone(),
+        submenu: submenu.clone(),
+    };
+    submenu.set_child(Some(&make_move_to_worklane_content(
+        &popovers,
+        window,
+        source_worklane_id,
+        pane_id,
+        destinations,
+        can_create_new_worklane,
+        current_window_id,
+    )));
+    submenu.set_parent(&button);
+    let submenu_for_parent_close = submenu.clone();
+    parent_popover.connect_closed(move |_| submenu_for_parent_close.popdown());
     let parent_popover = parent_popover.clone();
-    let window = window.clone();
-    let source_worklane_id = source_worklane_id.to_owned();
     let pane_id = pane_id.to_owned();
-    let destinations = destinations.to_vec();
-    let current_window_id = current_window_id.to_owned();
     button.connect_clicked(move |_| {
-        eprintln!(
-            "zentty-linux: pane-context action=move-pane-to-worklane pane={pane_id} view=destinations"
-        );
-        let parent_popover = parent_popover.clone();
-        let window = window.clone();
-        let source_worklane_id = source_worklane_id.clone();
-        let pane_id = pane_id.clone();
-        let destinations = destinations.clone();
-        let current_window_id = current_window_id.clone();
+        submenu.popup();
+        let submenu_focus = submenu.clone();
         gtk::glib::idle_add_local_once(move || {
-            parent_popover.set_child(Some(&make_move_to_worklane_content(
-                &parent_popover,
-                &window,
-                &source_worklane_id,
-                &pane_id,
-                &destinations,
-                can_create_new_worklane,
-                &current_window_id,
-            )));
+            if let Some(first_destination) = submenu_focus
+                .child()
+                .and_then(|menu| menu.first_child())
+            {
+                first_destination.grab_focus();
+            }
         });
+        eprintln!(
+            "zentty-linux: pane-context action=move-pane-to-worklane pane={pane_id} view=submenu parent-visible={} can-create={can_create_new_worklane}",
+            parent_popover.is_visible(),
+        );
     });
     button
 }
 
+#[derive(Clone)]
+struct MovePanePopovers {
+    parent: gtk::Popover,
+    submenu: gtk::Popover,
+}
+
 fn make_move_to_worklane_content(
-    parent_popover: &gtk::Popover,
+    popovers: &MovePanePopovers,
     window: &gtk::Window,
     source_worklane_id: &str,
     pane_id: &str,
@@ -1700,68 +1715,98 @@ fn make_move_to_worklane_content(
             let target_window_id = destination.window_id.clone();
             let target_worklane_id = destination.worklane_id.clone();
             install_destination_receipts(&button, destination);
-            let destination_popover = parent_popover.clone();
+            let popovers = popovers.clone();
             let current_window_id = current_window_id.to_owned();
             button.connect_clicked(move |_| {
                 eprintln!(
                     "zentty-linux: pane-context action=move-pane-to-worklane window={target_window_id} target={target_worklane_id} activated=true"
                 );
-                destination_popover.popdown();
-                let _ = window.activate_action(
-                    "workspace.select-pane",
-                    Some(&(source_worklane_id.as_str(), pane_id.as_str()).to_variant()),
-                );
                 let window = window.clone();
+                let source_worklane_id = source_worklane_id.clone();
+                let pane_id = pane_id.clone();
                 let target_window_id = target_window_id.clone();
                 let target_worklane_id = target_worklane_id.clone();
                 let current_window_id = current_window_id.clone();
-                gtk::glib::idle_add_local_once(move || {
-                    if target_window_id == current_window_id {
-                        let _ = window.activate_action(
-                            "workspace.move-pane-to-worklane",
-                            Some(&target_worklane_id.to_variant()),
-                        );
-                    } else {
-                        let _ = window.activate_action(
-                            "workspace.move-pane-to-window-worklane",
-                            Some(
-                                &(target_window_id.as_str(), target_worklane_id.as_str())
-                                    .to_variant(),
-                            ),
-                        );
-                    }
+                let parent = popovers.parent.clone();
+                popovers.submenu.popdown();
+                after_popover_closed(&parent, move || {
+                    let _ = window.activate_action(
+                        "workspace.select-pane",
+                        Some(&(source_worklane_id.as_str(), pane_id.as_str()).to_variant()),
+                    );
+                    gtk::glib::idle_add_local_once(move || {
+                        if target_window_id == current_window_id {
+                            let _ = window.activate_action(
+                                "workspace.move-pane-to-worklane",
+                                Some(&target_worklane_id.to_variant()),
+                            );
+                        } else {
+                            let _ = window.activate_action(
+                                "workspace.move-pane-to-window-worklane",
+                                Some(
+                                    &(target_window_id.as_str(), target_worklane_id.as_str())
+                                        .to_variant(),
+                                ),
+                            );
+                        }
+                    });
                 });
+                parent.popdown();
             });
             menu.append(&button);
         }
     }
     if can_create_new_worklane {
         let button = menu_button(source_ui::NEW_WORKLANE_IN_THIS_WINDOW, "list-add-symbolic");
-        let pointer_receipt = gtk::EventControllerMotion::new();
-        pointer_receipt.connect_enter(move |_, _, _| {
-            eprintln!(
-                "zentty-linux: pane-context-pointer action=move-pane-to-new-worklane target=new"
-            );
-        });
-        button.add_controller(pointer_receipt);
+        install_new_worklane_receipts(&button);
         let window = window.clone();
         let source_worklane_id = source_worklane_id.to_owned();
         let pane_id = pane_id.to_owned();
-        let destination_popover = parent_popover.clone();
+        let popovers = popovers.clone();
         button.connect_clicked(move |_| {
-            destination_popover.popdown();
-            let _ = window.activate_action(
-                "workspace.select-pane",
-                Some(&(source_worklane_id.as_str(), pane_id.as_str()).to_variant()),
-            );
             let window = window.clone();
-            gtk::glib::idle_add_local_once(move || {
-                let _ = window.activate_action("workspace.move-pane-to-new-worklane", None);
+            let source_worklane_id = source_worklane_id.clone();
+            let pane_id = pane_id.clone();
+            let parent = popovers.parent.clone();
+            popovers.submenu.popdown();
+            after_popover_closed(&parent, move || {
+                let _ = window.activate_action(
+                    "workspace.select-pane",
+                    Some(&(source_worklane_id.as_str(), pane_id.as_str()).to_variant()),
+                );
+                gtk::glib::idle_add_local_once(move || {
+                    let _ = window.activate_action("workspace.move-pane-to-new-worklane", None);
+                });
             });
+            parent.popdown();
         });
         menu.append(&button);
     }
     menu
+}
+
+fn after_popover_closed(action_owner: &gtk::Popover, action: impl FnOnce() + 'static) {
+    let pending = Rc::new(RefCell::new(Some(action)));
+    action_owner.connect_closed(move |_| {
+        if let Some(action) = pending.borrow_mut().take() {
+            action();
+        }
+    });
+}
+
+fn install_new_worklane_receipts(button: &gtk::Button) {
+    let pointer_receipt = gtk::EventControllerMotion::new();
+    pointer_receipt.connect_enter(move |_, _, _| {
+        eprintln!("zentty-linux: pane-context-pointer action=move-pane-to-new-worklane target=new");
+    });
+    button.add_controller(pointer_receipt);
+    button.connect_has_focus_notify(move |button| {
+        if button.has_focus() {
+            eprintln!(
+                "zentty-linux: pane-context-focus action=move-pane-to-new-worklane target=new"
+            );
+        }
+    });
 }
 
 fn install_destination_receipts(button: &gtk::Button, destination: &WorklaneDestination) {

@@ -111,10 +111,10 @@ pub(crate) fn show(
         eprintln!("zentty-linux: settings-focus widget={name}");
     });
     let root = gtk::Box::new(gtk::Orientation::Vertical, 12);
-    root.set_margin_top(16);
-    root.set_margin_bottom(16);
-    root.set_margin_start(16);
-    root.set_margin_end(16);
+    root.set_margin_top(24);
+    root.set_margin_bottom(24);
+    root.set_margin_start(24);
+    root.set_margin_end(24);
     root.add_css_class("zentty-shortcuts-settings");
 
     let header = gtk::Box::new(gtk::Orientation::Vertical, 8);
@@ -123,17 +123,22 @@ pub(crate) fn show(
         .hexpand(true)
         .build();
     header.append(&search);
-    let header_actions = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-    header_actions.set_halign(gtk::Align::End);
-    for (label, action) in [
-        ("Left-hand preset", HeaderAction::LeftPreset),
-        ("Right-hand preset", HeaderAction::RightPreset),
-        ("Ghostty preset", HeaderAction::GhosttyPreset),
-        ("Import…", HeaderAction::Import),
-        ("Export…", HeaderAction::Export),
-        ("Reset", HeaderAction::Reset),
+    let header_actions = gtk::Grid::builder()
+        .column_spacing(8)
+        .row_spacing(8)
+        .column_homogeneous(true)
+        .hexpand(true)
+        .build();
+    for (label, action, column, row) in [
+        ("Left-hand preset", HeaderAction::LeftPreset, 0, 0),
+        ("Right-hand preset", HeaderAction::RightPreset, 1, 0),
+        ("Ghostty preset", HeaderAction::GhosttyPreset, 2, 0),
+        ("Import…", HeaderAction::Import, 0, 1),
+        ("Export…", HeaderAction::Export, 1, 1),
+        ("Reset", HeaderAction::Reset, 2, 1),
     ] {
         let button = gtk::Button::with_label(label);
+        button.set_hexpand(true);
         if matches!(action, HeaderAction::GhosttyPreset) {
             button.update_property(&[gtk::accessible::Property::Label(
                 "Apply Ghostty-compatible shortcut preset",
@@ -149,7 +154,7 @@ pub(crate) fn show(
             HeaderAction::Export => "Export source-compatible shortcut TOML",
             HeaderAction::Reset => "Restore all default bindings",
         }));
-        header_actions.append(&button);
+        header_actions.attach(&button, column, row, 1, 1);
         button.set_widget_name(match action {
             HeaderAction::LeftPreset => "shortcut-preset-left",
             HeaderAction::RightPreset => "shortcut-preset-right",
@@ -166,6 +171,10 @@ pub(crate) fn show(
     content.set_wide_handle(true);
     content.set_position(275);
     content.set_vexpand(true);
+    content.set_resize_start_child(false);
+    content.set_shrink_start_child(true);
+    content.set_resize_end_child(true);
+    content.set_shrink_end_child(true);
     let browser = gtk::Box::new(gtk::Orientation::Vertical, 3);
     let browser_scroll = gtk::ScrolledWindow::builder()
         .hscrollbar_policy(gtk::PolicyType::Never)
@@ -201,6 +210,7 @@ pub(crate) fn show(
     detail.append(&shortcut_row);
     let default_value = gtk::Label::new(None);
     default_value.set_halign(gtk::Align::Start);
+    default_value.set_wrap(true);
     default_value.add_css_class("dim-label");
     detail.append(&default_value);
     let conflict = gtk::Label::new(None);
@@ -234,19 +244,20 @@ pub(crate) fn show(
     detail.append(&modifier_row);
     let keyboard = build_keyboard_preview();
     detail.append(&keyboard);
-    instrument_keyboard_layout(&keyboard, &detail);
     let physical = gtk::Label::new(Some(
         "Recorder uses GDK physical key events and the current keyboard layout.",
     ));
     physical.set_halign(gtk::Align::Start);
+    physical.set_wrap(true);
     physical.add_css_class("dim-label");
     detail.append(&physical);
     let detail_scroll = gtk::ScrolledWindow::builder()
-        .hscrollbar_policy(gtk::PolicyType::Automatic)
+        .hscrollbar_policy(gtk::PolicyType::Never)
         .vscrollbar_policy(gtk::PolicyType::Automatic)
         .child(&detail)
         .build();
     detail_scroll.set_widget_name("shortcut-detail-scroll");
+    instrument_keyboard_layout(&keyboard, &detail_scroll);
     content.set_end_child(Some(&detail_scroll));
     root.append(&content);
     let (appearance_page, appearance_search) = crate::appearance_settings::build(
@@ -519,10 +530,16 @@ fn rebuild_browser(state: &Rc<RefCell<ViewState>>) {
         browser.append(&heading);
         for command in matches {
             count += 1;
-            let button = gtk::Button::with_label(command.title);
+            let button = gtk::Button::new();
             button.set_halign(gtk::Align::Fill);
             button.set_hexpand(true);
             button.add_css_class("flat");
+            let label = gtk::Label::new(Some(command.title));
+            label.set_halign(gtk::Align::Fill);
+            label.set_hexpand(true);
+            label.set_xalign(0.0);
+            label.set_ellipsize(gtk::pango::EllipsizeMode::End);
+            button.set_child(Some(&label));
             if command.command_id == selected {
                 button.add_css_class("zentty-shortcut-selected");
             }
@@ -640,6 +657,7 @@ fn connect_detail_controls(state: &Rc<RefCell<ViewState>>) {
 
 fn build_keyboard_preview() -> gtk::Box {
     let keyboard = gtk::Box::new(gtk::Orientation::Vertical, 4);
+    keyboard.set_hexpand(true);
     keyboard.add_css_class("zentty-keyboard-preview");
     for row in [
         vec!["1", "2", "3", "4", "5", "6", "7", "8", "9", "0", "⌫"],
@@ -650,8 +668,10 @@ fn build_keyboard_preview() -> gtk::Box {
     ] {
         let line = gtk::Box::new(gtk::Orientation::Horizontal, 4);
         line.set_homogeneous(true);
+        line.set_hexpand(true);
         for key in row {
             let button = gtk::Button::with_label(key);
+            button.set_hexpand(true);
             button.set_widget_name(&format!("shortcut-key-{key}"));
             button.add_css_class("zentty-keycap");
             line.append(&button);
@@ -661,17 +681,19 @@ fn build_keyboard_preview() -> gtk::Box {
     keyboard
 }
 
-fn instrument_keyboard_layout(keyboard: &gtk::Box, detail: &gtk::Box) {
-    let detail = detail.clone();
+fn instrument_keyboard_layout(keyboard: &gtk::Box, detail_scroll: &gtk::ScrolledWindow) {
+    let detail_scroll = detail_scroll.clone();
     keyboard.add_tick_callback(move |keyboard, _| {
         let keyboard_width = keyboard.width();
-        let detail_width = detail.width();
-        if keyboard_width <= 0 || detail_width <= 0 {
+        let adjustment = detail_scroll.hadjustment();
+        let content_width = adjustment.upper();
+        let viewport_width = adjustment.page_size();
+        if keyboard_width <= 0 || content_width <= 0.0 || viewport_width <= 0.0 {
             return glib::ControlFlow::Continue;
         }
+        let fits = content_width <= viewport_width + 0.5;
         eprintln!(
-            "zentty-linux: shortcut-settings keyboard-layout detail={detail_width} keyboard={keyboard_width} fits={}",
-            keyboard_width <= detail_width
+            "zentty-linux: shortcut-settings keyboard-layout viewport={viewport_width:.0} content={content_width:.0} keyboard={keyboard_width} fits={fits}",
         );
         glib::ControlFlow::Break
     });
@@ -904,7 +926,7 @@ fn replace_conflict(state: &Rc<RefCell<ViewState>>) {
     refresh_detail(state);
 }
 
-fn connect_header(header: &gtk::Box, window: &gtk::Window, state: &Rc<RefCell<ViewState>>) {
+fn connect_header(header: &gtk::Grid, window: &gtk::Window, state: &Rc<RefCell<ViewState>>) {
     let mut child = header.first_child();
     while let Some(widget) = child {
         if let Ok(button) = widget.clone().downcast::<gtk::Button>() {
@@ -1259,18 +1281,18 @@ fn decode_import_path(path: &Path) -> Result<Vec<ShortcutBinding>, String> {
         .map(|config| config.shortcuts)
 }
 
-fn install_styles() {
-    static CSS: &str = r"
-        .zentty-shortcuts-settings { background: #17191d; color: #e8eaf0; }
-        .zentty-shortcuts-browser { background: #202329; border-radius: 8px; padding: 6px; }
+const SHORTCUT_SETTINGS_CSS: &str = r"
+        .zentty-shortcuts-browser { background: @card_bg_color; border-radius: 8px; padding: 6px; }
         .zentty-shortcut-category { font-weight: 700; opacity: .65; padding: 12px 8px 4px; }
-        .zentty-shortcut-selected { background: #344154; }
-        .zentty-keyboard-preview { background: #202329; border-radius: 8px; padding: 10px; }
-        .zentty-keycap { min-width: 24px; min-height: 30px; padding: 2px 3px; }
-        label.error { color: #ff7b72; }
+        .zentty-shortcut-selected { background: @accent_bg_color; color: @accent_fg_color; }
+        .zentty-keyboard-preview { background: @card_bg_color; border-radius: 8px; padding: 10px; }
+        .zentty-keycap { min-width: 0; min-height: 30px; padding: 2px 3px; }
+        label.error { color: @error_color; }
     ";
+
+fn install_styles() {
     let provider = gtk::CssProvider::new();
-    provider.load_from_string(CSS);
+    provider.load_from_string(SHORTCUT_SETTINGS_CSS);
     if let Some(display) = gdk::Display::default() {
         gtk::style_context_add_provider_for_display(
             &display,
@@ -1324,6 +1346,16 @@ mod tests {
         assert_eq!(preview_key("↓"), Some(ShortcutKey::Down));
         assert_eq!(preview_key("↑"), Some(ShortcutKey::Up));
         assert_eq!(preview_key("→"), Some(ShortcutKey::Right));
+    }
+
+    #[test]
+    fn shortcut_page_inherits_the_settings_palette_and_allows_keys_to_shrink() {
+        assert!(!SHORTCUT_SETTINGS_CSS.contains(".zentty-shortcuts-settings"));
+        assert!(!SHORTCUT_SETTINGS_CSS.contains('#'));
+        assert!(SHORTCUT_SETTINGS_CSS.contains("@card_bg_color"));
+        assert!(SHORTCUT_SETTINGS_CSS.contains("@accent_bg_color"));
+        assert!(SHORTCUT_SETTINGS_CSS.contains("@accent_fg_color"));
+        assert!(SHORTCUT_SETTINGS_CSS.contains(".zentty-keycap { min-width: 0;"));
     }
 
     #[test]

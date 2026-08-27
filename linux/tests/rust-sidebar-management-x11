@@ -253,9 +253,12 @@ find_pointer_target() {
         candidate_xs=("${x}")
     fi
     for candidate_x in "${candidate_xs[@]}"; do
-        xdotool mousemove --sync --window "${window_id}" 600 60
-        for y in $(seq 70 10 680); do
-            xdotool mousemove --sync --window "${window_id}" "${candidate_x}" "${y}"
+        # GTK popovers are native surfaces, not children in the client-window
+        # coordinate space. This controlled no-window-manager X display maps
+        # the product at the root origin, so scan root coordinates directly.
+        xdotool mousemove --sync 600 60
+        for y in $(seq 20 10 740); do
+            xdotool mousemove --sync "${candidate_x}" "${y}"
             sleep 0.03
             if (( $(grep -Fxc "${receipt}" "${log}" || true) > before )); then
                 return 0
@@ -275,6 +278,9 @@ find_pointer_target \
     fail "physical pointer could not locate the source Move Pane to Worklane affordance"
 xdotool click 1
 sleep 0.1
+grep -Fxq \
+    'zentty-linux: pane-context action=move-pane-to-worklane pane=pane-1 view=submenu parent-visible=true can-create=false' \
+    "${log}" || fail "Move Pane to Worklane replaced or dismissed its visible parent menu"
 find_pointer_target \
     'zentty-linux: pane-context-destination-label window=window-1 target=worklane-2 label="Backend Services"' any ||
     fail "physical pointer could not read the named worklane-2 destination"
@@ -309,10 +315,14 @@ find_pointer_target \
     fail "relocated pane did not retain its Move Pane to Worklane affordance"
 xdotool click 1
 sleep 0.1
-find_pointer_target \
-    'zentty-linux: pane-context-pointer action=move-pane-to-new-worklane target=new' any ||
-    fail "source New Worklane in This Window destination was not rendered"
-xdotool click 1
+grep -Fq \
+    'zentty-linux: pane-context action=move-pane-to-worklane pane=pane-1 view=submenu parent-visible=true can-create=true' \
+    "${log}" || fail "relocated pane submenu did not expose New Worklane in This Window"
+for _ in $(seq 1 7); do xdotool key Tab; done
+grep -Fxq \
+    'zentty-linux: pane-context-focus action=move-pane-to-new-worklane target=new' \
+    "${log}" || fail "keyboard traversal did not reach New Worklane in This Window"
+xdotool key Return
 for _ in $(seq 1 120); do
     grep -Fxq 'zentty-linux: action=move-pane-to-new-worklane pane=pane-1 target=worklane-10' "${log}" && break
     sleep 0.05
