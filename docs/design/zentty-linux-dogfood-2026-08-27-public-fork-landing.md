@@ -66,3 +66,15 @@ The repository still has no signed, published Linux release artifact. Visitors
 must build the native Debian package from source until release preparation and
 signed update/package policy in issue #75 are completed. The README states this
 directly rather than offering an unqualified developer artifact as a release.
+
+## Public receipt
+
+- Landing commit: `3966ddc8d90114a465abf35672c65b21b5dc45f1`.
+- GitHub default branch: `linux/port` at that exact commit.
+- Repository description: `Unofficial public Linux port of Zentty using Rust,
+  GTK 4, and Ghostty`.
+- Topics: `coding-agents`, `ghostty`, `gtk4`, `linux`, `rust`, and `terminal`.
+- Homepage: empty; the upstream-owned `zentty.org` value was removed.
+- GitHub's raw default-README endpoint returned the Linux heading, unofficial
+  fork disclosure, upstream link, and Linux screenshot after the metadata
+  change.
