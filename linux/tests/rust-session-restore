@@ -316,6 +316,41 @@ verify_remote_file_drop() {
     sleep 0.1
 }
 
+if [[ "${ZENTTY_COMPLETED_RESTORE_ONLY:-false}" == true ]]; then
+    agent_sleep_seconds=0.2
+    jq '
+        .workspace.windows[0].activeWorklaneID = "worklane-second-agent" |
+        .restoreDraftWindows[0].paneDrafts |= map(select(.paneID == "pane-agent-two"))
+    ' "${state_dir}/restore-snapshot.json" >"${state_dir}/restore-snapshot.focused"
+    mv -- "${state_dir}/restore-snapshot.focused" "${state_dir}/restore-snapshot.json"
+    start_product
+    pane_id=pane-agent-two
+    zentty_product_wait_for_log "${log}" \
+        "zentty-linux: agent-restore-launch pane=${pane_id} result=authenticated" \
+        "completed restore for ${pane_id} never authenticated" ||
+        fail "completed restore authentication missing for ${pane_id}"
+    zentty_product_wait_for_log "${log}" \
+        "zentty-linux: agent-restore-launch pane=${pane_id} result=completed fallback=shell" \
+        "completed restore for ${pane_id} did not return to a shell" ||
+        fail "completed restore shell fallback missing for ${pane_id}"
+    grep -Fq "zentty-linux: restore-failure pane=${pane_id} state=shown" "${log}" &&
+        fail "completed restore incorrectly presented recovery controls"
+    zentty_product_wait_for_log "${log}" \
+        "zentty-linux: shell-signal pane=${pane_id} kind=pane-root-pid event=attach" \
+        "replacement shell for ${pane_id} did not attach through the real PTY" ||
+        fail "completed restore replacement shell missing for ${pane_id}"
+    zentty_product_wait_for_log "${log}" \
+        'zentty-linux: topology=worklane-main[title=Nimbu API,color=blue]:pane-agent,pane-shell,pane-ordinary-inactive|worklane-second-agent[title=Second agent,color=none]:pane-agent-two*|worklane-active[title=Active shell,color=none]:pane-shell-active' \
+        "completed restore changed the durable workspace topology" ||
+        fail "completed restore erased a pane or worklane"
+    zentty_product_prepare_input "${backend}" "${log}" ||
+        fail "could not prepare completed-restore close input"
+    zentty_product_close_window "${backend}"
+    wait_for_product_exit
+    printf 'rust-session-restore: PASS completed-agent-restore authenticated=true fallback=real-shell recovery=absent topology=preserved\n'
+    exit 0
+fi
+
 if [[ "${ZENTTY_FAILED_RESTORE_ONLY:-false}" == true ]]; then
     agent_profile=restore-immediate-failure
     agent_sleep_seconds=0

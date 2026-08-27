@@ -29,6 +29,7 @@ enum RemovalDecision {
 enum ChildExitDisposition {
     CloseWorkspacePane,
     RecoverFailedRestore,
+    ReturnRestoredAgentToShell,
     PreserveTmuxTeammate,
     DisposeDuringShutdown,
     #[default]
@@ -62,6 +63,29 @@ enum ChildOwnership {
     Ordinary,
     TmuxTeammate,
     PendingRestore,
+    RunningRestore,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum RestoreLaunchState {
+    Pending,
+    Running,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct RestoreLaunch {
+    command: String,
+    state: RestoreLaunchState,
+}
+
+impl RestoreLaunch {
+    fn confirm(&mut self) -> bool {
+        if self.state == RestoreLaunchState::Running {
+            return false;
+        }
+        self.state = RestoreLaunchState::Running;
+        true
+    }
 }
 
 fn registration_decision(already_registered: bool) -> RegistrationDecision {
@@ -87,6 +111,8 @@ fn child_exit_disposition(context: ChildExitContext) -> ChildExitDisposition {
         ChildExitDisposition::DisposeDuringShutdown
     } else if context.ownership == ChildOwnership::PendingRestore {
         ChildExitDisposition::RecoverFailedRestore
+    } else if context.ownership == ChildOwnership::RunningRestore {
+        ChildExitDisposition::ReturnRestoredAgentToShell
     } else if context.ownership == ChildOwnership::TmuxTeammate {
         ChildExitDisposition::PreserveTmuxTeammate
     } else {
@@ -108,7 +134,7 @@ pub(super) struct PaneRuntimeCoordinator {
     pending_prefills: BTreeMap<String, String>,
     pending_launches: BTreeMap<String, PendingPaneLaunch>,
     explicit_environments: BTreeMap<String, BTreeMap<String, String>>,
-    pending_restore_launches: BTreeMap<String, String>,
+    restore_launches: BTreeMap<String, RestoreLaunch>,
 }
 
 pub(super) struct PendingPaneLaunch {
@@ -135,7 +161,7 @@ impl PaneRuntimeCoordinator {
             pending_prefills: BTreeMap::new(),
             pending_launches: BTreeMap::new(),
             explicit_environments: BTreeMap::new(),
-            pending_restore_launches: BTreeMap::new(),
+            restore_launches: BTreeMap::new(),
         }
     }
 
@@ -235,7 +261,10 @@ impl PaneRuntimeCoordinator {
     }
 
     pub(super) fn confirm_restored_agent(&mut self, pane_id: &str) -> bool {
-        self.pending_restore_launches.remove(pane_id).is_some()
+        let Some(launch) = self.restore_launches.get_mut(pane_id) else {
+            return false;
+        };
+        launch.confirm()
     }
 
     pub(super) fn take_launch(&mut self, pane_id: &str) -> Option<PendingPaneLaunch> {
@@ -499,10 +528,13 @@ impl PaneRuntimeCoordinator {
         if shell.pane_runtime.command().is_none()
             && let Some(command) = &restored_command
         {
-            shell
-                .pane_runtime
-                .pending_restore_launches
-                .insert(pane_id.to_owned(), command.clone());
+            shell.pane_runtime.restore_launches.insert(
+                pane_id.to_owned(),
+                RestoreLaunch {
+                    command: command.clone(),
+                    state: RestoreLaunchState::Pending,
+                },
+            );
             eprintln!("zentty-linux: agent-resume-launch pane={pane_id} command={command}");
         }
         let restored_surface_command = restored_command.as_deref().map(|command| {
@@ -869,7 +901,7 @@ impl PaneRuntimeCoordinator {
                         let mut shell_ref = shell.borrow_mut();
                         shell_ref
                             .pane_runtime
-                            .pending_restore_launches
+                            .restore_launches
                             .remove(&retry_pane);
                         shell_ref.restored_pane_commands.remove(&retry_pane);
                         shell_ref
@@ -915,12 +947,11 @@ impl PaneRuntimeCoordinator {
     }
 
     fn child_exit_context(shell: &ApplicationShell, pane_id: &str) -> ChildExitContext {
-        let ownership = if shell
-            .pane_runtime
-            .pending_restore_launches
-            .contains_key(pane_id)
-        {
-            ChildOwnership::PendingRestore
+        let ownership = if let Some(launch) = shell.pane_runtime.restore_launches.get(pane_id) {
+            match launch.state {
+                RestoreLaunchState::Pending => ChildOwnership::PendingRestore,
+                RestoreLaunchState::Running => ChildOwnership::RunningRestore,
+            }
         } else if shell
             .tmux_compat
             .retains_exited_teammate(&shell.state, pane_id)
@@ -942,6 +973,32 @@ impl PaneRuntimeCoordinator {
             },
             ownership,
         }
+    }
+
+    fn return_completed_restore_to_shell(shell: &Rc<RefCell<ApplicationShell>>, pane_id: &str) {
+        let mut shell_ref = shell.borrow_mut();
+        let _ = shell_ref.pane_runtime.note_child_exit(pane_id);
+        shell_ref.agent_events.unregister_pane(pane_id);
+        shell_ref.pane_runtime.restore_launches.remove(pane_id);
+        shell_ref.failed_restore_commands.remove(pane_id);
+        let _ = shell_ref.state.clear_failed_agent_restore(pane_id);
+        if let Err(error) = shell_ref.pane_runtime.remove(pane_id, true) {
+            eprintln!("zentty-linux: completed restore cleanup failed: {error}");
+            shell_ref.main_loop.quit();
+            return;
+        }
+        drop(shell_ref);
+        if let Err(error) = Self::create_surface(shell, pane_id) {
+            eprintln!("zentty-linux: completed restore shell fallback failed: {error}");
+            shell.borrow().main_loop.quit();
+            return;
+        }
+        let shell_ref = shell.borrow();
+        shell_ref.render();
+        shell_ref.focus_selected_surface();
+        eprintln!(
+            "zentty-linux: agent-restore-launch pane={pane_id} result=completed fallback=shell"
+        );
     }
 
     fn handle_child_exit(shell: &Rc<RefCell<ApplicationShell>>, pane_id: &str) {
@@ -976,9 +1033,9 @@ impl PaneRuntimeCoordinator {
                 shell_ref.agent_events.unregister_pane(pane_id);
                 let restore_command = shell_ref
                     .pane_runtime
-                    .pending_restore_launches
+                    .restore_launches
                     .remove(pane_id)
-                    .unwrap_or_default();
+                    .map_or_else(String::new, |launch| launch.command);
                 shell_ref
                     .failed_restore_commands
                     .insert(pane_id.to_owned(), restore_command);
@@ -1002,6 +1059,11 @@ impl PaneRuntimeCoordinator {
                 shell_ref.focus_selected_surface();
                 drop(shell_ref);
                 Self::present_restore_failure(shell, pane_id);
+                return;
+            }
+            ChildExitDisposition::ReturnRestoredAgentToShell => {
+                drop(shell_ref);
+                Self::return_completed_restore_to_shell(shell, pane_id);
                 return;
             }
             ChildExitDisposition::CloseWorkspacePane => {
@@ -1054,8 +1116,9 @@ fn surface_focus_event_should_apply(
 mod tests {
     use super::{
         ChildExitContext, ChildExitDisposition, ChildLifecycle, ChildOwnership, ChildRegistration,
-        RegistrationDecision, RemovalDecision, SurfaceFocusBlocker, child_exit_disposition,
-        registration_decision, removal_decision, surface_focus_event_should_apply,
+        RegistrationDecision, RemovalDecision, RestoreLaunch, RestoreLaunchState,
+        SurfaceFocusBlocker, child_exit_disposition, registration_decision, removal_decision,
+        surface_focus_event_should_apply,
     };
 
     #[test]
@@ -1142,6 +1205,31 @@ mod tests {
             }),
             ChildExitDisposition::RecoverFailedRestore
         );
+    }
+
+    #[test]
+    fn confirmed_restore_exit_returns_the_same_pane_to_a_shell() {
+        assert_eq!(
+            child_exit_disposition(ChildExitContext {
+                registration: ChildRegistration::Registered,
+                ownership: ChildOwnership::RunningRestore,
+                ..ChildExitContext::default()
+            }),
+            ChildExitDisposition::ReturnRestoredAgentToShell
+        );
+    }
+
+    #[test]
+    fn restore_confirmation_is_one_way_and_retains_command_ownership() {
+        let mut launch = RestoreLaunch {
+            command: "codex resume bro".to_owned(),
+            state: RestoreLaunchState::Pending,
+        };
+        assert!(launch.confirm());
+        assert_eq!(launch.state, RestoreLaunchState::Running);
+        assert_eq!(launch.command, "codex resume bro");
+        assert!(!launch.confirm());
+        assert_eq!(launch.state, RestoreLaunchState::Running);
     }
 
     #[test]

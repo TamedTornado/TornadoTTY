@@ -637,3 +637,9 @@ the existing debounced agent-presentation contract; the new ephemeral marker
 does not cause unrelated redraws. Installed GNOME dogfood still needs to prove
 that a newly opened untouched pane closes without a dialog. No broad
 qualification was run or claimed.
+
+The audited package for commit `c0e0cd342b5e` was then installed and relaunched
+through GNOME. The operator created and closed a new untouched pane and reported
+“Works!”: it closed immediately without a confirmation. This supplies the
+previously outstanding real-desktop acceptance for GH-113. No broad
+qualification was run or claimed for that focused acceptance.

@@ -1684,6 +1684,11 @@ impl ApplicationShell {
             let Some(pane_id) = shell.state.focused_pane_id().map(str::to_owned) else {
                 return;
             };
+            if shell.pane_runtime.confirm_restored_agent(&pane_id) {
+                eprintln!(
+                    "zentty-linux: agent-restore-launch pane={pane_id} result=confirmed origin=terminal-interaction"
+                );
+            }
             let now = unix_time_ms();
             match gesture {
                 TerminalGesture::InputSubmitted => {
@@ -5982,11 +5987,7 @@ mod allocation_tests {
     #[test]
     fn pane_palette_exposes_adaptive_split_and_non_resizing_source_commands() {
         let items = ApplicationShell::command_palette_action_items();
-        let item = |title: &str| {
-            items
-                .iter()
-                .find(|item| item.title == title)
-        };
+        let item = |title: &str| items.iter().find(|item| item.title == title);
 
         assert_eq!(
             item("Split Right").map(|item| item.target.clone()),
@@ -5996,10 +5997,7 @@ mod allocation_tests {
             item("Add Pane Right").map(|item| item.target.clone()),
             Some(CommandPaletteTarget::Action(ACTION_NEW_PANE_RIGHT)),
         );
-        assert!(
-            item("Add Pane Right")
-                .is_some_and(|item| item.subtitle.contains("adaptive"))
-        );
+        assert!(item("Add Pane Right").is_some_and(|item| item.subtitle.contains("adaptive")));
         assert_eq!(
             item("Add Pane Right Without Resizing").map(|item| item.target.clone()),
             Some(CommandPaletteTarget::Action(ACTION_ADD_PANE_RIGHT)),
