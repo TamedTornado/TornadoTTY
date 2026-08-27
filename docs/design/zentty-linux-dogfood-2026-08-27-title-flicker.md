@@ -1,4 +1,4 @@
-# Linux dogfood: stable Codex title rendering (GH-82)
+# Linux dogfood: stable Codex title rendering (GH-132)
 
 Date: 2026-08-27
 

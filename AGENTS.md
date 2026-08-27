@@ -1,5 +1,17 @@
 # AGENTS.md
 
+## GitHub repository targeting
+
+- This checkout has both `origin` (`TamedTornado/zentty`) and `upstream`
+  (`dedene/zentty`). Every GitHub command that creates, edits, comments on,
+  closes, reopens, or otherwise mutates an issue or pull request must specify
+  `--repo TamedTornado/zentty` (or `-R TamedTornado/zentty`) explicitly.
+- Never rely on GitHub CLI remote inference for a mutating command. Read-only
+  upstream inspection must likewise name `--repo dedene/zentty` explicitly.
+- Do not comment on, review, open, close, or otherwise mutate upstream issues
+  or pull requests without Jason's explicit approval for that exact upstream
+  interaction.
+
 ## Testing
 
 Two test targets:
