@@ -403,3 +403,48 @@ The installed GNOME dogfood application was not replaced or restarted. Human
 judgment of the animation's speed, color, and visual polish remains
 intentionally queued for the next operator batch; this is not a claim of
 operator visual acceptance or broad Linux qualification.
+
+## GH-124 real IME Backspace composition parity
+
+The upstream repair is AppKit key-routing code, so copying it into Rust without
+a demonstrated GTK failure would create a second keyboard owner. The existing
+Linux actor already used real Cangjie5 preedit, commit/cancel, cross-pane focus,
+and active-preedit pane destruction through controlled IBus and Fcitx sessions.
+Its missing assertion was physical Backspace during active preedit and raw PTY
+evidence that the key was consumed.
+
+Pane 2 now enters raw/no-echo mode for one bounded probe. Physical Cangjie
+input commits one `日`, starts a second `a` preedit, sends Backspace, then
+commits another `日` and Return. The child requires exactly seven bytes:
+`e697a5e697a50d`. A leaked DEL (`7f`) or BS (`08`), loss/corruption of the first
+composed character, a failed subsequent commit, or a non-CR Return all fail the
+same receipt. The actor then retains its prior independent focus-transfer,
+refocus composition, active-preedit destruction, surviving-pane composition,
+and exact receipt-count assertions. No sleep or product-side interception was
+added for Backspace.
+
+The unchanged staged ReleaseSafe product passed all four presently executable
+real cells:
+
+- IBus 1.5.29-rc2 / Cangjie5 on private Xvfb/X11;
+- IBus 1.5.29-rc2 / Cangjie5 on private Cage/Wayland;
+- pinned Fcitx 5.1.7 GTK module / Cangjie5 on private Xvfb/X11; and
+- pinned Fcitx 5.1.7 GTK module / Cangjie5 on private Cage/Wayland.
+
+Each used GTK 4.14.5, Ghostty revision
+`80054768edbffd5df8568782e528363033a49192`, a real Ghostty surface/PTY, and a
+wrapper-owned private input-method service and compositor/display. Every cell
+reported `preedit-backspace exact-bytes commit focus-transfer
+active-preedit-destruction real-pty`. Current pinned Ghostty GTK therefore
+already satisfies the source behavior; there is no evidenced Ghostty or Rust
+defect to patch. Environmental provider absence remains governed by the
+existing matrix/wrappers and is not converted to PASS.
+
+Feature inventory after reconciliation: 63 entries, 50 IMPLEMENTED, 2 PARTIAL,
+and 11 NOT_IMPLEMENTED. The installed GNOME dogfood application was not
+replaced or restarted, and no broad qualification was run or claimed.
+ShellCheck and the feature-inventory runner passed. The broader
+`test-orchestration-contract` again reported its documented pre-existing
+`staged-shell-integration` inline-agent finding; GH-124 did not touch that
+actor or add an integration layer, so the unrelated failure was recorded but
+not folded into this behavioral issue.

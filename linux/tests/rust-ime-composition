@@ -62,6 +62,7 @@ case "${ime_provider}" in
         ;;
     *) fail "unsupported input-method provider: ${ime_provider}" ;;
 esac
+dependencies+=(dd od stty tr)
 if [[ "${backend}" == x11 ]]; then
     dependencies+=(xdotool)
 else
@@ -239,9 +240,12 @@ case "${ZENTTY_PANE_ID}" in
             while [[ ! -e "${ZENTTY_IME_CLOSE_MARKER}" ]]; do sleep 0.02; done
             "${ZENTTY_CLI_BIN}" pane close --pane-id pane-2
         ) &
-        IFS= read -r after_cancel
-        [[ "${after_cancel}" == 日 ]]
-        record "${after_cancel}"
+        original_stty="$(stty -g)"
+        stty raw -echo
+        backspace_raw="$(dd bs=1 count=7 2>/dev/null | od -An -tx1 | tr -d ' \n')"
+        stty "${original_stty}"
+        [[ "${backspace_raw}" == e697a5e697a50d ]]
+        record "BACKSPACE-RAW:${backspace_raw}"
         IFS= read -r after_transfer
         if [[ "${after_transfer}" != 日 ]]; then
             record "MISMATCH:${after_transfer@Q}"
@@ -353,17 +357,21 @@ zentty_product_wait_for_log_count "${log}" 'focus-pane pane=pane-2' \
     fail "IME initial compositor-focus barrier failed"
 activate_fcitx
 
-# A Cangjie `a` creates a visible preedit candidate. Escape cancels it. The
-# second `a`, Space, Return sequence commits 日 and supplies the PTY newline.
-# Exact child matching proves the cancelled preedit did not leak.
+# A Cangjie `a`, Space commits 日 without a newline. A second `a` starts a new
+# preedit and physical Backspace must be consumed by that input context. The
+# final `a`, Space, Return commits another 日 and sends CR. Pane 2 is in raw
+# mode for this probe: its exact seven-byte receipt proves the earlier composed
+# text survived and neither DEL (7f) nor BS (08) leaked into the real PTY.
 ime_type a
-ime_key Escape
+ime_key space
+ime_type a
+ime_key BackSpace
 ime_type a
 ime_key space
 ime_key Return
-zentty_product_wait_for_log "${receipt}" 'pane-2:日' \
-    "cancelled preedit did not produce one exact composed commit" ||
-    fail "preedit cancel/commit journey failed"
+zentty_product_wait_for_log "${receipt}" 'pane-2:BACKSPACE-RAW:e697a5e697a50d' \
+    "active-preedit Backspace leaked or corrupted composed PTY bytes" ||
+    fail "preedit Backspace byte journey failed"
 
 # Move focus through the public application API while `a` is still preedit.
 # Plain `1` in pane 1 proves the pending pane-2 preedit stays owned by pane 2.
@@ -389,7 +397,7 @@ reactivate_fcitx_for_selected_pane
 ime_type a
 ime_key space
 ime_key Return
-zentty_product_wait_for_log_count "${receipt}" 'pane-2:日' 2 \
+zentty_product_wait_for_log_count "${receipt}" 'pane-2:日' 1 \
     "refocused second pane did not receive an independent composition" ||
     fail "IME post-focus composition failed"
 
@@ -419,10 +427,12 @@ zentty_product_wait_for_log "${receipt}" 'pane-1:日' \
     fail "post-destruction journey produced duplicate or missing commits"
 [[ "$(grep -Fxc 'pane-1:1' "${receipt}")" -eq 1 ]] ||
     fail "focus journey produced duplicate or missing plain input"
-[[ "$(grep -Fxc 'pane-2:日' "${receipt}")" -eq 2 ]] ||
-    fail "cancel journey produced duplicate or missing commits"
+[[ "$(grep -Fxc 'pane-2:BACKSPACE-RAW:e697a5e697a50d' "${receipt}")" -eq 1 ]] ||
+    fail "Backspace journey produced duplicate or incorrect raw bytes"
+[[ "$(grep -Fxc 'pane-2:日' "${receipt}")" -eq 1 ]] ||
+    fail "post-focus journey produced duplicate or missing commits"
 
 zentty_product_close_window "${backend}"
 wait "${product_pid}" || fail "product did not exit cleanly after IME journey"
 product_pid=""
-echo "rust-ime-composition-${backend}: PASS real-${ime_provider} preedit-update cancel commit focus-transfer active-preedit-destruction real-pty"
+echo "rust-ime-composition-${backend}: PASS real-${ime_provider} preedit-backspace exact-bytes commit focus-transfer active-preedit-destruction real-pty"

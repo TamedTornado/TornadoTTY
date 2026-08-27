@@ -252,9 +252,11 @@
       "origin": "PORT_PARITY",
       "user_impact": "Users of composed-input languages can corrupt the preedit or send an unintended Backspace to the shell when correcting text.",
       "linux_owner_issue": 124,
-      "implementation_status": "PARTIAL",
+      "implementation_status": "IMPLEMENTED",
       "focused_tests": ["crates/zentty-test-support/src/bin/wayland_keycode_driver.rs", "linux/tests/lib/product-input-test"],
-      "product_scenarios": [],
+      "product_scenarios": [
+        "linux/tests/rust-ime-composition"
+      ],
       "test_plan": "Add a focused GTK input-context contract and extend the real nested X11 and Wayland IBus/fcitx journeys to create an active non-ASCII preedit, press physical Backspace, verify the compositor-driven preedit update or cancellation, then commit and assert exact PTY bytes. Retain cross-surface focus and pane-destruction counterexamples; environmental absence must remain non-passing.",
       "alternative_or_blocker": null
     },

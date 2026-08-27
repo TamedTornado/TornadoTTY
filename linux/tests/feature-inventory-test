@@ -60,8 +60,8 @@ jq -e '
     .result == "PASS" and
     .entry_count == 63 and
     .classifications.REQUIRED_INITIAL_RELEASE == 37 and
-    .implementation_statuses.IMPLEMENTED == 49 and
-    .implementation_statuses.PARTIAL == 3 and
+    .implementation_statuses.IMPLEMENTED == 50 and
+    .implementation_statuses.PARTIAL == 2 and
     .implementation_statuses.NOT_IMPLEMENTED == 11 and
     .evidence.app_commands == 70 and
     .evidence.pane_commands == 33 and
@@ -188,6 +188,19 @@ jq -e '
     (.test_plan | contains("bounded repaint"))
 ' "${source_inventory}" >/dev/null || {
     echo "feature-inventory-test: Codex activity-title evidence regressed" >&2
+    exit 1
+}
+jq -e '
+    .entries[] | select(.id == "terminal.ime-backspace-composition") |
+    .linux_owner_issue == 124 and
+    .implementation_status == "IMPLEMENTED" and
+    (.product_scenarios | index("linux/tests/rust-ime-composition")) != null and
+    (.test_plan | contains("active non-ASCII preedit")) and
+    (.test_plan | contains("exact PTY bytes")) and
+    (.test_plan | contains("cross-surface focus")) and
+    (.test_plan | contains("pane-destruction"))
+' "${source_inventory}" >/dev/null || {
+    echo "feature-inventory-test: IME Backspace parity evidence regressed" >&2
     exit 1
 }
 jq -e '
