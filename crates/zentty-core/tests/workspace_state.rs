@@ -679,6 +679,38 @@ fn active_supported_agents_produce_restorable_per_pane_drafts() {
 }
 
 #[test]
+fn unmaterialized_restore_draft_survives_the_next_clean_snapshot() {
+    let envelope = SessionRestoreEnvelope::from_json(V3_ENVELOPE).unwrap();
+    let mut state = WorkspaceState::from_window_recipe(&envelope.workspace.windows[0]).unwrap();
+    let draft = zentty_core::PaneRestoreDraft {
+        pane_id: "pane-agent".to_owned(),
+        kind: zentty_core::RestoreDraftKind::AgentResume,
+        tool_name: "Codex".to_owned(),
+        session_id: "session-codex".to_owned(),
+        working_directory: Some("/tmp/project".to_owned()),
+        tracked_pid: 0,
+        agent_launch_snapshot: Some(zentty_core::AgentLaunchSnapshot {
+            arguments: vec![
+                "codex".to_owned(),
+                "resume".to_owned(),
+                "session-codex".to_owned(),
+            ],
+            environment: None,
+        }),
+        task_progress: Some(zentty_core::AgentProgress { done: 2, total: 3 }),
+        tasks: std::collections::BTreeMap::from([
+            ("finished".to_owned(), true),
+            ("remaining".to_owned(), false),
+        ]),
+        task_progress_authoritative: true,
+    };
+
+    assert!(state.seed_restored_agent(&draft, 10));
+    assert!(state.reconcile_terminal_title("pane-agent", "bash", 11));
+    assert_eq!(state.agent_restore_drafts(), vec![draft]);
+}
+
+#[test]
 fn remaining_managed_agents_produce_their_source_resume_invocations() {
     let envelope = SessionRestoreEnvelope::from_json(V3_ENVELOPE).unwrap();
     for (agent, session_id, expected) in [

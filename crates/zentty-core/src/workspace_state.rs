@@ -176,6 +176,7 @@ pub struct WorkspaceState {
     is_navigating_history: bool,
     closed_panes: Vec<ClosedPaneEntry>,
     agent_statuses: AgentStatusStore,
+    pending_agent_restore_drafts: BTreeMap<String, crate::PaneRestoreDraft>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -214,6 +215,7 @@ pub struct PaneWindowTransfer {
 pub struct PaneCrossWindowTransfer {
     pub pane: PaneState,
     agent_statuses: AgentStatusStore,
+    pending_agent_restore_draft: Option<crate::PaneRestoreDraft>,
     pub source_window_should_close: bool,
 }
 
@@ -334,6 +336,7 @@ impl WorkspaceState {
             is_navigating_history: false,
             closed_panes: Vec::new(),
             agent_statuses: AgentStatusStore::default(),
+            pending_agent_restore_drafts: BTreeMap::new(),
         }
     }
 
@@ -438,6 +441,7 @@ impl WorkspaceState {
             is_navigating_history: false,
             closed_panes: Vec::new(),
             agent_statuses: AgentStatusStore::default(),
+            pending_agent_restore_drafts: BTreeMap::new(),
         })
     }
 
@@ -2560,6 +2564,7 @@ impl WorkspaceState {
         }
 
         let agent_statuses = self.agent_statuses.take_pane(pane_id);
+        let pending_agent_restore_draft = self.pending_agent_restore_drafts.remove(pane_id);
         let destination_worklane = if source_pane_count == 1 {
             let moved = self.worklanes.remove(source_worklane_index);
             if self.active_worklane_id == moved.id {
@@ -2602,6 +2607,9 @@ impl WorkspaceState {
             is_navigating_history: false,
             closed_panes: Vec::new(),
             agent_statuses,
+            pending_agent_restore_drafts: pending_agent_restore_draft
+                .map(|draft| [(pane_id.to_owned(), draft)].into_iter().collect())
+                .unwrap_or_default(),
         };
         Some(PaneWindowTransfer {
             destination,
@@ -2629,6 +2637,7 @@ impl WorkspaceState {
             .iter()
             .position(|column| column.panes.iter().any(|pane| pane.id == pane_id))?;
         let agent_statuses = self.agent_statuses.take_pane(pane_id);
+        let pending_agent_restore_draft = self.pending_agent_restore_drafts.remove(pane_id);
         let (pane, _) = remove_pane(
             &mut self.worklanes[worklane_index].columns[column_index],
             pane_id,
@@ -2667,6 +2676,7 @@ impl WorkspaceState {
         Some(PaneCrossWindowTransfer {
             pane,
             agent_statuses,
+            pending_agent_restore_draft,
             source_window_should_close: self.worklanes.is_empty(),
         })
     }
@@ -2687,7 +2697,10 @@ impl WorkspaceState {
             return false;
         };
         let pane_id = transfer.pane.id.clone();
-        if self.pane(&pane_id).is_some() || self.agent_statuses.has_pane_data(&pane_id) {
+        if self.pane(&pane_id).is_some()
+            || self.agent_statuses.has_pane_data(&pane_id)
+            || self.pending_agent_restore_drafts.contains_key(&pane_id)
+        {
             return false;
         }
         let mut agent_statuses = self.agent_statuses.clone();
@@ -2702,11 +2715,14 @@ impl WorkspaceState {
             panes: vec![transfer.pane],
             pane_heights: vec![1.0],
             focused_pane_id: pane_id.clone(),
-            last_focused_pane_id: pane_id,
+            last_focused_pane_id: pane_id.clone(),
         });
         self.worklanes[target_index].focused_column_id = column_id;
         target_worklane_id.clone_into(&mut self.active_worklane_id);
         self.agent_statuses = agent_statuses;
+        if let Some(draft) = transfer.pending_agent_restore_draft {
+            self.pending_agent_restore_drafts.insert(pane_id, draft);
+        }
         self.record_focus_transition(previous);
         true
     }
@@ -2736,9 +2752,13 @@ impl WorkspaceState {
         };
         let original_column_count = self.worklanes[target_index].columns.len();
         let pane_id = transfer.pane.id.clone();
-        if self.pane(&pane_id).is_some() || self.agent_statuses.has_pane_data(&pane_id) {
+        if self.pane(&pane_id).is_some()
+            || self.agent_statuses.has_pane_data(&pane_id)
+            || self.pending_agent_restore_drafts.contains_key(&pane_id)
+        {
             return false;
         }
+        let pending_agent_restore_draft = transfer.pending_agent_restore_draft.clone();
         if !self
             .agent_statuses
             .adopt_pane_data(&pane_id, transfer.agent_statuses)
@@ -2757,6 +2777,10 @@ impl WorkspaceState {
         });
         self.worklanes[target_index].focused_column_id = temporary_column_id;
         self.active_worklane_id.clone_from(&target_worklane_id);
+        if let Some(draft) = pending_agent_restore_draft {
+            self.pending_agent_restore_drafts
+                .insert(pane_id.clone(), draft);
+        }
         let already_at_target = matches!(
             &target,
             PaneMoveTarget::ColumnGap { column_index, .. } if *column_index == original_column_count
@@ -2920,6 +2944,8 @@ impl WorkspaceState {
             },
             now,
         );
+        self.pending_agent_restore_drafts
+            .insert(draft.pane_id.clone(), draft.clone());
         true
     }
 
@@ -2928,11 +2954,13 @@ impl WorkspaceState {
     /// resume can fall back to an interactive shell without erasing workspace
     /// topology from the next live snapshot.
     pub fn clear_failed_agent_restore(&mut self, pane_id: &str) -> bool {
-        if self.pane(pane_id).is_none() || !self.agent_statuses.has_pane_data(pane_id) {
+        if self.pane(pane_id).is_none() {
             return false;
         }
+        let had_agent_status = self.agent_statuses.has_pane_data(pane_id);
+        let had_pending_draft = self.pending_agent_restore_drafts.remove(pane_id).is_some();
         self.agent_statuses.remove_pane(pane_id);
-        true
+        had_agent_status || had_pending_draft
     }
 
     /// Reconciles a real terminal-title callback into the canonical per-pane
@@ -3056,27 +3084,32 @@ impl WorkspaceState {
     }
 
     fn agent_restore_draft_for_pane(&self, pane: &PaneState) -> Option<PaneRestoreDraft> {
-        let status = self.agent_statuses.status_for_pane(&pane.id)?;
-        let agent_launch_snapshot = restore_launch_snapshot(status)?;
-        let (tasks, task_progress_authoritative) = self
+        let live_draft = self
             .agent_statuses
-            .task_restore_state(&pane.id, &status.session_id);
-        let draft = PaneRestoreDraft {
-            pane_id: pane.id.clone(),
-            kind: RestoreDraftKind::AgentResume,
-            tool_name: status.agent_name.clone(),
-            session_id: status.session_id.clone(),
-            working_directory: status
-                .working_directory
-                .clone()
-                .or_else(|| pane.working_directory.clone()),
-            tracked_pid: status.tracked_pid.unwrap_or_default(),
-            agent_launch_snapshot: Some(agent_launch_snapshot),
-            task_progress: status.progress,
-            tasks,
-            task_progress_authoritative,
-        };
-        draft.resume_command().is_some().then_some(draft)
+            .status_for_pane(&pane.id)
+            .and_then(|status| {
+                let agent_launch_snapshot = restore_launch_snapshot(status)?;
+                let (tasks, task_progress_authoritative) = self
+                    .agent_statuses
+                    .task_restore_state(&pane.id, &status.session_id);
+                let draft = PaneRestoreDraft {
+                    pane_id: pane.id.clone(),
+                    kind: RestoreDraftKind::AgentResume,
+                    tool_name: status.agent_name.clone(),
+                    session_id: status.session_id.clone(),
+                    working_directory: status
+                        .working_directory
+                        .clone()
+                        .or_else(|| pane.working_directory.clone()),
+                    tracked_pid: status.tracked_pid.unwrap_or_default(),
+                    agent_launch_snapshot: Some(agent_launch_snapshot),
+                    task_progress: status.progress,
+                    tasks,
+                    task_progress_authoritative,
+                };
+                draft.resume_command().is_some().then_some(draft)
+            });
+        live_draft.or_else(|| self.pending_agent_restore_drafts.get(&pane.id).cloned())
     }
 
     fn close_pane_at_with_capture(
@@ -3125,6 +3158,7 @@ impl WorkspaceState {
                 );
             }
             self.agent_statuses.remove_pane(pane_id);
+            self.pending_agent_restore_drafts.remove(pane_id);
             let removed_active = self.worklanes[worklane_index].id == self.active_worklane_id;
             self.worklanes.remove(worklane_index);
             if removed_active {
@@ -3146,6 +3180,7 @@ impl WorkspaceState {
             );
         }
         self.agent_statuses.remove_pane(pane_id);
+        self.pending_agent_restore_drafts.remove(pane_id);
         let worklane = &mut self.worklanes[worklane_index];
         if worklane.columns[column_index].panes.len() == 1 {
             let removed_focused_column =

@@ -351,6 +351,88 @@ assert_completed_restore_shell() {
         fail "completed restore erased a pane or worklane"
 }
 
+if [[ "${ZENTTY_UNVISITED_RESTORE_ONLY:-false}" == true ]]; then
+    # Reproduce the product failure in which a hidden restored pane receives
+    # its initial shell title before the delayed agent hook authenticates. A
+    # clean shutdown must retain the accepted draft rather than snapshotting
+    # that incidental shell projection as the pane's durable intent.
+    agent_start_delay=5
+    start_product
+    zentty_product_wait_for_log "${log}" \
+        'zentty-linux: surface-owned pane=pane-agent-two live=4' \
+        "hidden restored pane did not create its real Ghostty surface" ||
+        fail "hidden restored pane readiness missing"
+    grep -Fq 'zentty-linux: agent-event pane=pane-agent-two' "${log}" &&
+        fail "delayed hidden agent authenticated before the first clean close"
+    zentty_product_prepare_input "${backend}" "${log}" ||
+        fail "could not prepare first clean-close input"
+    zentty_product_close_window "${backend}"
+    wait_for_product_exit
+    jq -e '
+        .reason == "cleanExit" and
+        ([.restoreDraftWindows[0].paneDrafts[].sessionID] | sort) ==
+            ["session-codex", "session-two"]
+    ' "${state_dir}/restore-snapshot.json" >/dev/null ||
+        fail "first unvisited clean close lost an accepted agent restore draft"
+
+    agent_start_delay=0
+    start_product
+    zentty_product_prepare_input "${backend}" "${log}" ||
+        fail "could not prepare first reveal input"
+    zentty_product_ctrl_key "${backend}" Tab
+    zentty_product_wait_for_log "${log}" \
+        'zentty-linux: terminal-ready-pane=pane-agent' \
+        "first preserved agent pane was not realized on visit" ||
+        fail "first preserved agent reveal missing"
+    for _ in pane-shell pane-ordinary-inactive pane-agent-two; do
+        zentty_product_ctrl_key "${backend}" Tab
+    done
+    zentty_product_wait_for_log "${log}" \
+        'zentty-linux: terminal-ready-pane=pane-agent-two' \
+        "second preserved agent pane was not realized on visit" ||
+        fail "second preserved agent reveal missing"
+    wait_for_agent_count 2
+    zentty_product_wait_for_log "${log}" \
+        'zentty-linux: agent-event pane=pane-agent worklane=worklane-main' \
+        "first preserved agent did not authenticate" ||
+        fail "first preserved agent authentication missing"
+    zentty_product_wait_for_log "${log}" \
+        'zentty-linux: agent-event pane=pane-agent-two worklane=worklane-second-agent' \
+        "second preserved agent did not authenticate" ||
+        fail "second preserved agent authentication missing"
+    zentty_product_close_window "${backend}"
+    wait_for_product_exit
+
+    start_product
+    zentty_product_prepare_input "${backend}" "${log}" ||
+        fail "could not prepare second reveal input"
+    zentty_product_ctrl_key "${backend}" Tab
+    zentty_product_wait_for_log "${log}" \
+        'zentty-linux: terminal-ready-pane=pane-agent' \
+        "first agent pane was not realized on the second relaunch" ||
+        fail "first second-relaunch reveal missing"
+    for _ in pane-shell pane-ordinary-inactive pane-agent-two; do
+        zentty_product_ctrl_key "${backend}" Tab
+    done
+    zentty_product_wait_for_log "${log}" \
+        'zentty-linux: terminal-ready-pane=pane-agent-two' \
+        "second agent pane was not realized on the second relaunch" ||
+        fail "second second-relaunch reveal missing"
+    wait_for_agent_count 4
+    zentty_product_wait_for_log "${log}" \
+        'zentty-linux: agent-event pane=pane-agent worklane=worklane-main' \
+        "first agent did not authenticate on the second relaunch" ||
+        fail "first second-relaunch authentication missing"
+    zentty_product_wait_for_log "${log}" \
+        'zentty-linux: agent-event pane=pane-agent-two worklane=worklane-second-agent' \
+        "second agent did not authenticate on the second relaunch" ||
+        fail "second second-relaunch authentication missing"
+    zentty_product_close_window "${backend}"
+    wait_for_product_exit
+    printf 'rust-session-restore: PASS unvisited-agent drafts=preserved relaunches=2 authentication=real\n'
+    exit 0
+fi
+
 if [[ "${ZENTTY_INTERACTED_RESTORE_ONLY:-false}" == true ]]; then
     agent_skip_auth=true
     agent_sleep_seconds=0.2

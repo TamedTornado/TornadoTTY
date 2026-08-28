@@ -566,7 +566,7 @@ mod tests {
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::Duration;
     use zentty_core::{
-        PersistenceRequest, SaveReason, SessionRestoreEnvelope, SessionRestoreStore,
+        PersistenceRequest, SaveReason, SessionRestoreEnvelope, SessionRestoreStore, WorkspaceState,
     };
 
     const V3_ENVELOPE: &[u8] =
@@ -669,6 +669,60 @@ mod tests {
         coordinator.complete_launch().unwrap();
         assert!(!store.snapshot_path().exists());
         assert_eq!(store.prepare_for_launch(false).unwrap(), None,);
+    }
+
+    #[test]
+    fn unvisited_agent_restore_survives_two_clean_relaunches() {
+        let directory = TestDirectory::new("unvisited-agent-two-relaunches");
+        let store = directory.store();
+        store.save_snapshot(&envelope()).unwrap();
+        store.mark_clean_exit(1.0).unwrap();
+
+        let (mut first, first_launch) =
+            PersistenceCoordinator::start(&directory.0, true, 2.0).unwrap();
+        let first_window = &first_launch.windows[0];
+        let original_draft = first_window.restored_drafts[0].clone();
+        let mut first_state = WorkspaceState::from_window_recipe(&first_window.window).unwrap();
+        assert!(first_state.seed_restored_agent(&original_draft, 2));
+        assert!(first_state.reconcile_terminal_title(&original_draft.pane_id, "bash", 3));
+        first.complete_launch().unwrap();
+        first
+            .save_clean_exit(
+                vec![snapshot(
+                    first_state.to_window_recipe(&first_window.window),
+                    first_state.agent_restore_drafts(),
+                )],
+                first_launch.active_window_id,
+                "/tmp",
+                4.0,
+            )
+            .unwrap();
+
+        let (mut second, second_launch) =
+            PersistenceCoordinator::start(&directory.0, true, 5.0).unwrap();
+        let second_window = &second_launch.windows[0];
+        assert_eq!(second_window.restored_drafts, vec![original_draft.clone()]);
+        let mut second_state = WorkspaceState::from_window_recipe(&second_window.window).unwrap();
+        assert!(second_state.seed_restored_agent(&original_draft, 5));
+        assert!(second_state.reconcile_terminal_title(&original_draft.pane_id, "bash", 6));
+        second.complete_launch().unwrap();
+        second
+            .save_clean_exit(
+                vec![snapshot(
+                    second_state.to_window_recipe(&second_window.window),
+                    second_state.agent_restore_drafts(),
+                )],
+                second_launch.active_window_id,
+                "/tmp",
+                7.0,
+            )
+            .unwrap();
+
+        let (_, third_launch) = PersistenceCoordinator::start(&directory.0, true, 8.0).unwrap();
+        assert_eq!(
+            third_launch.windows[0].restored_drafts,
+            vec![original_draft]
+        );
     }
 
     #[test]
