@@ -13,6 +13,7 @@ agent_receipt=""
 product_pid=""
 agent_start_delay=0
 agent_profile=codex-restore
+agent_sessions=session-codex,session-two
 agent_sleep_seconds=30
 agent_fail_once_marker=""
 agent_skip_auth=false
@@ -188,7 +189,7 @@ start_product() {
     env \
         PATH="${fake_bin}:${PATH}" \
         ZENTTY_CONTROLLED_AGENT_PROFILE="${agent_profile}" \
-        ZENTTY_CONTROLLED_AGENT_SESSIONS=session-codex,session-two \
+        ZENTTY_CONTROLLED_AGENT_SESSIONS="${agent_sessions}" \
         ZENTTY_CONTROLLED_AGENT_COMPLETE_TASK_SESSION=session-codex \
         ZENTTY_CONTROLLED_AGENT_RECEIPT="${agent_receipt}" \
         ZENTTY_CONTROLLED_AGENT_START_DELAY_SECONDS="${agent_start_delay}" \
@@ -358,6 +359,92 @@ assert_completed_restore_shell() {
         "completed restore changed the durable workspace topology" ||
         fail "completed restore erased a pane or worklane"
 }
+
+if [[ "${ZENTTY_CODEX_ALIAS_RESTORE_ONLY:-false}" == true ]]; then
+    agent_sessions='session-codex,session-two,Consulting Client'
+    agent_start_delay=30
+    agent_start_receipt="$(mktemp)"
+    start_product
+    zentty_product_prepare_input "${backend}" "${log}" ||
+        fail "could not prepare Codex alias input"
+    zentty_product_type "${backend}" "codex resume 'Consulting Client'"
+    zentty_product_key "${backend}" Return
+    zentty_product_wait_for_log "${log}" \
+        'zentty-linux: shell-signal pane=pane-shell-active kind=shell-state state=running command-present=true' \
+        "physical Codex alias submission did not cross the shell boundary" ||
+        fail "Codex alias shell submission missing"
+    zentty_product_wait_for_log "${agent_start_receipt}" \
+        'Consulting Client' \
+        "managed Codex wrapper did not receive the alias as one argument" ||
+        fail "Codex alias wrapper launch missing"
+    for _ in {1..100}; do
+        jq -e '
+            any(.restoreDraftWindows[0].paneDrafts[]?;
+                .paneID == "pane-shell-active" and
+                .sessionID == "Consulting Client" and
+                .agentLaunchSnapshot.arguments == ["codex", "resume", "Consulting Client"])
+        ' "${state_dir}/restore-snapshot.json" >/dev/null 2>&1 && break
+        sleep 0.05
+    done
+    jq -e '
+        any(.restoreDraftWindows[0].paneDrafts[]?;
+            .paneID == "pane-shell-active" and
+            .sessionID == "Consulting Client" and
+            .agentLaunchSnapshot.arguments == ["codex", "resume", "Consulting Client"])
+    ' "${state_dir}/restore-snapshot.json" >/dev/null ||
+        fail "live snapshot did not persist the unresolved Codex alias"
+
+    zentty_product_ctrl_key "${backend}" Tab
+    zentty_product_wait_for_log "${log}" \
+        'zentty-linux: topology=worklane-main[title=Nimbu API,color=blue]' \
+        "physical traversal did not leave the provisional alias worklane" ||
+        fail "Codex alias worklane did not become inactive"
+    zentty_product_close_window "${backend}"
+    wait_for_product_exit
+    jq -e '
+        .reason == "cleanExit" and
+        any(.restoreDraftWindows[0].paneDrafts[]?;
+            .paneID == "pane-shell-active" and
+            .sessionID == "Consulting Client")
+    ' "${state_dir}/restore-snapshot.json" >/dev/null ||
+        fail "first clean close lost the unresolved Codex alias"
+
+    : >"${agent_start_receipt}"
+    start_product
+    zentty_product_wait_for_log "${log}" \
+        'zentty-linux: topology=worklane-main[title=Nimbu API,color=blue]' \
+        "first lazy alias relaunch did not preserve the active worklane" ||
+        fail "first lazy alias relaunch changed focus"
+    grep -Fq 'Consulting Client' "${agent_start_receipt}" &&
+        fail "unvisited alias materialized while lazy restore was enabled"
+    zentty_product_prepare_input "${backend}" "${log}" ||
+        fail "could not prepare first lazy alias close"
+    zentty_product_close_window "${backend}"
+    wait_for_product_exit
+    jq -e '
+        .reason == "cleanExit" and
+        any(.restoreDraftWindows[0].paneDrafts[]?;
+            .paneID == "pane-shell-active" and
+            .sessionID == "Consulting Client")
+    ' "${state_dir}/restore-snapshot.json" >/dev/null ||
+        fail "unvisited relaunch lost the unresolved Codex alias"
+
+    : >"${agent_start_receipt}"
+    start_product
+    zentty_product_prepare_input "${backend}" "${log}" ||
+        fail "could not prepare second alias reveal"
+    for _ in pane-shell pane-ordinary-inactive pane-agent-two pane-shell-active; do
+        zentty_product_ctrl_key "${backend}" Tab
+    done
+    zentty_product_wait_for_log "${agent_start_receipt}" \
+        'Consulting Client' \
+        "visiting the preserved pane did not relaunch the Codex alias" ||
+        fail "preserved Codex alias launch missing"
+    zentty_product_close_window "${backend}"
+    wait_for_product_exit
+    printf 'rust-session-restore: PASS codex-alias provisional=durable canonical=optional unvisited-relaunches=2 argv=structural\n'
+    exit 0
+fi
 
 if [[ "${ZENTTY_UNVISITED_RESTORE_ONLY:-false}" == true ]]; then
     # Reproduce the product failure in which a hidden restored pane receives

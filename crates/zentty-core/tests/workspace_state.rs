@@ -1570,10 +1570,7 @@ fn shell_history_requires_physical_submission_but_explicit_launches_do_not() {
         state.pane("pane-1").unwrap().last_run_command.as_deref(),
         Some("cargo test")
     );
-    assert!(!state.record_submitted_shell_command(
-        "pane-1",
-        "_zentty_prompt_bootstrap"
-    ));
+    assert!(!state.record_submitted_shell_command("pane-1", "_zentty_prompt_bootstrap"));
     assert_eq!(
         state.pane("pane-1").unwrap().last_run_command.as_deref(),
         Some("cargo test")
@@ -1589,6 +1586,88 @@ fn shell_history_requires_physical_submission_but_explicit_launches_do_not() {
         state.pane("pane-2").unwrap().last_run_command.as_deref(),
         Some("codex resume bro")
     );
+}
+
+#[test]
+fn codex_resume_target_is_durable_before_and_after_canonical_identity_arrives() {
+    let mut state = WorkspaceState::new("lane-1", "pane-1");
+    assert!(state.configure_pane_launch("pane-1", Some("/repo/consulting".to_owned()), None,));
+
+    assert!(state.record_submitted_shell_command("pane-1", "codex resume 'Consulting Client'",));
+    let provisional = state.agent_restore_drafts();
+    assert_eq!(provisional.len(), 1);
+    assert_eq!(provisional[0].session_id, "Consulting Client");
+    assert_eq!(
+        provisional[0].resume_command().as_deref(),
+        Some("codex resume 'Consulting Client'")
+    );
+    assert_eq!(
+        provisional[0]
+            .agent_launch_snapshot
+            .as_ref()
+            .unwrap()
+            .arguments,
+        ["codex", "resume", "Consulting Client"]
+    );
+
+    let event = AuthenticatedAgentEvent {
+        target: AgentTarget::new("window-main", "lane-1", "pane-1"),
+        pane_token: "token-pane-1".to_owned(),
+        event: AgentEvent::parse(
+            br#"{"version":1,"event":"session.start","agent":{"name":"Codex","pid":4242},"session":{"id":"019fd019-6576-7323-811b-b07f0635439a"},"context":{"workingDirectory":"/repo/consulting"}}"#,
+        )
+        .unwrap(),
+    };
+    state.apply_agent_event(event, 101);
+    let canonical = state.agent_restore_drafts();
+    assert_eq!(canonical.len(), 1);
+    assert_eq!(
+        canonical[0].session_id,
+        "019fd019-6576-7323-811b-b07f0635439a"
+    );
+    assert_eq!(
+        canonical[0].resume_command().as_deref(),
+        Some("codex resume 019fd019-6576-7323-811b-b07f0635439a")
+    );
+    assert_eq!(
+        canonical[0]
+            .agent_launch_snapshot
+            .as_ref()
+            .unwrap()
+            .arguments,
+        ["codex", "resume", "Consulting Client"]
+    );
+
+    let mut relaunched = WorkspaceState::new("lane-1", "pane-1");
+    assert!(relaunched.seed_restored_agent(&canonical[0], 102));
+    let preserved = relaunched.agent_restore_drafts();
+    assert_eq!(preserved.len(), 1);
+    assert_eq!(preserved[0].session_id, canonical[0].session_id);
+    assert_eq!(
+        preserved[0]
+            .agent_launch_snapshot
+            .as_ref()
+            .unwrap()
+            .arguments,
+        ["codex", "resume", "Consulting Client"]
+    );
+}
+
+#[test]
+fn only_one_exact_safe_codex_resume_is_promoted_to_restore_intent() {
+    for command in [
+        "cargo test",
+        "codex",
+        "codex resume",
+        "codex resume one two",
+        "codex resume Consulting; touch /tmp/not-allowed",
+        "env codex resume Consulting",
+    ] {
+        let mut state = WorkspaceState::new("lane-1", "pane-1");
+        assert!(!state.record_terminal_input_submitted("pane-1", 100));
+        assert!(state.record_submitted_shell_command("pane-1", command));
+        assert!(state.agent_restore_drafts().is_empty(), "command={command}");
+    }
 }
 
 #[test]

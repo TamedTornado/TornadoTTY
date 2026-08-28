@@ -289,8 +289,11 @@ impl PaneRestoreDraft {
             return None;
         }
         if self.tool_name.eq_ignore_ascii_case("codex") {
-            let session_id = validated_codex_session_id(&self.session_id)?;
-            return Some(format!("codex resume {session_id}"));
+            let session_id = validated_codex_resume_target(&self.session_id)?;
+            return Some(format!(
+                "codex resume {}",
+                shell_quoted_argument(&session_id)
+            ));
         }
         if self.tool_name.eq_ignore_ascii_case("claude")
             || self.tool_name.eq_ignore_ascii_case("claude code")
@@ -453,11 +456,13 @@ pub struct AgentLaunchSnapshot {
     pub environment: Option<BTreeMap<String, String>>,
 }
 
-fn validated_codex_session_id(value: &str) -> Option<String> {
-    let mut characters = value.chars();
-    if !characters.next()?.is_ascii_alphanumeric()
-        || !characters.all(|character| {
-            character.is_ascii_alphanumeric() || character == '_' || character == '-'
+fn validated_codex_resume_target(value: &str) -> Option<String> {
+    let value = value.trim();
+    if value.is_empty()
+        || value.len() > 256
+        || !value.chars().next()?.is_alphanumeric()
+        || !value.chars().all(|character| {
+            character.is_alphanumeric() || matches!(character, ' ' | '_' | '-' | '.')
         })
     {
         return None;

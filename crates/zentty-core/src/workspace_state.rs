@@ -1838,28 +1838,38 @@ impl WorkspaceState {
         true
     }
 
-    /// Consumes a physical terminal submission and records the authenticated
-    /// shell command that it caused. Shell bootstrap signals have no pending
-    /// submission and are deliberately ignored.
+    /// Records an authenticated shell command after physical submission. An
+    /// exact managed Codex resume is additionally durable from authenticated
+    /// shell pre-exec alone; unrelated bootstrap signals remain ignored.
     pub fn record_submitted_shell_command(&mut self, pane_id: &str, command: &str) -> bool {
-        let Some(pane) = self
-            .worklanes
-            .iter_mut()
-            .flat_map(|worklane| &mut worklane.columns)
-            .flat_map(|column| &mut column.panes)
-            .find(|pane| pane.id == pane_id)
-        else {
-            return false;
+        let provisional_draft = {
+            let Some(pane) = self
+                .worklanes
+                .iter_mut()
+                .flat_map(|worklane| &mut worklane.columns)
+                .flat_map(|column| &mut column.panes)
+                .find(|pane| pane.id == pane_id)
+            else {
+                return false;
+            };
+            let command = command.trim();
+            if command.is_empty() {
+                return false;
+            }
+            let provisional_draft =
+                provisional_codex_restore_draft(pane_id, command, pane.working_directory.clone());
+            if !pane.pending_user_command_submission && provisional_draft.is_none() {
+                return false;
+            }
+            pane.pending_user_command_submission = false;
+            pane.last_run_command = Some(command.to_owned());
+            provisional_draft
         };
-        if !pane.pending_user_command_submission {
-            return false;
+        self.pending_agent_restore_drafts.remove(pane_id);
+        if let Some(draft) = provisional_draft {
+            self.pending_agent_restore_drafts
+                .insert(pane_id.to_owned(), draft);
         }
-        pane.pending_user_command_submission = false;
-        let command = command.trim();
-        if command.is_empty() {
-            return false;
-        }
-        pane.last_run_command = Some(command.to_owned());
         true
     }
 
@@ -3084,11 +3094,15 @@ impl WorkspaceState {
     }
 
     fn agent_restore_draft_for_pane(&self, pane: &PaneState) -> Option<PaneRestoreDraft> {
+        let pending_draft = self.pending_agent_restore_drafts.get(&pane.id);
         let live_draft = self
             .agent_statuses
             .status_for_pane(&pane.id)
             .and_then(|status| {
-                let agent_launch_snapshot = restore_launch_snapshot(status)?;
+                let agent_launch_snapshot = pending_draft
+                    .filter(|draft| draft.tool_name.eq_ignore_ascii_case("codex"))
+                    .and_then(|draft| draft.agent_launch_snapshot.clone())
+                    .or_else(|| restore_launch_snapshot(status))?;
                 let (tasks, task_progress_authoritative) = self
                     .agent_statuses
                     .task_restore_state(&pane.id, &status.session_id);
@@ -3109,7 +3123,7 @@ impl WorkspaceState {
                 };
                 draft.resume_command().is_some().then_some(draft)
             });
-        live_draft.or_else(|| self.pending_agent_restore_drafts.get(&pane.id).cloned())
+        live_draft.or_else(|| pending_draft.cloned())
     }
 
     fn close_pane_at_with_capture(
@@ -3661,6 +3675,36 @@ fn trimmed_owned(value: Option<&str>) -> Option<String> {
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(str::to_owned)
+}
+
+fn provisional_codex_restore_draft(
+    pane_id: &str,
+    command: &str,
+    working_directory: Option<String>,
+) -> Option<crate::PaneRestoreDraft> {
+    let arguments = shlex::split(command)?;
+    let [program, subcommand, target] = arguments.as_slice() else {
+        return None;
+    };
+    if program != "codex" || subcommand != "resume" {
+        return None;
+    }
+    let draft = crate::PaneRestoreDraft {
+        pane_id: pane_id.to_owned(),
+        kind: crate::RestoreDraftKind::AgentResume,
+        tool_name: "Codex".to_owned(),
+        session_id: target.clone(),
+        working_directory,
+        tracked_pid: 0,
+        agent_launch_snapshot: Some(crate::AgentLaunchSnapshot {
+            arguments,
+            environment: None,
+        }),
+        task_progress: None,
+        tasks: BTreeMap::new(),
+        task_progress_authoritative: false,
+    };
+    draft.resume_command().is_some().then_some(draft)
 }
 
 fn resolve_closed_pane_directory(original: Option<&str>, home_directory: &str) -> (String, bool) {
