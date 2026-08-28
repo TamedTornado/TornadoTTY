@@ -342,6 +342,7 @@ impl PaneRuntimeCoordinator {
                 transfer,
             ));
         }
+        crate::terminal_pointer::install(&transfer.surface);
         Self::connect_surface_callbacks(shell, pane_id, &transfer.surface);
         let focus_controller = Self::make_surface_focus_controller(shell, pane_id);
         transfer
@@ -483,6 +484,7 @@ impl PaneRuntimeCoordinator {
             }
         };
 
+        crate::terminal_pointer::install(&surface);
         Self::connect_surface_callbacks(shell, pane_id, &surface);
         let focus_controller = Self::make_surface_focus_controller(shell, pane_id);
         surface.widget().add_controller(focus_controller.clone());

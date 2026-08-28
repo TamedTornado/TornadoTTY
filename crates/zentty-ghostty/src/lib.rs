@@ -666,6 +666,25 @@ impl GhosttySurface {
         self.handlers.borrow_mut().push(handler);
     }
 
+    /// Registers a host cursor-policy callback for native mouse-shape and
+    /// visibility changes.
+    ///
+    /// Ghostty remains responsible for selecting the semantic cursor. The
+    /// callback runs after the native widget projects that state, allowing an
+    /// embedder to replace a specific rendered cursor without changing the
+    /// terminal protocol or embedding ABI.
+    pub fn on_pointer_cursor_changed(&self, callback: impl Fn(&gtk::Widget) + 'static) {
+        let callback = Rc::new(callback);
+        for property in ["mouse-shape", "mouse-hidden"] {
+            let callback = Rc::clone(&callback);
+            let handler = self
+                .widget
+                .connect_notify_local(Some(property), move |widget, _| callback(widget));
+            self.handlers.borrow_mut().push(handler);
+        }
+        callback(&self.widget);
+    }
+
     pub fn on_progress_report(&self, callback: impl Fn(ProgressReport) + 'static) {
         let handler = self
             .widget

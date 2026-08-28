@@ -49,6 +49,7 @@ mod sleep_inhibitor;
 mod source_ui;
 mod status_notifier;
 mod task_manager;
+mod terminal_pointer;
 mod theme_catalog;
 mod theme_preview;
 mod tmux_compat;

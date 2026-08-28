@@ -400,6 +400,9 @@ product_pid=$!
 wait_for_fixed 'zentty-linux: terminal-ready-pane=pane-1' \
     "real Ghostty search surface did not initialize"
 wait_for_fixed \
+    'zentty-linux: terminal-pointer semantic=text rendered=outlined-ibeam' \
+    "real Ghostty surface did not project the high-contrast text pointer"
+wait_for_fixed \
     "zentty-linux: config-loaded path=${config_file} automatic-clean-copy=true" \
     "the single process config owner did not load automatic Clean Copy"
 for _ in $(seq 1 160); do
