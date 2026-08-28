@@ -92,3 +92,22 @@ hook-provided UUID—must carry the intent.
 - Supported provisional names begin with an alphanumeric character and contain
   only letters, numbers, spaces, underscore, hyphen, or period. Unsupported
   names remain ordinary command history rather than being silently broadened.
+
+## Human dogfood confirmation
+
+Jason confirmed the installed build against the real `Consulting` Codex alias.
+The first attempted relaunch opened a bare shell because that snapshot had been
+written by the already-running pre-fix executable and contained no Consulting
+restore draft; this was setup residue, not a receipt for the new capture path.
+
+After `codex resume Consulting` was submitted under the fixed build, the live
+snapshot was inspected before shutdown and contained an unresolved structural
+draft with target `Consulting` and argv `['codex', 'resume', 'Consulting']`, not
+a canonical UUID. The next launch resumed Codex from that alias. Jason then
+disabled eager background restoration, relaunched without visiting Consulting,
+closed Zentty, relaunched again, and visited Consulting. The session resumed.
+
+```text
+HUMAN PASS: unresolved alias restored
+HUMAN PASS: unvisited lazy relaunch retained restore intent
+```
