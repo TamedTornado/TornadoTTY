@@ -39,9 +39,9 @@ safe ownership, product policy, and orchestration stay in Zentty.
 |---|---|
 | Official repository | `ghostty-org/ghostty` |
 | Current official base | `6dcf68fc0b12e8caebbfc43770d66edac124b4f8` |
-| Downstream candidate branch | `TamedTornado/ghostty:gh11/rebase-current` |
-| Qualified candidate tip | `80054768edbffd5df8568782e528363033a49192` |
-| Downstream commits | 33 |
+| Downstream candidate branch | `TamedTornado/ghostty:linux/context-menu-model` |
+| Qualified candidate tip | `eb1eb6281466ee7e85f629012ac77de7d9cac712` |
+| Downstream commits | 34 |
 
 The previous pin was rebased rather than merged. Two Ghostty-local commits that
 only added Zentty policy to `AGENTS.md` were deliberately dropped. The candidate
@@ -69,6 +69,9 @@ textual conflicts and three compile-level adaptations:
   `ghostty_gtk_embed_surface_request_paste`.
 
 The minimized allowlist now matches the product-owned Rust declarations exactly.
+The latest independent operation lets an alternate GTK host replace only the
+surface's `GMenuModel`; Ghostty continues to own right-click routing, anchoring,
+mouse-reporting interaction, and popover lifecycle.
 
 ## Reviewed file inventory
 
@@ -76,7 +79,7 @@ The minimized allowlist now matches the product-owned Rust declarations exactly.
 |---|---|
 | `build.zig` | Build, test, install the GTK embedding library and resources. |
 | `include/ghostty/gtk.h` | Fixed-width language-neutral public ABI and lifecycle contract. |
-| `src/gtk_embed_lib.zig` | Opaque runtime and thirteen product-used operations. |
+| `src/gtk_embed_lib.zig` | Opaque runtime and fourteen product-used operations. |
 | `src/gtk_embed_lib.version-script` | Exact ELF allowlist/version node. |
 | `src/gtk_embed_options.zig` | Size-versioned copied surface-option validation. |
 | `src/gtk_embed_spike.zig` | Ghostty-owned alternate-host lifecycle/PTY/input/signal exercise. |
@@ -99,7 +102,7 @@ or removed file fails the audit until reviewed.
 
 ## Public ABI allowlist
 
-Exactly thirteen functions are exported under `GHOSTTY_GTK_EMBED_1.0`:
+Exactly fourteen functions are exported under `GHOSTTY_GTK_EMBED_1.0`:
 
 1. `ghostty_gtk_embed_runtime_new_with_async_backend`
 2. `ghostty_gtk_embed_runtime_free`
@@ -114,6 +117,7 @@ Exactly thirteen functions are exported under `GHOSTTY_GTK_EMBED_1.0`:
 11. `ghostty_gtk_embed_surface_read_text`
 12. `ghostty_gtk_embed_surface_read_selection`
 13. `ghostty_gtk_embed_surface_foreground_process_id`
+14. `ghostty_gtk_embed_surface_set_context_menu_model`
 
 Each has:
 

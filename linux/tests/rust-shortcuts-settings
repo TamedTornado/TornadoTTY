@@ -391,7 +391,7 @@ settings_key ctrl+f
 for _ in {1..3}; do settings_key Tab; done
 settings_key space
 zentty_product_wait_for_log "${log}" \
-    'zentty-linux: shortcut-settings action=shortcut-preset-ghostty confirmation=shown revision=80054768edbffd5df8568782e528363033a49192' \
+    'zentty-linux: shortcut-settings action=shortcut-preset-ghostty confirmation=shown revision=eb1eb6281466ee7e85f629012ac77de7d9cac712' \
     "Ghostty preset did not expose its confirmation" || fail "Ghostty preset confirmation failed"
 if zentty_product_uses_xdotool "${backend}"; then
     xdotool key Return

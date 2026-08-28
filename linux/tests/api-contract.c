@@ -37,6 +37,7 @@ static int reject_null_and_foreign_handles(void) {
     ghostty_gtk_embed_surface_grab_focus(foreign_surface);
     int text_callbacks = 0;
     ghostty_gtk_embed_cell_size_t cell_size = {.width = 17.0, .height = 23.0};
+    GMenu *menu = g_menu_new();
     if (ghostty_gtk_embed_surface_close(NULL) ||
         ghostty_gtk_embed_surface_close(foreign_surface) ||
         ghostty_gtk_embed_surface_binding_action(NULL, "start_search", 12) ||
@@ -72,10 +73,18 @@ static int reject_null_and_foreign_handles(void) {
             &text_callbacks
         ) ||
         ghostty_gtk_embed_surface_foreground_process_id(NULL) != 0 ||
-        ghostty_gtk_embed_surface_foreground_process_id(foreign_surface) != 0) {
+        ghostty_gtk_embed_surface_foreground_process_id(foreign_surface) != 0 ||
+        ghostty_gtk_embed_surface_set_context_menu_model(NULL, G_MENU_MODEL(menu)) ||
+        ghostty_gtk_embed_surface_set_context_menu_model(
+            foreign_surface,
+            G_MENU_MODEL(menu)
+        ) ||
+        ghostty_gtk_embed_surface_set_context_menu_model(foreign_surface, NULL)) {
         fputs("api-contract: null or foreign surface accepted\n", stderr);
+        g_object_unref(menu);
         return 1;
     }
+    g_object_unref(menu);
     if (text_callbacks != 0) {
         fputs("api-contract: rejected text read invoked callback\n", stderr);
         return 1;
@@ -214,6 +223,15 @@ static int enforce_runtime_lifecycle(
         return 1;
     }
     g_object_ref_sink(surface);
+    GMenu *menu = g_menu_new();
+    if (!ghostty_gtk_embed_surface_set_context_menu_model(
+            surface,
+            G_MENU_MODEL(menu))) {
+        fputs("api-contract: valid context menu model rejected\n", stderr);
+        g_object_unref(menu);
+        return 1;
+    }
+    g_object_unref(menu);
     int text_callbacks = 0;
     ghostty_gtk_embed_cell_size_t cell_size = {.width = 17.0, .height = 23.0};
     if (g_signal_lookup("progress-report", G_OBJECT_TYPE(surface)) == 0) {

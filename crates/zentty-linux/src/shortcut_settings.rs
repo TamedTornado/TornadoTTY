@@ -959,7 +959,7 @@ enum Preset {
     Ghostty,
 }
 
-const GHOSTTY_PRESET_REVISION: &str = "80054768edbffd5df8568782e528363033a49192";
+const GHOSTTY_PRESET_REVISION: &str = "eb1eb6281466ee7e85f629012ac77de7d9cac712";
 const GHOSTTY_PRESET_CONFIRMATION: &str = "This replaces all current shortcut bindings with Linux Ghostty-compatible shortcuts while keeping non-conflicting Zentty actions.";
 
 fn confirm_ghostty_preset(window: &gtk::Window, state: &Rc<RefCell<ViewState>>) {
@@ -1388,7 +1388,7 @@ mod tests {
         let preset = ghostty_preset();
         assert_eq!(
             GHOSTTY_PRESET_REVISION,
-            "80054768edbffd5df8568782e528363033a49192"
+            "eb1eb6281466ee7e85f629012ac77de7d9cac712"
         );
         assert_eq!(preset["app.new_window"], "command+shift+n");
         assert_eq!(preset["worklane.new"], "command+shift+t");

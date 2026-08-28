@@ -104,6 +104,7 @@ pub enum Error {
     InvalidText(FromUtf8Error),
     TickFailed,
     ConfigReloadFailed,
+    ContextMenuModelFailed,
 }
 
 impl fmt::Display for Error {
@@ -160,6 +161,9 @@ impl fmt::Display for Error {
             }
             Self::TickFailed => formatter.write_str("Ghostty runtime tick failed"),
             Self::ConfigReloadFailed => formatter.write_str("Ghostty configuration reload failed"),
+            Self::ContextMenuModelFailed => {
+                formatter.write_str("Ghostty context menu model installation failed")
+            }
         }
     }
 }
@@ -727,6 +731,26 @@ impl GhosttySurface {
             None
         });
         self.handlers.borrow_mut().push(handler);
+    }
+
+    /// Replaces Ghostty's native terminal context menu while preserving its
+    /// right-click, mouse-reporting, anchoring, and popover lifecycle.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::ContextMenuModelFailed`] when the native widget rejects
+    /// the supplied GTK menu model.
+    pub fn set_context_menu_model(&self, model: &gtk::gio::MenuModel) -> Result<(), Error> {
+        if unsafe {
+            sys::ghostty_gtk_embed_surface_set_context_menu_model(
+                self.widget.as_ptr().cast(),
+                model.as_ptr().cast(),
+            )
+        } {
+            Ok(())
+        } else {
+            Err(Error::ContextMenuModelFailed)
+        }
     }
 
     pub fn on_child_exited(&self, callback: impl Fn() + 'static) {

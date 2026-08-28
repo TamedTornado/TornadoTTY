@@ -1318,13 +1318,27 @@ impl ActionRouter {
         Ok(())
     }
 
-    pub(super) fn set_native_copy_enabled(&self, enabled: bool) {
+    pub(super) fn set_selection_copy_enabled(&self, enabled: bool) {
         if let Some(action) = self
             .native_window_group
             .lookup_action("copy")
             .and_then(|action| action.downcast::<gio::SimpleAction>().ok())
         {
             action.set_enabled(enabled);
+        }
+        for name in [
+            ACTION_COPY,
+            ACTION_CLEAN_COPY,
+            ACTION_COPY_RAW,
+            ACTION_COPY_AS_MARKDOWN,
+        ] {
+            if let Some(action) = self
+                .group
+                .lookup_action(name)
+                .and_then(|action| action.downcast::<gio::SimpleAction>().ok())
+            {
+                action.set_enabled(enabled);
+            }
         }
     }
 

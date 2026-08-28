@@ -27,7 +27,8 @@ expected="$({
         ghostty_gtk_embed_surface_new_with_options \
         ghostty_gtk_embed_surface_read_text \
         ghostty_gtk_embed_surface_read_selection \
-        ghostty_gtk_embed_surface_send_text
+        ghostty_gtk_embed_surface_send_text \
+        ghostty_gtk_embed_surface_set_context_menu_model
 } | sort)"
 actual="$(
     nm -D --defined-only "${library}" |

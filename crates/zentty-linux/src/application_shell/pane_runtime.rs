@@ -645,6 +645,11 @@ impl PaneRuntimeCoordinator {
         });
         Self::connect_surface_progress_callback(shell, pane_id, surface);
         Self::connect_surface_notification_callback(shell, pane_id, surface);
+        let context_menu = super::terminal_context_menu::install(surface).map_err(|error| {
+            eprintln!(
+                "zentty-linux: terminal-context-menu pane={pane_id} error=model-install-failed detail={error}"
+            );
+        }).ok();
         let menu_id = pane_id.to_owned();
         let weak = Rc::downgrade(shell);
         surface.on_context_menu(move || {
@@ -663,8 +668,11 @@ impl PaneRuntimeCoordinator {
                     })
             };
             let shell_ref = shell.borrow();
+            if let Some(menu) = &context_menu {
+                super::terminal_context_menu::refresh(menu, shell_ref.config.clipboard);
+            }
             if let Some(router) = &shell_ref.action_router {
-                router.set_native_copy_enabled(has_selection);
+                router.set_selection_copy_enabled(has_selection);
             }
             eprintln!(
                 "zentty-linux: terminal-context-menu pane={menu_id} selection={has_selection}"

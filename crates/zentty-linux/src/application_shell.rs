@@ -60,6 +60,7 @@ pub(crate) mod shortcut_runtime;
 mod signal_arguments;
 mod ssh_identity;
 mod task_runner_runtime;
+mod terminal_context_menu;
 mod tmux_runtime;
 
 use action_router::{

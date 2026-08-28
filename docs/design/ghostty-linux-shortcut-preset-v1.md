@@ -1,7 +1,7 @@
 # Ghostty-compatible Linux shortcut preset v1
 
 GH-119 derives this preset from Ghostty `Config.Keybinds.init` at revision
-`80054768edbffd5df8568782e528363033a49192`, the public patched revision pinned
+`eb1eb6281466ee7e85f629012ac77de7d9cac712`, the public patched revision pinned
 by `linux/ghostty.lock` and embedded by the tested ReleaseSafe product. The
 macOS `scripts/ghosttykit.lock` is not Linux's source authority.
 

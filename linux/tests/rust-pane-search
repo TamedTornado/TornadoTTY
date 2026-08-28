@@ -680,6 +680,23 @@ if uses_xdotool; then
         "${copy_before}" \
         'enabled terminal context-menu Copy did not reach the Zentty clipboard action'
     assert_standard_clipboard 'https://example.com/reset?token=noisegamma'
+    # Automatic Clean Copy is enabled in this journey, so the native menu's
+    # second row must be the source-defined Copy Raw escape hatch. Reopen the
+    # same real Ghostty popover and activate that row physically.
+    set_standard_clipboard 'context-menu-copy-raw-was-missing'
+    context_before="$(grep -Fc 'zentty-linux: terminal-context-menu pane=pane-1 selection=true' "${log}" || true)"
+    copy_raw_before="$(grep -Fc 'zentty-linux: action=copy-raw pane=pane-1 bytes=' "${log}" || true)"
+    xdotool mousemove --sync --window "${window_id}" 600 350 click 3
+    wait_for_count_greater \
+        'zentty-linux: terminal-context-menu pane=pane-1 selection=true' \
+        "${context_before}" \
+        'reopened right-click menu did not retain the live Ghostty selection'
+    xdotool mousemove_relative --sync -- 48 58 click 1
+    wait_for_count_greater \
+        'zentty-linux: action=copy-raw pane=pane-1 bytes=' \
+        "${copy_raw_before}" \
+        'terminal context-menu Copy Raw did not reach the Zentty clipboard action'
+    assert_standard_clipboard 'https://example.com/reset?token=noisegamma&utm_source=mail'
     if [[ "${ZENTTY_CONTEXT_MENU_ONLY:-false}" == true ]]; then
         echo "Rust terminal context menu passed: ${backend}, real-pty=true, physical-pointer=true"
         exit 0

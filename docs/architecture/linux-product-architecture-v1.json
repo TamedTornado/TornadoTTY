@@ -11,7 +11,7 @@
     "legacy_sources_removed": true,
     "legacy_matrix_cells_removed": true
   },
-  "ghostty_revision": "80054768edbffd5df8568782e528363033a49192",
+  "ghostty_revision": "eb1eb6281466ee7e85f629012ac77de7d9cac712",
   "workspace_crates": [
     {
       "name": "zentty-api",

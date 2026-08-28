@@ -17,9 +17,9 @@
     "official_repository": "https://github.com/ghostty-org/ghostty.git",
     "fork_repository": "https://github.com/TamedTornado/ghostty.git",
     "official_base": "6dcf68fc0b12e8caebbfc43770d66edac124b4f8",
-    "candidate_branch": "gh11/rebase-current",
-    "head": "80054768edbffd5df8568782e528363033a49192",
-    "downstream_commit_count": 33
+    "candidate_branch": "linux/context-menu-model",
+    "head": "eb1eb6281466ee7e85f629012ac77de7d9cac712",
+    "downstream_commit_count": 34
   },
   "patch_series": [
     {
@@ -56,11 +56,18 @@
       "last": "80054768edbffd5df8568782e528363033a49192",
       "purpose": "Adapt to current Ghostty, fix the public backend representation, and remove three exports with no Zentty caller.",
       "upstream_disposition": "downstream maintenance and API reduction"
+    },
+    {
+      "id": "host-context-menu-model",
+      "first": "eb1eb6281466ee7e85f629012ac77de7d9cac712",
+      "last": "eb1eb6281466ee7e85f629012ac77de7d9cac712",
+      "purpose": "Let an alternate GTK host supply a GMenuModel while Ghostty retains native right-click and popover lifecycle ownership.",
+      "upstream_disposition": "small generic embedding operation suitable for a separately approved proposal"
     }
   ],
   "changed_files": [
     {"status":"M","path":"build.zig","owner":"ghostty-build","purpose":"Build, test, and install the GTK embedding library and resources.","tests":["zig build gtk-embed-lib-test","zig build gtk-embed-lib","linux/tests/ghostty-regression"]},
-    {"status":"A","path":"include/ghostty/gtk.h","owner":"ghostty-abi","purpose":"Language-neutral, fixed-width C ABI and ownership contract.","tests":["linux/tests/api-header-cpp.cc","linux/tests/ghostty-async-backend-abi","linux/tests/api-contract.c"]},
+    {"status":"A","path":"include/ghostty/gtk.h","owner":"ghostty-abi","purpose":"Language-neutral, fixed-width C ABI, ownership contract, and generic GTK menu-model hook.","tests":["linux/tests/api-header-cpp.cc","linux/tests/ghostty-async-backend-abi","linux/tests/api-contract.c"]},
     {"status":"M","path":"pkg/dcimgui/build.zig","owner":"ghostty-build","purpose":"Stable package-owned compiler path mapping.","tests":["linux/tests/debian-package-clean-checkout"]},
     {"status":"M","path":"pkg/glslang/build.zig","owner":"ghostty-build","purpose":"Stable package-owned compiler path mapping.","tests":["linux/tests/debian-package-clean-checkout"]},
     {"status":"M","path":"pkg/gtk4-layer-shell/build.zig","owner":"ghostty-build","purpose":"Current LocalDeps embedding link support and reproducible compiler path mapping.","tests":["zig build gtk-embed-lib","linux/tests/debian-package-clean-checkout"]},
@@ -70,10 +77,10 @@
     {"status":"M","path":"src/apprt/gtk/Surface.zig","owner":"ghostty-runtime","purpose":"Resolve runtime state through the explicit surface owner.","tests":["linux/tests/api-contract.c","linux/tests/rust-closed-pane-restore"]},
     {"status":"M","path":"src/apprt/gtk/class/application.zig","owner":"ghostty-runtime","purpose":"Carry the alternate host's explicit application runtime.","tests":["linux/tests/runtime-init-order","linux/tests/rust-closed-pane-restore"]},
     {"status":"M","path":"src/apprt/gtk/class/global_shortcuts.zig","owner":"ghostty-runtime","purpose":"Avoid default-application assumptions for alternate GTK hosts.","tests":["linux/tests/rust-closed-pane-restore"]},
-    {"status":"M","path":"src/apprt/gtk/class/surface.zig","owner":"ghostty-runtime","purpose":"Explicit application ownership, child environment, progress/notification signals, and safe IME focus lifecycle.","tests":["linux/tests/rust-agent-ipc","linux/tests/controlled-ibus-x11","linux/tests/controlled-fcitx"]},
+    {"status":"M","path":"src/apprt/gtk/class/surface.zig","owner":"ghostty-runtime","purpose":"Explicit application ownership, child environment, progress/notification signals, safe IME focus lifecycle, and host menu projection.","tests":["linux/tests/rust-agent-ipc","linux/tests/controlled-ibus-x11","linux/tests/controlled-fcitx","linux/tests/rust-pane-search"]},
     {"status":"M","path":"src/build/SharedDeps.zig","owner":"ghostty-build","purpose":"Link GTK runtime dependencies and map bundled source paths reproducibly.","tests":["zig build gtk-embed-lib","linux/tests/debian-package-clean-checkout"]},
-    {"status":"A","path":"src/gtk_embed_lib.version-script","owner":"ghostty-abi","purpose":"Allowlist the exact thirteen product-used symbols under one ELF version node.","tests":["linux/tests/abi-surface","linux/tests/abi-version-node"]},
-    {"status":"A","path":"src/gtk_embed_lib.zig","owner":"ghostty-abi","purpose":"Opaque runtime and thirteen language-neutral embedding operations.","tests":["linux/tests/api-contract.c","linux/tests/runtime-init-order","linux/tests/ghostty-api-audit"]},
+    {"status":"A","path":"src/gtk_embed_lib.version-script","owner":"ghostty-abi","purpose":"Allowlist the exact fourteen product-used symbols under one ELF version node.","tests":["linux/tests/abi-surface","linux/tests/abi-version-node"]},
+    {"status":"A","path":"src/gtk_embed_lib.zig","owner":"ghostty-abi","purpose":"Opaque runtime and fourteen language-neutral embedding operations.","tests":["linux/tests/api-contract.c","linux/tests/runtime-init-order","linux/tests/ghostty-api-audit"]},
     {"status":"A","path":"src/gtk_embed_options.zig","owner":"ghostty-abi","purpose":"Size-versioned copied surface option validation.","tests":["zig build gtk-embed-lib-test","linux/tests/api-contract.c"]},
     {"status":"A","path":"src/gtk_embed_spike.valgrind.supp","owner":"ghostty-test","purpose":"Reviewed external-library suppressions for Ghostty's alternate-host test only.","tests":["linux/tests/suppression-governance"]},
     {"status":"A","path":"src/gtk_embed_spike.zig","owner":"ghostty-test","purpose":"Engine-owned alternate-host lifecycle, PTY, input, clipboard, signal, resize, and scale exercise.","tests":["zig build gtk-embed-spike","linux/tests/ghostty-regression"]},
@@ -81,7 +88,7 @@
   ],
   "abi": {
     "symbol_version_node": "GHOSTTY_GTK_EMBED_1.0",
-    "exported_function_count": 13,
+    "exported_function_count": 14,
     "async_backend_type": "int32_t",
     "text_extent_type": "uint32_t",
     "external_public_type": "GtkWidget",
@@ -111,7 +118,8 @@
       {"symbol":"ghostty_gtk_embed_surface_cell_size","safe_owner":{"path":"crates/zentty-ghostty/src/lib.rs","needle":"sys::ghostty_gtk_embed_surface_cell_size"},"product_callers":[{"path":"crates/zentty-linux/src/application_shell.rs","needle":".cell_size()"}],"real_journeys":["linux/tests/rust-source-ux-x11"],"negative_test":"linux/tests/api-contract.c"},
       {"symbol":"ghostty_gtk_embed_surface_read_text","safe_owner":{"path":"crates/zentty-ghostty/src/lib.rs","needle":"sys::ghostty_gtk_embed_surface_read_text"},"product_callers":[{"path":"crates/zentty-linux/src/application_shell/tmux_runtime.rs","needle":"read_text(TextExtent::Screen)"}],"real_journeys":["linux/tests/rust-tmux-compat-product"],"negative_test":"linux/tests/api-contract.c"},
       {"symbol":"ghostty_gtk_embed_surface_read_selection","safe_owner":{"path":"crates/zentty-ghostty/src/lib.rs","needle":"sys::ghostty_gtk_embed_surface_read_selection"},"product_callers":[{"path":"crates/zentty-linux/src/application_shell/clipboard_actions.rs","needle":"surface.read_selection()"}],"real_journeys":["linux/tests/rust-pane-search"],"negative_test":"linux/tests/api-contract.c"},
-      {"symbol":"ghostty_gtk_embed_surface_foreground_process_id","safe_owner":{"path":"crates/zentty-ghostty/src/lib.rs","needle":"sys::ghostty_gtk_embed_surface_foreground_process_id"},"product_callers":[{"path":"crates/zentty-linux/src/application_shell/ssh_identity.rs","needle":"zentty_ghostty::GhosttySurface::foreground_process_id"}],"real_journeys":["linux/tests/rust-session-restore"],"negative_test":"linux/tests/api-contract.c"}
+      {"symbol":"ghostty_gtk_embed_surface_foreground_process_id","safe_owner":{"path":"crates/zentty-ghostty/src/lib.rs","needle":"sys::ghostty_gtk_embed_surface_foreground_process_id"},"product_callers":[{"path":"crates/zentty-linux/src/application_shell/ssh_identity.rs","needle":"zentty_ghostty::GhosttySurface::foreground_process_id"}],"real_journeys":["linux/tests/rust-session-restore"],"negative_test":"linux/tests/api-contract.c"},
+      {"symbol":"ghostty_gtk_embed_surface_set_context_menu_model","safe_owner":{"path":"crates/zentty-ghostty/src/lib.rs","needle":"sys::ghostty_gtk_embed_surface_set_context_menu_model"},"product_callers":[{"path":"crates/zentty-linux/src/application_shell/terminal_context_menu.rs","needle":"surface.set_context_menu_model"}],"real_journeys":["linux/tests/rust-pane-search"],"negative_test":"linux/tests/api-contract.c"}
     ],
     "compatibility_fixture": {
       "historical_revision": "5c261e53539d61822754ea45de32aa798ff4bde9",

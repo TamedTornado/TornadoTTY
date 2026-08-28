@@ -27,6 +27,7 @@ using SurfaceSelectionReader = bool (*) (
     void *
 );
 using SurfaceForegroundProcessReader = std::uint64_t (*)(GtkWidget *);
+using SurfaceContextMenuSetter = bool (*)(GtkWidget *, GMenuModel *);
 
 static_assert(std::is_standard_layout_v<ghostty_gtk_embed_surface_options_t>);
 static_assert(
@@ -52,4 +53,8 @@ static_assert(std::is_same_v<
 static_assert(std::is_same_v<
     decltype(&ghostty_gtk_embed_surface_foreground_process_id),
     SurfaceForegroundProcessReader
+>);
+static_assert(std::is_same_v<
+    decltype(&ghostty_gtk_embed_surface_set_context_menu_model),
+    SurfaceContextMenuSetter
 >);

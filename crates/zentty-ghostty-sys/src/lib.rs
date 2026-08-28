@@ -8,6 +8,7 @@ pub struct GhosttyGtkEmbedRuntime {
 }
 
 pub type GtkWidget = c_void;
+pub type GMenuModel = c_void;
 
 #[repr(C)]
 pub struct GhosttyGtkEmbedSurfaceOptions {
@@ -82,6 +83,10 @@ unsafe extern "C" {
         userdata: *mut c_void,
     ) -> bool;
     pub fn ghostty_gtk_embed_surface_foreground_process_id(surface: *mut GtkWidget) -> u64;
+    pub fn ghostty_gtk_embed_surface_set_context_menu_model(
+        surface: *mut GtkWidget,
+        model: *mut GMenuModel,
+    ) -> bool;
 }
 
 #[cfg(test)]

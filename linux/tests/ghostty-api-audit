@@ -57,7 +57,7 @@ jq -e '
         (.purpose | length) > 0 and
         (.tests | length) > 0) and
     (.changed_files | any(.path == "AGENTS.md") | not) and
-    .abi.exported_function_count == 13 and
+    .abi.exported_function_count == 14 and
     (.abi.operations | length) == .abi.exported_function_count and
     ([.abi.operations[].symbol] | length == (unique | length)) and
     (.abi.removed_unproven_exports | length) == 3 and
@@ -170,7 +170,7 @@ while IFS=$'\t' read -r id status; do
     ' "${matrix}" >/dev/null || fail "qualification cell differs from audit: ${id}"
 done < <(jq -r '.qualification_cells[] | [.id, .status] | @tsv' "${inventory}")
 
-pass_message="Ghostty API audit passed: current official base, 19 reviewed files, 13 product-used exports, fixed-width backend ABI, no Zentty policy in Ghostty, downstream maintenance decision recorded"
+pass_message="Ghostty API audit passed: current official base, 19 reviewed files, 14 product-used exports, fixed-width backend ABI, no Zentty policy in Ghostty, downstream maintenance decision recorded"
 echo "${pass_message}"
 
 if [[ "${mode}" == "--self-test" ]]; then

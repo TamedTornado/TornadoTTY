@@ -94,7 +94,7 @@ case "${1:-}" in
             echo "abi-version-node: error: exported functions are missing or not exactly versioned ${expected_node}" >&2
             exit 1
         }
-        echo "Ghostty GTK embedding ABI version node passed: 12 exports at ${expected_node}"
+        echo "Ghostty GTK embedding ABI version node passed: 14 exports at ${expected_node}"
         ;;
     --self-test) self_test ;;
     *) echo "usage: $0 [--self-test]" >&2; exit 64 ;;
