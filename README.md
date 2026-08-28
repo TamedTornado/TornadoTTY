@@ -59,6 +59,8 @@
 
 The source-backed feature inventory is
 [`docs/design/zentty-linux-feature-inventory.json`](docs/design/zentty-linux-feature-inventory.json).
+Behavior invented or improved in the Linux port is tracked separately in the
+[`Linux-originated enhancements register`](docs/linux-originated-enhancements.md).
 
 ## Project status
 

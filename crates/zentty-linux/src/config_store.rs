@@ -529,6 +529,8 @@ impl ConfigStore {
                 toml_edit::value(confirmations.confirm_before_quitting);
             document["restore"]["restore_workspace_on_launch"] =
                 toml_edit::value(restore.restore_workspace_on_launch);
+            document["restore"]["start_restored_sessions_in_background"] =
+                toml_edit::value(restore.start_restored_sessions_in_background);
             document["clipboard"]["always_clean_copies"] =
                 toml_edit::value(clipboard.always_clean_copies);
             let options = clipboard.clean_options;
@@ -1382,6 +1384,7 @@ mod tests {
         };
         let restore = RestoreConfig {
             restore_workspace_on_launch: false,
+            start_restored_sessions_in_background: true,
         };
         let mut clipboard = ClipboardConfig {
             always_clean_copies: true,

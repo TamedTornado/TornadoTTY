@@ -22,6 +22,7 @@ impl GeneralSettings {
             "confirm-close-window" => self.confirmations.confirm_before_closing_window,
             "confirm-quit" => self.confirmations.confirm_before_quitting,
             "restore-workspace" => self.restore.restore_workspace_on_launch,
+            "start-restored-background" => self.restore.start_restored_sessions_in_background,
             "always-clean-copies" => self.clipboard.always_clean_copies,
             "flatten-multiline" => self.clipboard.clean_options.flatten_multi_line_commands,
             "preserve-blank-lines" => {
@@ -48,6 +49,9 @@ impl GeneralSettings {
             "confirm-close-window" => self.confirmations.confirm_before_closing_window = value,
             "confirm-quit" => self.confirmations.confirm_before_quitting = value,
             "restore-workspace" => self.restore.restore_workspace_on_launch = value,
+            "start-restored-background" => {
+                self.restore.start_restored_sessions_in_background = value;
+            }
             "always-clean-copies" => self.clipboard.always_clean_copies = value,
             "flatten-multiline" => {
                 self.clipboard.clean_options.flatten_multi_line_commands = value;
@@ -121,6 +125,11 @@ const LIFECYCLE: &[BoolSpec] = &[
         id: "restore-workspace",
         title: "Restore worklanes on next launch",
         subtitle: "Reopen windows, pane layout, and saved working directories after quitting.",
+    },
+    BoolSpec {
+        id: "start-restored-background",
+        title: "Start restored sessions in background",
+        subtitle: "Initialize panes in every restored worklane at launch, even before you visit them.",
     },
 ];
 
@@ -324,7 +333,7 @@ mod tests {
             .chain(CLIPBOARD)
             .map(|spec| spec.id)
             .collect::<Vec<_>>();
-        assert_eq!(ids.len(), 12);
+        assert_eq!(ids.len(), 13);
         for id in ids {
             let before = settings.bool_value(id).unwrap();
             assert!(settings.set_bool(id, !before));

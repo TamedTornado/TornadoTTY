@@ -286,6 +286,31 @@ zentty_product_wait_for_log "${log}" 'zentty-linux: settings-section selected=ge
     "Settings did not open the source default General section" || fail "settings default section failed"
 settings_key ctrl+f
 settings_tab_until_focus_marker \
+    'zentty-linux: general-settings focus=start-restored-background' 30 ||
+    fail "physical keyboard traversal did not reach the background restore control"
+settings_key space
+zentty_product_wait_for_log "${log}" \
+    'zentty-linux: general-settings action=start-restored-background value=true' \
+    "General did not apply the physical background restore toggle" ||
+    fail "background restore toggle failed"
+for _ in $(seq 1 100); do
+    grep -Fq 'start_restored_sessions_in_background = true' "${config}" 2>/dev/null && break
+    sleep 0.05
+done
+grep -Fq 'start_restored_sessions_in_background = true' "${config}" ||
+    fail "General did not persist the background restore toggle"
+settings_key space
+zentty_product_wait_for_log "${log}" \
+    'zentty-linux: general-settings action=start-restored-background value=false' \
+    "General did not apply the second physical background restore toggle" ||
+    fail "background restore reset failed"
+for _ in $(seq 1 100); do
+    grep -Fq 'start_restored_sessions_in_background = false' "${config}" 2>/dev/null && break
+    sleep 0.05
+done
+grep -Fq 'start_restored_sessions_in_background = false' "${config}" ||
+    fail "General did not persist the background restore reset"
+settings_tab_until_focus_marker \
     'zentty-linux: general-settings focus=always-clean-copies' 30 ||
     fail "physical keyboard traversal did not reach the General clipboard controls"
 settings_key space
@@ -831,4 +856,4 @@ zentty_product_wait_for_log "${log}" 'zentty-linux: pane-display id=pane-2' \
     "Ghostty split chord did not create a real terminal surface" || fail "Ghostty split delivery failed"
 [[ ! -s "${bytes}" ]] || fail "Ghostty application shortcut leaked into the real child PTY"
 
-echo "rust-shortcuts-settings-${backend}: PASS unified-settings theme-catalog terminal-palette-preview explicit-theme-slots bundled-theme-runtime-path opencode-theme-sync sidebar-selection-emphasis real-gtk-settings physical-recorder shortcut-presets ghostty-linux-preset conflict-replacement native-chooser-import-export source-theme-mode real-ghostty-reload preserved-pty bound-action unbound-byte persistence-restart"
+echo "rust-shortcuts-settings-${backend}: PASS unified-settings eager-restore-toggle theme-catalog terminal-palette-preview explicit-theme-slots bundled-theme-runtime-path opencode-theme-sync sidebar-selection-emphasis real-gtk-settings physical-recorder shortcut-presets ghostty-linux-preset conflict-replacement native-chooser-import-export source-theme-mode real-ghostty-reload preserved-pty bound-action unbound-byte persistence-restart"

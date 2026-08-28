@@ -230,6 +230,7 @@ wait_for_product_exit() {
 
 assert_background_start() {
     local cumulative_count="$1"
+    local ordinary_inactive_expected="${2:-false}"
     wait_for_agent_count "${cumulative_count}"
     zentty_product_wait_for_log "${log}" \
         'zentty-linux: agent-event pane=pane-agent worklane=worklane-main' \
@@ -266,8 +267,15 @@ assert_background_start() {
     zentty_product_wait_for_log "${log}" 'zentty-linux: title-pane=pane-shell-active value=/tmp' \
         "restored ordinary shell did not report its stored CWD from the real PTY" ||
         fail "restored ordinary shell CWD missing"
-    grep -Fq 'zentty-linux: terminal-ready-pane=pane-ordinary-inactive' "${log}" &&
-        fail "ordinary inactive shell started before a real visit"
+    if [[ "${ordinary_inactive_expected}" == true ]]; then
+        for pane_id in pane-shell pane-ordinary-inactive; do
+            [[ "$(grep -Fxc "zentty-linux: terminal-ready-pane=${pane_id}" "${log}" || true)" -eq 1 ]] ||
+                fail "eager restore did not initialize ordinary pane ${pane_id} exactly once"
+        done
+    else
+        grep -Fq 'zentty-linux: terminal-ready-pane=pane-ordinary-inactive' "${log}" &&
+            fail "ordinary inactive shell started before a real visit"
+    fi
     if grep -Fq 'zentty-linux: focus-pane pane=pane-agent' "${log}"; then
         fail "inactive agent stole keyboard focus"
     fi
@@ -430,6 +438,57 @@ if [[ "${ZENTTY_UNVISITED_RESTORE_ONLY:-false}" == true ]]; then
     zentty_product_close_window "${backend}"
     wait_for_product_exit
     printf 'rust-session-restore: PASS unvisited-agent drafts=preserved relaunches=2 authentication=real\n'
+    exit 0
+fi
+
+if [[ "${ZENTTY_EAGER_RESTORE_ONLY:-false}" == true ]]; then
+    cat >>"${XDG_CONFIG_HOME}/zentty/config.toml" <<'EOF'
+
+[restore]
+restore_workspace_on_launch = true
+start_restored_sessions_in_background = true
+EOF
+    start_product
+    assert_background_start 2 true
+    zentty_product_wait_for_log "${log}" \
+        'zentty-linux: background-agent-host policy=eager mounted=4' \
+        "eager restore did not mount every pane in inactive restored worklanes" ||
+        fail "eager background mount receipt missing"
+    grep -Fq '|worklane-active[title=Active shell,color=none]:pane-shell-active*' "${log}" ||
+        fail "eager restore changed the active worklane"
+    zentty_product_wait_for_log "${log}" \
+        'zentty-linux: focus-pane pane=pane-shell-active' \
+        "eager restore stole focus from the active shell" ||
+        fail "eager restore active focus receipt missing"
+    zentty_product_prepare_input "${backend}" "${log}" ||
+        fail "could not prepare eager restore close input"
+    zentty_product_close_window "${backend}"
+    wait_for_product_exit
+
+    agent_profile=restore-immediate-failure
+    agent_sleep_seconds=0
+    agent_start_receipt="$(mktemp)"
+    start_product
+    zentty_product_wait_for_log "${log}" \
+        'zentty-linux: agent-restore-launch pane=pane-agent-two result=failed fallback=shell' \
+        "hidden eager restore failure did not enter recovery" ||
+        fail "hidden eager restore recovery missing"
+    zentty_product_wait_for_log "${log}" \
+        'zentty-linux: topology=worklane-main[title=Nimbu API,color=blue]:pane-agent,pane-shell,pane-ordinary-inactive|worklane-second-agent[title=Second agent,color=none]:pane-agent-two|worklane-active[title=Active shell,color=none]:pane-shell-active*' \
+        "hidden eager restore failure changed topology or focus" ||
+        fail "hidden eager restore topology receipt missing"
+    zentty_product_prepare_input "${backend}" "${log}" ||
+        fail "could not prepare hidden recovery reveal input"
+    for _ in pane-agent pane-shell pane-ordinary-inactive pane-agent-two; do
+        zentty_product_ctrl_key "${backend}" Tab
+    done
+    zentty_product_wait_for_log "${log}" \
+        'zentty-linux: restore-failure pane=pane-agent-two state=shown' \
+        "visiting the failed eager pane did not expose recovery" ||
+        fail "failed eager restore UI missing"
+    zentty_product_close_window "${backend}"
+    wait_for_product_exit
+    printf 'rust-session-restore: PASS eager-worklanes agents=2 ordinary-shells=2 focus=preserved failure=recoverable topology=preserved\n'
     exit 0
 fi
 

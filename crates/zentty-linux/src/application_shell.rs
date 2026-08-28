@@ -341,7 +341,7 @@ fn finish_shell_setup(
     ApplicationShell::install_search_shortcuts(shell);
     ApplicationShell::install_fleet_focus_restoration(shell);
     create_initial_pane_surfaces(shell, initial_pane_ids, deferred_live_pane_id)?;
-    shell.borrow().mount_background_restored_agents();
+    shell.borrow().mount_background_restored_panes();
     finish_initial_render(shell);
     Ok(())
 }
@@ -1221,19 +1221,26 @@ impl ApplicationShell {
         Self::request_close_action(&shell, &evidence, confirmation_enabled, action);
     }
 
-    fn mount_background_restored_agents(&self) {
+    fn mount_background_restored_panes(&self) {
         clear_overlay_children(&self.background_agent_host);
+        if !self.config.restore.start_restored_sessions_in_background {
+            eprintln!("zentty-linux: background-agent-host policy=lazy mounted=0");
+            return;
+        }
         let active_panes = self.state.active_pane_ids();
-        for pane_id in self.restored_pane_commands.keys() {
-            if active_panes.iter().any(|active| active == pane_id) {
+        let mut mounted = 0;
+        for pane_id in self.pane_runtime.live_pane_ids() {
+            if active_panes.iter().any(|active| active == &pane_id) {
                 continue;
             }
-            if let Some(frame) = self.pane_runtime.frame(pane_id) {
+            if let Some(frame) = self.pane_runtime.frame(&pane_id) {
                 remove_frame_from_parent(frame.widget());
                 self.background_agent_host.add_overlay(frame.widget());
+                mounted += 1;
                 eprintln!("zentty-linux: background-agent-host pane={pane_id}");
             }
         }
+        eprintln!("zentty-linux: background-agent-host policy=eager mounted={mounted}");
     }
 
     fn mount_live_peek_surfaces(&self) {
@@ -1833,7 +1840,7 @@ impl ApplicationShell {
             PeekPhase::Peeking { current, .. } => {
                 shell.borrow_mut().peek_phase = PeekPhase::Idle;
                 shell.borrow().peek_view.hide();
-                shell.borrow().mount_background_restored_agents();
+                shell.borrow().mount_background_restored_panes();
                 shell.borrow_mut().select_pane_reference(&current, true);
                 eprintln!(
                     "zentty-linux: worklane-peek=commit worklane={} pane={}",
@@ -1847,7 +1854,7 @@ impl ApplicationShell {
         let phase = shell.borrow().peek_phase.clone();
         shell.borrow_mut().peek_phase = PeekPhase::Idle;
         shell.borrow().peek_view.hide();
-        shell.borrow().mount_background_restored_agents();
+        shell.borrow().mount_background_restored_panes();
         if let PeekPhase::Peeking { original, .. } = phase {
             shell.borrow_mut().select_pane_reference(&original, true);
         }
@@ -1862,7 +1869,7 @@ impl ApplicationShell {
         shell.borrow_mut().peek_phase = PeekPhase::Idle;
         shell.borrow_mut().peek_tab_down = false;
         shell.borrow().peek_view.hide();
-        shell.borrow().mount_background_restored_agents();
+        shell.borrow().mount_background_restored_panes();
         if let PeekPhase::Peeking { original, .. } = phase {
             shell
                 .borrow_mut()
@@ -2237,9 +2244,10 @@ impl ApplicationShell {
                 self.config.clipboard = general.clipboard;
                 self.render_sidebar();
                 eprintln!(
-                    "zentty-linux: general-settings result=persisted path={} restore={} clean-copy={}",
+                    "zentty-linux: general-settings result=persisted path={} restore={} background-restore={} clean-copy={}",
                     path.display(),
                     general.restore.restore_workspace_on_launch,
+                    general.restore.start_restored_sessions_in_background,
                     general.clipboard.always_clean_copies
                 );
             }

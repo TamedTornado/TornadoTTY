@@ -47,6 +47,7 @@ impl Default for ConfirmationsConfig {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct RestoreConfig {
     pub restore_workspace_on_launch: bool,
+    pub start_restored_sessions_in_background: bool,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -143,6 +144,7 @@ impl Default for RestoreConfig {
     fn default() -> Self {
         Self {
             restore_workspace_on_launch: true,
+            start_restored_sessions_in_background: false,
         }
     }
 }
@@ -445,6 +447,7 @@ impl ConfirmationsDocument {
 #[serde(default)]
 struct RestoreDocument {
     restore_workspace_on_launch: Option<bool>,
+    start_restored_sessions_in_background: Option<bool>,
 }
 
 impl RestoreDocument {
@@ -453,6 +456,9 @@ impl RestoreDocument {
             restore_workspace_on_launch: self
                 .restore_workspace_on_launch
                 .unwrap_or(RestoreConfig::default().restore_workspace_on_launch),
+            start_restored_sessions_in_background: self
+                .start_restored_sessions_in_background
+                .unwrap_or(RestoreConfig::default().start_restored_sessions_in_background),
         }
     }
 }

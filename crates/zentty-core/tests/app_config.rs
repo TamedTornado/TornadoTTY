@@ -75,6 +75,7 @@ fn lifecycle_settings_use_source_defaults_and_exact_toml_keys() {
     assert!(defaults.confirmations.confirm_before_closing_window);
     assert!(defaults.confirmations.confirm_before_quitting);
     assert!(defaults.restore.restore_workspace_on_launch);
+    assert!(!defaults.restore.start_restored_sessions_in_background);
 
     let configured = AppConfig::parse_toml(
         r"
@@ -86,6 +87,7 @@ fn lifecycle_settings_use_source_defaults_and_exact_toml_keys() {
 
         [restore]
         restore_workspace_on_launch = false
+        start_restored_sessions_in_background = true
         future_restore = true
         ",
     )
@@ -94,12 +96,14 @@ fn lifecycle_settings_use_source_defaults_and_exact_toml_keys() {
     assert!(!configured.confirmations.confirm_before_closing_window);
     assert!(!configured.confirmations.confirm_before_quitting);
     assert!(!configured.restore.restore_workspace_on_launch);
+    assert!(configured.restore.start_restored_sessions_in_background);
 
     for source in [
         "[confirmations]\nconfirm_before_closing_pane = \"yes\"\n",
         "[confirmations]\nconfirm_before_closing_window = 1\n",
         "[confirmations]\nconfirm_before_quitting = []\n",
         "[restore]\nrestore_workspace_on_launch = \"no\"\n",
+        "[restore]\nstart_restored_sessions_in_background = \"yes\"\n",
     ] {
         assert!(
             AppConfig::parse_toml(source).is_err(),
