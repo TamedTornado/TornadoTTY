@@ -2374,17 +2374,22 @@ fn install_worklane_move_actions(
             .state
             .reorder_worklane(&worklane_id, insertion_index)
         {
+            let order = shell
+                .state
+                .worklanes()
+                .iter()
+                .map(|worklane| worklane.id.clone())
+                .collect::<Vec<_>>();
             eprintln!(
                 "zentty-linux: action=reorder-worklane id={worklane_id} insertion={insertion_index} order={} active={} pane={}",
-                shell
-                    .state
-                    .worklanes()
-                    .iter()
-                    .map(|worklane| worklane.id.as_str())
-                    .collect::<Vec<_>>()
-                    .join(","),
+                order.join(","),
                 shell.state.active_worklane_id(),
                 shell.state.focused_pane_id().unwrap_or("none")
+            );
+            let projected = crate::sidebar::project_worklane_order(&shell.sidebar, &order);
+            eprintln!(
+                "zentty-linux: worklane-order-projected order={} matches-model={projected}",
+                crate::sidebar::rendered_worklane_order(&shell.sidebar).join(",")
             );
             shell.focus_selected_surface();
         }

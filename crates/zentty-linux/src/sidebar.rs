@@ -477,6 +477,41 @@ pub(crate) fn clear(sidebar: &gtk::Box) {
     remove_all_children(sidebar);
 }
 
+/// Returns the order of the actual worklane card children currently projected
+/// into GTK. This deliberately reads the view instead of accepting model
+/// summaries so reorder transactions can verify that both sides agree.
+pub(crate) fn rendered_worklane_order(sidebar: &gtk::Box) -> Vec<String> {
+    let mut order = Vec::new();
+    let mut child = sidebar.first_child();
+    while let Some(widget) = child {
+        if let Some(id) = widget.widget_name().strip_prefix("zentty-worklane-card-") {
+            order.push(id.to_owned());
+        }
+        child = widget.next_sibling();
+    }
+    order
+}
+
+/// Reorders only existing worklane card children, preserving transient GTK
+/// interaction widgets such as the live drag preview until their owning
+/// gesture completes.
+pub(crate) fn project_worklane_order(sidebar: &gtk::Box, order: &[String]) -> bool {
+    let header = ensure_header(sidebar);
+    let mut previous = find_named_widget(sidebar.upcast_ref(), global_search_view::ROW_NAME)
+        .unwrap_or_else(|| header.upcast());
+    for id in order {
+        let Some(card) = find_named_widget(
+            sidebar.upcast_ref(),
+            &widget_name("worklane-card", id),
+        ) else {
+            return false;
+        };
+        sidebar.reorder_child_after(&card, Some(&previous));
+        previous = card;
+    }
+    rendered_worklane_order(sidebar) == order
+}
+
 #[allow(clippy::too_many_arguments)]
 #[allow(clippy::too_many_lines)]
 fn make_worklane_card(
