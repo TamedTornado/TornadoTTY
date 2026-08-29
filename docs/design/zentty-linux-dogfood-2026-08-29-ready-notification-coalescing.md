@@ -56,5 +56,11 @@ rustfmt --check: PASS
 git diff --check: PASS
 ```
 
-Human confirmation remains required after the fixed binary is installed and a
-subsequent real Codex completion occurs while its pane is not actively viewed.
+## Human dogfood confirmation
+
+After restarting into the installed fixed build, Jason exercised another real
+Codex completion and received exactly one desktop notification.
+
+```text
+HUMAN PASS: one logical Codex completion produced one desktop notification
+```
