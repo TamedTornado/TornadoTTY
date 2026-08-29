@@ -216,6 +216,37 @@ fn completion_and_unresolved_stop_are_immediate_and_source_shaped() {
 }
 
 #[test]
+fn ready_text_enriches_one_completion_but_a_new_running_cycle_delivers_again() {
+    let mut inbox = AttentionInbox::default();
+    let pane = target("pane-1");
+    let ready = phase_status(AgentPhase::Idle, AgentInteractionKind::None, None, 1);
+
+    assert!(inbox.observe(pane.clone(), Some(&ready), 10));
+    assert_eq!(inbox.drain_deliveries().len(), 1);
+
+    let enriched = phase_status(
+        AgentPhase::Idle,
+        AgentInteractionKind::None,
+        Some("The completed response from the terminal notification."),
+        2,
+    );
+    assert!(inbox.observe(pane.clone(), Some(&enriched), 11));
+    assert_eq!(inbox.items().len(), 1);
+    assert_eq!(
+        inbox.items()[0].primary_text,
+        "The completed response from the terminal notification."
+    );
+    assert!(inbox.drain_deliveries().is_empty());
+
+    let running = phase_status(AgentPhase::Running, AgentInteractionKind::None, None, 3);
+    assert!(inbox.observe(pane.clone(), Some(&running), 12));
+    let ready_again = phase_status(AgentPhase::Idle, AgentInteractionKind::None, None, 4);
+    assert!(inbox.observe(pane, Some(&ready_again), 13));
+    assert_eq!(inbox.items().len(), 2);
+    assert_eq!(inbox.drain_deliveries().len(), 1);
+}
+
+#[test]
 fn focused_pane_keeps_inbox_history_but_suppresses_desktop_and_focus_resolves_existing() {
     let mut inbox = AttentionInbox::default();
     let ready = phase_status(AgentPhase::Idle, AgentInteractionKind::None, None, 1);

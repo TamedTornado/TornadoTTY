@@ -153,13 +153,22 @@ impl AttentionInbox {
             agent_name: status.agent_name.clone(),
             state,
             interaction: status.interaction,
-            text: status.text.clone(),
+            text: if state == AttentionState::Ready {
+                None
+            } else {
+                status.text.clone()
+            },
         };
         if self.signatures.get(&target) == Some(&signature) {
+            let mut changed = if state == AttentionState::Ready {
+                self.enrich_ready_item(&target, &primary_text, location_text.as_deref())
+            } else {
+                false
+            };
             if is_actively_viewed && !was_actively_viewed {
-                return self.cancel_and_resolve(&target, now_ms);
+                changed |= self.cancel_and_resolve(&target, now_ms);
             }
-            return false;
+            return changed;
         }
 
         let mut changed = self.cancel_and_resolve(&target, now_ms);
@@ -243,6 +252,31 @@ impl AttentionInbox {
         );
         self.items.truncate(MAX_ITEMS);
         true
+    }
+
+    fn enrich_ready_item(
+        &mut self,
+        target: &AttentionTarget,
+        primary_text: &str,
+        location_text: Option<&str>,
+    ) -> bool {
+        let Some(item) = self.items.iter_mut().find(|item| {
+            item.target == *target
+                && item.origin == AttentionOrigin::Agent
+                && item.state == AttentionState::Ready
+        }) else {
+            return false;
+        };
+        let mut changed = false;
+        if item.primary_text != primary_text {
+            item.primary_text = primary_text.to_owned();
+            changed = true;
+        }
+        if item.location_text.as_deref() != location_text {
+            item.location_text = location_text.map(str::to_owned);
+            changed = true;
+        }
+        changed
     }
 
     fn commit(&mut self, pending: PendingAttention) -> bool {
