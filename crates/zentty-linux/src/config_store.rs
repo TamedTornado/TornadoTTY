@@ -484,6 +484,8 @@ impl ConfigStore {
                 return Err("notifications configuration is not a table".to_owned());
             }
             document["notifications"]["sound_name"] = toml_edit::value(&notifications.sound_name);
+            document["notifications"]["notify_when_pane_visible"] =
+                toml_edit::value(notifications.notify_when_pane_visible);
             if let Some(display_name) = &notifications.custom_sound_display_name {
                 document["notifications"]["custom_sound_display_name"] =
                     toml_edit::value(display_name);
@@ -1436,6 +1438,7 @@ mod tests {
         let notifications = NotificationsConfig {
             sound_name: "message-new-instant".into(),
             custom_sound_display_name: Some("Custom alert.ogg".into()),
+            notify_when_pane_visible: false,
         };
 
         ConfigStore::update_notifications(&path, &notifications).unwrap();
@@ -1457,6 +1460,7 @@ mod tests {
         let without_custom = NotificationsConfig {
             sound_name: String::new(),
             custom_sound_display_name: None,
+            notify_when_pane_visible: true,
         };
         ConfigStore::update_notifications(&path, &without_custom).unwrap();
         let source = fs::read_to_string(&target).unwrap();

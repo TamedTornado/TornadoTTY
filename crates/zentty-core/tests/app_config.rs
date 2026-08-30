@@ -117,12 +117,14 @@ fn notification_settings_use_source_defaults_and_exact_toml_keys() {
     let defaults = AppConfig::parse_toml("").unwrap().notifications;
     assert_eq!(defaults.sound_name, "");
     assert_eq!(defaults.custom_sound_display_name, None);
+    assert!(defaults.notify_when_pane_visible);
 
     let configured = AppConfig::parse_toml(
         r#"
         [notifications]
         sound_name = "message-new-instant"
         custom_sound_display_name = "My alert.ogg"
+        notify_when_pane_visible = false
         future_notification_setting = true
         "#,
     )
@@ -133,10 +135,12 @@ fn notification_settings_use_source_defaults_and_exact_toml_keys() {
         configured.custom_sound_display_name.as_deref(),
         Some("My alert.ogg")
     );
+    assert!(!configured.notify_when_pane_visible);
 
     for source in [
         "[notifications]\nsound_name = true\n",
         "[notifications]\ncustom_sound_display_name = 3\n",
+        "[notifications]\nnotify_when_pane_visible = \"no\"\n",
     ] {
         assert!(
             AppConfig::parse_toml(source).is_err(),

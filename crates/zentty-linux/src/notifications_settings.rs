@@ -13,8 +13,8 @@ pub(crate) type ApplyNotifications = Rc<dyn Fn(NotificationsConfig) -> Result<()
 
 pub(crate) fn build(initial: NotificationsConfig, apply: &ApplyNotifications) -> gtk::Widget {
     eprintln!(
-        "zentty-linux: notification-settings loaded sound={:?}",
-        initial.sound_name
+        "zentty-linux: notification-settings loaded sound={:?} visible-pane={}",
+        initial.sound_name, initial.notify_when_pane_visible
     );
     let content = gtk::Box::new(gtk::Orientation::Vertical, 16);
     content.set_margin_top(24);
@@ -27,6 +27,8 @@ pub(crate) fn build(initial: NotificationsConfig, apply: &ApplyNotifications) ->
     let card = gtk::Box::new(gtk::Orientation::Vertical, 0);
     card.add_css_class("card");
     card.append(&notification_row(&state));
+    card.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
+    card.append(&visible_pane_row(&state, apply));
     card.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
     card.append(&sound_row(&state, apply));
     content.append(&card);
@@ -108,6 +110,70 @@ fn notification_row(state: &Rc<RefCell<NotificationsConfig>>) -> gtk::Widget {
         }
     });
     row.append(&send);
+    row.upcast()
+}
+
+fn visible_pane_row(
+    state: &Rc<RefCell<NotificationsConfig>>,
+    apply: &ApplyNotifications,
+) -> gtk::Widget {
+    let row = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+    set_row_margins(&row);
+    let labels = row_labels(
+        "_Notify when pane is visible",
+        "Show desktop notifications when the pane is already displayed in a non-minimized Zentty window.",
+    );
+    labels.set_hexpand(true);
+    row.append(&labels);
+
+    let toggle = gtk::Switch::builder()
+        .active(state.borrow().notify_when_pane_visible)
+        .valign(gtk::Align::Center)
+        .build();
+    toggle.set_widget_name("notification-visible-pane");
+    if let Some(title) = labels.first_child().and_downcast::<gtk::Label>() {
+        title.set_use_underline(true);
+        title.set_mnemonic_widget(Some(&toggle));
+    }
+    let focus = gtk::EventControllerFocus::new();
+    focus.connect_enter(|_| {
+        eprintln!("zentty-linux: notification-settings focus=visible-pane");
+    });
+    toggle.add_controller(focus);
+
+    let applying = Rc::new(Cell::new(false));
+    let state_for_toggle = Rc::clone(state);
+    let apply_for_toggle = Rc::clone(apply);
+    let applying_for_toggle = Rc::clone(&applying);
+    toggle.connect_active_notify(move |toggle| {
+        if applying_for_toggle.get() {
+            return;
+        }
+        let previous = state_for_toggle.borrow().clone();
+        if toggle.is_active() == previous.notify_when_pane_visible {
+            return;
+        }
+        let mut next = previous.clone();
+        next.notify_when_pane_visible = toggle.is_active();
+        match apply_for_toggle(next.clone()) {
+            Ok(()) => {
+                *state_for_toggle.borrow_mut() = next;
+                eprintln!(
+                    "zentty-linux: notification-settings action=visible-pane result=applied value={}",
+                    toggle.is_active()
+                );
+            }
+            Err(error) => {
+                applying_for_toggle.set(true);
+                toggle.set_active(previous.notify_when_pane_visible);
+                applying_for_toggle.set(false);
+                eprintln!(
+                    "zentty-linux: notification-settings action=visible-pane result=error detail={error}"
+                );
+            }
+        }
+    });
+    row.append(&toggle);
     row.upcast()
 }
 

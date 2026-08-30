@@ -32,6 +32,27 @@ enum SettingsLauncher {
 
 pub(crate) struct NotificationService;
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum DesktopAttentionDecision {
+    Deliver,
+    SuppressActivelyViewed,
+    SuppressVisiblePane,
+}
+
+pub(crate) fn desktop_attention_decision(
+    desktop_allowed: bool,
+    notify_when_pane_visible: bool,
+    pane_visible: bool,
+) -> DesktopAttentionDecision {
+    if !desktop_allowed {
+        DesktopAttentionDecision::SuppressActivelyViewed
+    } else if pane_visible && !notify_when_pane_visible {
+        DesktopAttentionDecision::SuppressVisiblePane
+    } else {
+        DesktopAttentionDecision::Deliver
+    }
+}
+
 enum DesktopSignal {
     ActivationToken { id: u32, token: String },
     ActionInvoked { id: u32, action: String },
@@ -351,7 +372,30 @@ mod tests {
 
     use zentty_core::AttentionTarget;
 
-    use super::{DesktopSignal, SettingsLauncher, apply_desktop_signal, settings_launcher};
+    use super::{
+        DesktopAttentionDecision, DesktopSignal, SettingsLauncher, apply_desktop_signal,
+        desktop_attention_decision, settings_launcher,
+    };
+
+    #[test]
+    fn visible_pane_delivery_policy_preserves_defaults_and_focused_suppression() {
+        assert_eq!(
+            desktop_attention_decision(false, true, true),
+            DesktopAttentionDecision::SuppressActivelyViewed
+        );
+        assert_eq!(
+            desktop_attention_decision(true, true, true),
+            DesktopAttentionDecision::Deliver
+        );
+        assert_eq!(
+            desktop_attention_decision(true, false, true),
+            DesktopAttentionDecision::SuppressVisiblePane
+        );
+        assert_eq!(
+            desktop_attention_decision(true, false, false),
+            DesktopAttentionDecision::Deliver
+        );
+    }
 
     #[test]
     fn settings_launcher_is_desktop_specific_and_never_guesses() {

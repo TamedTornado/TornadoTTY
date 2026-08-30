@@ -15,6 +15,7 @@ agent_start_gate="${run_root}/agent-start-{pane}.gate"
 notification_receipt="${run_root}/notifications.jsonl"
 product_pid=""
 notification_pid=""
+suppress_visible="${ZENTTY_SUPPRESS_VISIBLE_ATTENTION_ONLY:-false}"
 # shellcheck disable=SC1091
 source "${repo_root}/linux/tests/lib/product-input"
 
@@ -53,6 +54,12 @@ esac
 mkdir -p "${state_directory}" "${fake_bin}"
 ln -s "${actor}" "${fake_bin}/codex"
 zentty_product_disable_lifecycle_confirmations
+if [[ "${suppress_visible}" == true ]]; then
+    cat >>"${XDG_CONFIG_HOME}/zentty/config.toml" <<'EOF'
+[notifications]
+notify_when_pane_visible = false
+EOF
+fi
 
 notification_fixture="${repo_root}/target/release-safe/notification_service"
 [[ -x "${notification_fixture}" ]] || fail "controlled notification service is not built"
@@ -109,6 +116,28 @@ touch "${agent_start_gate/\{pane\}/pane-window-2}"
 zentty_product_wait_for_log "${log}" \
     'attention-inbox commit items=2 unresolved=2' \
     "both real-window agent requests did not enter the shared inbox" || fail "cross-window inbox delivery failed"
+if [[ "${suppress_visible}" == true ]]; then
+    zentty_product_wait_for_log "${log}" \
+        'result=suppressed reason=visibly-displayed window=window-1 worklane=worklane-1 pane=pane-1' \
+        "visible inactive pane escaped to the desktop" || fail "visible-pane suppression failed"
+    zentty_product_wait_for_log "${log}" \
+        'result=suppressed reason=actively-viewed window=window-2 worklane=worklane-window-2 pane=pane-window-2' \
+        "actively viewed pane did not retain source suppression" || fail "focused suppression failed"
+    sleep 0.2
+    if grep -Fq '"event":"notify"' "${notification_receipt}"; then
+        fail "suppressed visible panes reached the desktop notification service"
+    fi
+    kill -TERM "${product_pid}"
+    wait "${product_pid}" 2>/dev/null || true
+    product_pid=""
+    gdbus call --session --dest org.freedesktop.Notifications \
+        --object-path /org/freedesktop/Notifications \
+        --method be.zenjoy.Zentty.TestNotificationService.Quit >/dev/null
+    wait "${notification_pid}"
+    notification_pid=""
+    echo "Rust attention inbox passed: ${backend}, visibility=presented-unfocused, desktop=suppressed, inbox=retained"
+    exit 0
+fi
 zentty_product_wait_for_log "${log}" \
     'result=sent window=window-1 worklane=worklane-1 pane=pane-1' \
     "inactive-window attention did not reach the controlled desktop service" || fail "desktop delivery failed"

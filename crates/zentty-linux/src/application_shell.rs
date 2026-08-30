@@ -820,6 +820,49 @@ impl ApplicationShell {
         self.chrome.render_attention(inbox.items());
     }
 
+    pub(crate) fn attention_target_is_visibly_displayed(
+        &self,
+        target: &zentty_core::AttentionTarget,
+    ) -> bool {
+        if self.window_template.id != target.window_id
+            || !self.window.is_visible()
+            || !self.window.is_mapped()
+            || self.state.active_worklane_id() != target.worklane_id
+        {
+            return false;
+        }
+        let minimized = self
+            .window
+            .surface()
+            .and_then(|surface| surface.downcast::<gdk::Toplevel>().ok())
+            .is_some_and(|toplevel| toplevel.state().contains(gdk::ToplevelState::MINIMIZED));
+        if minimized {
+            return false;
+        }
+        let Some(frame) = self.pane_runtime.frame(&target.pane_id) else {
+            return false;
+        };
+        let widget = frame.widget();
+        if !widget.is_visible() || !widget.is_mapped() {
+            return false;
+        }
+        let Some(bounds) = widget.compute_bounds(&self.pane_scroll) else {
+            return false;
+        };
+        pane_rectangle_intersects_viewport(
+            bounds.x(),
+            bounds.y(),
+            bounds.width(),
+            bounds.height(),
+            self.pane_scroll.width() as f32,
+            self.pane_scroll.height() as f32,
+        )
+    }
+
+    pub(crate) fn notify_when_pane_visible(&self) -> bool {
+        self.config.notifications.notify_when_pane_visible
+    }
+
     pub(crate) fn settle_active_window_focus(&self) {
         self.focus_selected_surface();
     }
@@ -2263,9 +2306,10 @@ impl ApplicationShell {
             Ok(path) => {
                 self.config.notifications = notifications;
                 eprintln!(
-                    "zentty-linux: notification-settings result=persisted path={} sound={:?}",
+                    "zentty-linux: notification-settings result=persisted path={} sound={:?} visible-pane={}",
                     path.display(),
-                    self.config.notifications.sound_name
+                    self.config.notifications.sound_name,
+                    self.config.notifications.notify_when_pane_visible
                 );
                 Ok(())
             }
@@ -5495,6 +5539,24 @@ fn pane_content_width(column_widths: &[i32], viewport_width: i32) -> i32 {
         .max(viewport_width)
 }
 
+fn pane_rectangle_intersects_viewport(
+    x: f32,
+    y: f32,
+    width: f32,
+    height: f32,
+    viewport_width: f32,
+    viewport_height: f32,
+) -> bool {
+    width > 0.0
+        && height > 0.0
+        && viewport_width > 0.0
+        && viewport_height > 0.0
+        && x < viewport_width
+        && y < viewport_height
+        && x + width > 0.0
+        && y + height > 0.0
+}
+
 fn pane_layout_can_overflow_horizontally(column_count: usize) -> bool {
     column_count > 1
 }
@@ -5696,8 +5758,8 @@ mod allocation_tests {
         TerminalGesture, UserActivationClock, bounded_pane_viewport_height, codex_terminal_gesture,
         default_window_recipe, focus_follow_should_apply, is_close_window_shortcut,
         model_heights_to_pixels, pane_content_width, pane_layout_can_overflow_horizontally,
-        pane_width_allocation_is_settled, settings_refresh_section, snapshot_window_frame,
-        validated_window_size,
+        pane_rectangle_intersects_viewport, pane_width_allocation_is_settled,
+        settings_refresh_section, snapshot_window_frame, validated_window_size,
     };
     use crate::sidebar_visibility::Mode as SidebarVisibilityMode;
     use gtk::gdk;
@@ -5709,6 +5771,28 @@ mod allocation_tests {
         assert!(!focus_follow_should_apply(3, 4, true, false));
         assert!(!focus_follow_should_apply(4, 4, false, false));
         assert!(!focus_follow_should_apply(4, 4, true, true));
+    }
+
+    #[test]
+    fn pane_visibility_requires_positive_intersection_with_the_real_viewport() {
+        assert!(pane_rectangle_intersects_viewport(
+            0.0, 0.0, 800.0, 600.0, 800.0, 600.0
+        ));
+        assert!(pane_rectangle_intersects_viewport(
+            -100.0, 10.0, 200.0, 200.0, 800.0, 600.0
+        ));
+        assert!(!pane_rectangle_intersects_viewport(
+            800.0, 0.0, 300.0, 600.0, 800.0, 600.0
+        ));
+        assert!(!pane_rectangle_intersects_viewport(
+            0.0, 600.0, 800.0, 300.0, 800.0, 600.0
+        ));
+        assert!(!pane_rectangle_intersects_viewport(
+            0.0, 0.0, 0.0, 600.0, 800.0, 600.0
+        ));
+        assert!(!pane_rectangle_intersects_viewport(
+            0.0, 0.0, 800.0, 600.0, 0.0, 600.0
+        ));
     }
 
     #[test]

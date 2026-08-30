@@ -1306,15 +1306,43 @@ impl ApplicationCoordinator {
         let attention_changed = self.attention_inbox.borrow_mut().advance(current_time_ms());
         let deliveries = self.attention_inbox.borrow_mut().drain_deliveries();
         for delivery in deliveries {
-            if !delivery.desktop_allowed {
-                eprintln!(
-                    "zentty-linux: desktop-attention id={} result=suppressed reason=actively-viewed window={} worklane={} pane={}",
-                    delivery.item.id,
-                    delivery.item.target.window_id,
-                    delivery.item.target.worklane_id,
-                    delivery.item.target.pane_id,
-                );
-                continue;
+            let (pane_visible, notify_when_pane_visible) = self
+                .shells
+                .get(&delivery.item.target.window_id)
+                .map(|shell| {
+                    let shell = shell.borrow();
+                    (
+                        shell.attention_target_is_visibly_displayed(&delivery.item.target),
+                        shell.notify_when_pane_visible(),
+                    )
+                })
+                .unwrap_or((false, self.config.notifications.notify_when_pane_visible));
+            match crate::notification_service::desktop_attention_decision(
+                delivery.desktop_allowed,
+                notify_when_pane_visible,
+                pane_visible,
+            ) {
+                crate::notification_service::DesktopAttentionDecision::Deliver => {}
+                crate::notification_service::DesktopAttentionDecision::SuppressActivelyViewed => {
+                    eprintln!(
+                        "zentty-linux: desktop-attention id={} result=suppressed reason=actively-viewed window={} worklane={} pane={}",
+                        delivery.item.id,
+                        delivery.item.target.window_id,
+                        delivery.item.target.worklane_id,
+                        delivery.item.target.pane_id,
+                    );
+                    continue;
+                }
+                crate::notification_service::DesktopAttentionDecision::SuppressVisiblePane => {
+                    eprintln!(
+                        "zentty-linux: desktop-attention id={} result=suppressed reason=visibly-displayed window={} worklane={} pane={}",
+                        delivery.item.id,
+                        delivery.item.target.window_id,
+                        delivery.item.target.worklane_id,
+                        delivery.item.target.pane_id,
+                    );
+                    continue;
+                }
             }
             match self
                 .desktop_notifications

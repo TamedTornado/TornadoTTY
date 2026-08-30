@@ -225,6 +225,18 @@ open_notification_settings() {
 start_product
 open_notification_settings
 
+settings_key alt+n
+zentty_product_wait_for_log "${log}" 'notification-settings focus=visible-pane' \
+    "visible-pane mnemonic did not focus the real GTK switch" ||
+    fail "visible-pane notification focus failed"
+settings_key space
+zentty_product_wait_for_log "${log}" \
+    'notification-settings action=visible-pane result=applied value=false' \
+    "visible-pane notification preference did not persist through the real GTK switch" ||
+    fail "visible-pane notification toggle failed"
+grep -Fq 'notify_when_pane_visible = false' "${config}" ||
+    fail "visible-pane notification preference is absent from durable config"
+
 settings_key alt+t
 zentty_product_wait_for_log "${log}" 'notification-settings action=send-test result=sent id=1' \
     "Send Test did not cross the freedesktop service boundary" || fail "test notification failed"
@@ -343,8 +355,8 @@ stop_product
 start_product
 open_notification_settings
 zentty_product_wait_for_log "${log}" \
-    "notification-settings loaded sound=\"${custom_name}\"" \
-    "custom sound selection did not survive a real product restart" ||
+    "notification-settings loaded sound=\"${custom_name}\" visible-pane=false" \
+    "notification settings did not survive a real product restart" ||
     fail "custom sound restart persistence failed"
 [[ -f "${custom_file}" && ! -L "${custom_file}" ]] ||
     fail "custom sound asset did not survive a real product restart"

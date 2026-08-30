@@ -50,12 +50,24 @@ pub struct RestoreConfig {
     pub start_restored_sessions_in_background: bool,
 }
 
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct NotificationsConfig {
     /// Empty selects the desktop environment's default notification sound.
     pub sound_name: String,
     /// Source-compatible metadata for a user-installed custom sound.
     pub custom_sound_display_name: Option<String>,
+    /// Preserve desktop banners for panes that are already displayed.
+    pub notify_when_pane_visible: bool,
+}
+
+impl Default for NotificationsConfig {
+    fn default() -> Self {
+        Self {
+            sound_name: String::new(),
+            custom_sound_display_name: None,
+            notify_when_pane_visible: true,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -376,6 +388,7 @@ impl SidebarDocument {
 struct NotificationsDocument {
     sound_name: String,
     custom_sound_display_name: Option<String>,
+    notify_when_pane_visible: Option<bool>,
 }
 
 #[derive(Deserialize, Default)]
@@ -413,6 +426,7 @@ impl NotificationsDocument {
         NotificationsConfig {
             sound_name: self.sound_name,
             custom_sound_display_name: self.custom_sound_display_name,
+            notify_when_pane_visible: self.notify_when_pane_visible.unwrap_or(true),
         }
     }
 }
