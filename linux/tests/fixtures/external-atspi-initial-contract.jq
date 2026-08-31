@@ -11,6 +11,8 @@ def nodes: [.applications[0] | .. | objects | select(has("role"))];
              (.states | index("selected")) != null)) and
 (nodes | any(.name == "shell" and .role == "push button" and
              (.states | index("selected")) != null)) and
+(nodes | any(.name == "Terminal pane pane-1" and .role == "terminal" and
+             (.states | index("focused")) != null)) and
 (nodes | any(.name == "Toggle sidebar" and .role == "push button")) and
 (nodes | any(.name == "Drag pane" and
              .description == "Draggable pane. Drop on a pane edge, column boundary, or worklane.")) and

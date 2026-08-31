@@ -120,6 +120,17 @@ fn child_exit_disposition(context: ChildExitContext) -> ChildExitDisposition {
     }
 }
 
+fn terminal_accessible_label(pane_id: &str) -> String {
+    format!("Terminal pane {pane_id}")
+}
+
+fn apply_terminal_accessibility(widget: &gtk::Widget, pane_id: &str) {
+    widget.set_accessible_role(gtk::AccessibleRole::Terminal);
+    widget.update_property(&[gtk::accessible::Property::Label(
+        &terminal_accessible_label(pane_id),
+    )]);
+}
+
 /// Owns the per-window projection from durable pane IDs to live Ghostty/GTK
 /// objects. `WorkspaceState` remains the authority for durable topology; this
 /// coordinator is the sole authority for whether a pane has a live terminal.
@@ -484,6 +495,7 @@ impl PaneRuntimeCoordinator {
             }
         };
 
+        apply_terminal_accessibility(surface.widget(), pane_id);
         crate::terminal_pointer::install(&surface);
         Self::connect_surface_callbacks(shell, pane_id, &surface);
         let focus_controller = Self::make_surface_focus_controller(shell, pane_id);
@@ -1166,12 +1178,42 @@ fn surface_focus_event_should_apply(
 
 #[cfg(test)]
 mod tests {
+    use gtk::prelude::*;
+
     use super::{
         ChildExitContext, ChildExitDisposition, ChildLifecycle, ChildOwnership, ChildRegistration,
         RegistrationDecision, RemovalDecision, RestoreLaunch, RestoreLaunchState,
         SurfaceFocusBlocker, child_exit_disposition, registration_decision, removal_decision,
-        surface_focus_event_should_apply,
+        surface_focus_event_should_apply, terminal_accessible_label,
     };
+
+    #[test]
+    fn terminal_accessibility_label_is_stable_and_pane_specific() {
+        assert_eq!(terminal_accessible_label("pane-1"), "Terminal pane pane-1");
+        assert_ne!(
+            terminal_accessible_label("pane-1"),
+            terminal_accessible_label("pane-2")
+        );
+    }
+
+    #[test]
+    #[ignore = "requires GTK_A11Y=test and a controlled display"]
+    fn actual_terminal_widget_exposes_terminal_accessibility_semantics() {
+        assert_eq!(std::env::var("GTK_A11Y").as_deref(), Ok("test"));
+        gtk::init().expect("controlled GTK display must initialize");
+        let widget: gtk::Widget = gtk::Box::new(gtk::Orientation::Vertical, 0).upcast();
+
+        super::apply_terminal_accessibility(&widget, "pane-7");
+
+        assert!(gtk::test_accessible_has_role(
+            &widget,
+            gtk::AccessibleRole::Terminal
+        ));
+        assert!(gtk::test_accessible_has_property(
+            &widget,
+            gtk::AccessibleProperty::Label
+        ));
+    }
 
     #[test]
     fn duplicate_registration_is_rejected() {

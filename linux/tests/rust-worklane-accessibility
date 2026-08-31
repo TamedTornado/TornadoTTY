@@ -88,6 +88,7 @@ bundle_lib="${repo_root}/build/linux-profiles/release-safe/lib"
 
 if [[ -z "${ZENTTY_WIDGET_ACCESSIBILITY_DONE:-}" ]]; then
     for test_name in \
+        application_shell::pane_runtime::tests::actual_terminal_widget_exposes_terminal_accessibility_semantics \
         sidebar::tests::actual_worklane_widgets_expose_the_accessibility_contract \
         worklane_peek::tests::actual_worklane_peek_widgets_expose_the_accessibility_contract
     do
@@ -193,6 +194,9 @@ for _ in {1..100}; do
         def nodes: [.applications[0] | .. | objects | select(has("role"))];
         (nodes | map(select(.name == "Pane actions")) | length) == 4 and
         (nodes | map(select(.name == "Close Pane")) | length) == 2 and
+        (nodes | map(select(.role == "terminal")) | length) == 2 and
+        (nodes | any(.name == "Terminal pane pane-1" and .role == "terminal")) and
+        (nodes | any(.name == "Terminal pane pane-2" and .role == "terminal")) and
         (nodes | any((.states | index("focused")) != null))
     ' "${receipt_dir}/after.json" >/dev/null; then
         updated=true
@@ -212,4 +216,4 @@ fi
 
 trap - EXIT HUP INT TERM
 
-echo "rust-worklane-accessibility: PASS backend=${backend} actual-sidebar-and-peek-widgets=1 gtk-a11y=test external-atspi=real control=real-gtk live-pane-change=1"
+echo "rust-worklane-accessibility: PASS backend=${backend} actual-sidebar-and-peek-widgets=1 gtk-a11y=test external-atspi=real control=real-gtk live-pane-change=1 terminal-semantics=1"
