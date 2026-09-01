@@ -27,6 +27,7 @@ expect_validation_failure() {
 "${repo_root}/linux/tests/lib/bounded-batch-test" >/dev/null
 "${repo_root}/linux/tests/lib/qualification-capacity-test" >/dev/null
 "${repo_root}/linux/tests/lib/qualification-gap-test" >/dev/null
+"${repo_root}/linux/tests/lib/inline-test-audit-test" >/dev/null
 "${repo_root}/linux/tests/lib/valgrind-evidence-lock-test" >/dev/null
 "${repo_root}/linux/tests/lib/qualified-package-source-test" >/dev/null
 

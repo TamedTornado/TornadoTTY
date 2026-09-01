@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
+audit="${repo_root}/docs/design/zentty-linux-inline-test-audit-2026-09-01.md"
+temp_dir="$(mktemp -d)"
+trap 'rm -rf -- "${temp_dir}"' EXIT
+
+find "${repo_root}/crates/zentty-linux/src" -type f -name '*.rs' -print0 |
+    sort -z |
+    xargs -0 awk '
+      FNR == 1 { file = FILENAME; sub(root "/", "", file) }
+      /#\[test\]/ { pending = 1; next }
+      pending && /^[[:space:]]*#\[/ { next }
+      pending && /^[[:space:]]*fn[[:space:]]+/ {
+        name = $0
+        sub(/^[[:space:]]*fn[[:space:]]+/, "", name)
+        sub(/\(.*/, "", name)
+        print file "::" name
+        pending = 0
+      }
+    ' root="${repo_root}" >"${temp_dir}/actual"
+
+extract_category() {
+    local category="$1"
+    sed -n "/<!-- category:${category}:start -->/,/<!-- category:${category}:end -->/p" \
+        "${audit}" | grep '^crates/zentty-linux/src/.*::' || true
+}
+
+extract_category contract-snapshot >"${temp_dir}/contract"
+extract_category widget-smoke >"${temp_dir}/widget"
+cat "${temp_dir}/contract" "${temp_dir}/widget" | sort >"${temp_dir}/explicit"
+
+[[ "$(wc -l <"${temp_dir}/actual")" -eq 364 ]]
+[[ "$(wc -l <"${temp_dir}/contract")" -eq 29 ]]
+[[ "$(wc -l <"${temp_dir}/widget")" -eq 4 ]]
+[[ "$(sort -u "${temp_dir}/explicit" | wc -l)" -eq 33 ]]
+comm -23 "${temp_dir}/explicit" <(sort "${temp_dir}/actual") |
+    (! grep .)
+[[ $((364 - 29 - 4)) -eq 331 ]]
+
+grep -F '| Behavioral | 331 |' "${audit}" >/dev/null
+grep -F '| Contract/snapshot | 29 |' "${audit}" >/dev/null
+grep -F '| Formatter-mirroring | 0 |' "${audit}" >/dev/null
+grep -F '| Widget smoke | 4 |' "${audit}" >/dev/null
+
+echo "Inline test audit focused checks passed"

@@ -143,8 +143,34 @@ public `zentty-linux` crate boundary.
   pedantic failures (`assigning_clones` and `too_many_lines`); they were not
   changed or hidden by this slice.
 
-The remaining GH-147 acceptance item is the explicit classification audit of
-all 364 remaining inline GTK-crate tests. That count is one lower than the
-baseline because the weak divider test was replaced rather than merely added
-to. The issue remains open until the audit and prioritized remediation list are
-reviewable.
+### Mutation operators cargo-mutants could not synthesize
+
+The generated axis replacement was compiler-unviable because `DividerAxis`
+intentionally has no arbitrary `Default`; cargo-mutants also generated no
+same-typed topology-field swap. Each operator was therefore applied manually
+and reverted with a reviewable patch:
+
+- Swapping horizontal and vertical axis results failed three semantic tests,
+  including both axis-specific cohorts.
+- Swapping the pane request's `column_id` and `after_pane_id` failed
+  `callback_receives_typed_unswapped_target_and_signed_delta`.
+- After reverting both mutants, all six tests passed again and the model had no
+  source diff from the committed implementation.
+
+This is evidence that the assertions kill those named operators; it does not
+misreport compiler-unviable generated mutants as caught.
+
+### Inline-test classification audit
+
+All 364 remaining inline tests are now classified by primary intent in
+`zentty-linux-inline-test-audit-2026-09-01.md`: 331 behavioral, 29
+contract/snapshot, zero remaining confirmed formatter-mirroring tests, and four
+GTK widget-smoke tests. The zero is not a kill-rate claim: exact presentation
+contracts remain legitimate snapshots, and GH-146 must still mutate them.
+
+A focused audit check extracts the real inline test identities from Rust
+source, validates every explicitly named contract/smoke test, rejects duplicate
+classification, and pins the category arithmetic. It passed directly and as
+part of `qualification-matrix-test`. The audit prioritizes source-text parity
+snapshots, the six largest inline cohorts, widget-smoke migration boundaries,
+and presentation-contract mutation.
