@@ -15,6 +15,8 @@ source "${repo_root}/linux/tests/lib/qualification-outcome"
 source "${repo_root}/linux/tests/lib/bounded-batch"
 # shellcheck source=linux/tests/lib/qualification-capacity
 source "${repo_root}/linux/tests/lib/qualification-capacity"
+# shellcheck source=linux/tests/lib/qualification-gap
+source "${repo_root}/linux/tests/lib/qualification-gap"
 validate_only=false
 qualification_jobs="${ZENTTY_QUALIFICATION_JOBS:-$(zentty_qualification_matrix_jobs)}"
 qualification_display_jobs="${ZENTTY_QUALIFICATION_DISPLAY_JOBS:-$(zentty_qualification_display_jobs)}"
@@ -207,8 +209,36 @@ unknown_capabilities="$(jq -r '. as $matrix | .cells[] | select(.capability as $
 invalid_ids="$(jq -r '.cells[] | select((.id | type) != "string" or (.id | test("^[a-z0-9][a-z0-9-]*$") | not)) | .id // "<missing-id>"' "${matrix}")"
 [[ -z "${invalid_ids}" ]] || fail "cells with unsafe IDs: ${invalid_ids}"
 
-invalid_explanations="$(jq -r '.cells[] | select((.status == "BLOCKED" and ((.prerequisite // "") | length) == 0) or ((.status == "XFAIL" or .status == "NOT_IMPLEMENTED" or .status == "FAIL") and ((.defect // "") | length) == 0)) | .id' "${matrix}")"
-[[ -z "${invalid_explanations}" ]] || fail "non-pass cells without prerequisite/defect: ${invalid_explanations}"
+invalid_deferred_tracking="$(jq -r '
+    def nonblank: type == "string" and test("\\S");
+    .cells[] |
+    select((.status == "BLOCKED" or .status == "XFAIL") and
+           ((.tracking // null) | nonblank | not)) |
+    .id
+' "${matrix}")"
+[[ -z "${invalid_deferred_tracking}" ]] ||
+    fail "BLOCKED/XFAIL cells without nonblank tracking IDs: ${invalid_deferred_tracking}"
+
+invalid_deferred_reasons="$(jq -r '
+    def nonblank: type == "string" and test("\\S");
+    .cells[] |
+    select((.status == "BLOCKED" or .status == "XFAIL") and
+           (((.defect // null) | nonblank | not) and
+            ((.prerequisite // null) | nonblank | not))) |
+    .id
+' "${matrix}")"
+[[ -z "${invalid_deferred_reasons}" ]] ||
+    fail "BLOCKED/XFAIL cells without a nonblank defect or prerequisite: ${invalid_deferred_reasons}"
+
+invalid_explanations="$(jq -r '
+    def nonblank: type == "string" and test("\\S");
+    .cells[] |
+    select((.status == "NOT_IMPLEMENTED" or .status == "FAIL") and
+           ((.defect // null) | nonblank | not)) |
+    .id
+' "${matrix}")"
+[[ -z "${invalid_explanations}" ]] ||
+    fail "FAIL/NOT_IMPLEMENTED cells without nonblank defects: ${invalid_explanations}"
 
 invalid_commands="$(jq -r '.cells[] | select((.status == "PASS" or .status == "XFAIL") and ((.command // "") | length) == 0) | .id' "${matrix}")"
 [[ -z "${invalid_commands}" ]] || fail "executable cells without commands: ${invalid_commands}"
@@ -456,9 +486,6 @@ jq -e '
     )
 ' "${matrix}" >/dev/null ||
     fail "suppression-governance cell must execute after every Valgrind report and artifact-mutating build cell"
-
-untracked_xfails="$(jq -r '.cells[] | select(.status == "XFAIL" and ((.tracking // "") | length) == 0) | .id' "${matrix}")"
-[[ -z "${untracked_xfails}" ]] || fail "XFAIL cells without tracking IDs: ${untracked_xfails}"
 
 invalid_xfail_exits="$(jq -r '.cells[] | select(.status == "XFAIL" and (((.expected_exit_code // null) | type) != "number" or .expected_exit_code <= 0 or .expected_exit_code > 255 or .expected_exit_code == 77 or (.expected_exit_code | floor) != .expected_exit_code)) | .id' "${matrix}")"
 [[ -z "${invalid_xfail_exits}" ]] || fail "XFAIL cells without a valid exact expected exit code: ${invalid_xfail_exits}"
@@ -763,6 +790,7 @@ run_qualification_cell() {
     local id status command expected_exit_code valgrind_report environment_profile
     local cell_optimize cell_display expected_valgrind_scenario is_suppression_governance
     local outcome exit_code valgrind environment log_identity valgrind_report_identity
+    local qualification_gap
     local cell_evidence_lock_fd cell_evidence_lock_acquired retain_cell_evidence_lock
     local environment_capture_span_seconds log environment_report cell_started_at_epoch
     local code expected_raw_receipt expected_suppressed_receipt result
@@ -786,6 +814,7 @@ run_qualification_cell() {
     log_identity=null
     valgrind_report_identity=null
     timing=null
+    qualification_gap="$(zentty_qualification_gap_json "${cell}")"
     cell_evidence_lock_fd=""
     cell_evidence_lock_acquired=false
     retain_cell_evidence_lock=false
@@ -1081,12 +1110,14 @@ run_qualification_cell() {
         --argjson environment "${environment}" \
         --argjson valgrind "${valgrind}" \
         --argjson valgrind_report "${valgrind_report_identity}" \
+        --argjson qualification_gap "${qualification_gap}" \
         --argjson timing "${timing}" '
         {id: $id, declared_status: $declared, outcome: $outcome, exit_code: $exit_code} +
         if $expected_exit_code == null then {} else {expected_exit_code: $expected_exit_code} end +
         if $log == null then {} else {log: $log} end +
         if $environment == null then {} else {environment: $environment} end +
         if $valgrind == null then {} else {valgrind: $valgrind, valgrind_report: $valgrind_report} end +
+        if $qualification_gap == null then {} else {qualification_gap: $qualification_gap} end +
         if $timing == null then {} else {timing: $timing} end
     ')"
     printf '%s\n' "${result}" >"${result_path}"
@@ -1783,6 +1814,9 @@ printf 'Declared totals: PASS=%s FAIL=%s BLOCKED=%s XFAIL=%s NOT_IMPLEMENTED=%s\
     "$(jq -r '.BLOCKED' <<<"${totals}")" \
     "$(jq -r '.XFAIL' <<<"${totals}")" \
     "$(jq -r '.NOT_IMPLEMENTED' <<<"${totals}")"
+while IFS= read -r deferred; do
+    printf 'Deferred:                  %s\n' "${deferred}"
+done < <(zentty_qualification_gap_report "${matrix}")
 echo "Machine summary: ${summary}"
 
 "${implemented_local}" || exit 1

@@ -26,6 +26,7 @@ expect_validation_failure() {
 "${repo_root}/linux/tests/lib/qualification-outcome-test" >/dev/null
 "${repo_root}/linux/tests/lib/bounded-batch-test" >/dev/null
 "${repo_root}/linux/tests/lib/qualification-capacity-test" >/dev/null
+"${repo_root}/linux/tests/lib/qualification-gap-test" >/dev/null
 "${repo_root}/linux/tests/lib/valgrind-evidence-lock-test" >/dev/null
 "${repo_root}/linux/tests/lib/qualified-package-source-test" >/dev/null
 
@@ -178,6 +179,72 @@ expect_validation_failure 'package-qualification cells are missing or malformed'
 jq '(.cells[] | select(.id == "install-uninstall")).status = "SKIPPED"' \
     "${source_matrix}" >"${temp_dir}/matrix.json"
 expect_validation_failure 'unknown statuses: install-uninstall=SKIPPED'
+
+# Deferred statuses are auditable states, not aliases for an unexplained skip.
+# Exercise both real ReleaseSafe Valgrind XFAIL declarations so either cell
+# drifting independently is caught.
+for valgrind_id in release-valgrind-wayland release-valgrind-x11; do
+    jq --arg id "${valgrind_id}" \
+        '(.cells[] | select(.id == $id)) |= del(.tracking)' \
+        "${source_matrix}" >"${temp_dir}/matrix.json"
+    expect_validation_failure \
+        "BLOCKED/XFAIL cells without nonblank tracking IDs: ${valgrind_id}"
+
+    jq --arg id "${valgrind_id}" \
+        '(.cells[] | select(.id == $id)).tracking = ""' \
+        "${source_matrix}" >"${temp_dir}/matrix.json"
+    expect_validation_failure \
+        "BLOCKED/XFAIL cells without nonblank tracking IDs: ${valgrind_id}"
+
+    jq --arg id "${valgrind_id}" \
+        '(.cells[] | select(.id == $id)).tracking = "   "' \
+        "${source_matrix}" >"${temp_dir}/matrix.json"
+    expect_validation_failure \
+        "BLOCKED/XFAIL cells without nonblank tracking IDs: ${valgrind_id}"
+
+    jq --arg id "${valgrind_id}" \
+        '(.cells[] | select(.id == $id)) |= del(.defect, .prerequisite)' \
+        "${source_matrix}" >"${temp_dir}/matrix.json"
+    expect_validation_failure \
+        "BLOCKED/XFAIL cells without a nonblank defect or prerequisite: ${valgrind_id}"
+
+    jq --arg id "${valgrind_id}" \
+        '(.cells[] | select(.id == $id)) |= (.defect = "" | del(.prerequisite))' \
+        "${source_matrix}" >"${temp_dir}/matrix.json"
+    expect_validation_failure \
+        "BLOCKED/XFAIL cells without a nonblank defect or prerequisite: ${valgrind_id}"
+
+    jq --arg id "${valgrind_id}" \
+        '(.cells[] | select(.id == $id)) |= (.defect = " \t " | del(.prerequisite))' \
+        "${source_matrix}" >"${temp_dir}/matrix.json"
+    expect_validation_failure \
+        "BLOCKED/XFAIL cells without a nonblank defect or prerequisite: ${valgrind_id}"
+done
+
+# BLOCKED has the same governance contract. A prerequisite may explain the
+# block in place of a defect, but it and the tracking ID must contain text.
+jq '(.cells[] | select(.id == "visual-parity-map")) |=
+      (.status = "BLOCKED" | .tracking = "TEST-BLOCKED" |
+       .prerequisite = "controlled reference environment")' \
+    "${source_matrix}" >"${temp_dir}/matrix.json"
+ZENTTY_QUALIFICATION_MATRIX="${temp_dir}/matrix.json" \
+    "${runner}" --validate-only >/dev/null
+
+for field in tracking prerequisite; do
+    jq --arg field "${field}" '
+        (.cells[] | select(.id == "visual-parity-map")) |=
+          (.status = "BLOCKED" | .tracking = "TEST-BLOCKED" |
+           .prerequisite = "controlled reference environment" |
+           .[$field] = " \n ")
+    ' "${source_matrix}" >"${temp_dir}/matrix.json"
+    if [[ "${field}" == "tracking" ]]; then
+        expect_validation_failure \
+            'BLOCKED/XFAIL cells without nonblank tracking IDs: visual-parity-map'
+    else
+        expect_validation_failure \
+            'BLOCKED/XFAIL cells without a nonblank defect or prerequisite: visual-parity-map'
+    fi
+done
 
 # Independently scheduled Valgrind producers must retain unique report paths.
 jq '(.cells[] | select(.id == "debug-valgrind-ibus-focus-x11")).valgrind_report = "build/linux/memory-safety-Debug-single-x11.json"' \

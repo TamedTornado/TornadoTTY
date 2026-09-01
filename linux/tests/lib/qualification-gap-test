@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
+# shellcheck source=linux/tests/lib/qualification-gap
+source "${repo_root}/linux/tests/lib/qualification-gap"
+
+xfail='{"id":"release-check","status":"XFAIL","tracking":"BUG-42","defect":"known allocator finding"}'
+[[ "$(zentty_qualification_gap_json "${xfail}")" == \
+    '{"tracking":"BUG-42","defect":"known allocator finding","prerequisite":null}' ]]
+
+blocked='{"id":"display-check","status":"BLOCKED","tracking":"ENV-7","prerequisite":"nested compositor image"}'
+[[ "$(zentty_qualification_gap_json "${blocked}")" == \
+    '{"tracking":"ENV-7","defect":null,"prerequisite":"nested compositor image"}' ]]
+
+[[ "$(zentty_qualification_gap_json '{"id":"passing","status":"PASS"}')" == null ]]
+
+temp_matrix="$(mktemp)"
+trap 'rm -f -- "${temp_matrix}"' EXIT
+cat >"${temp_matrix}" <<'JSON'
+{"cells":[
+  {"id":"release-check","status":"XFAIL","tracking":"BUG-42","defect":"known allocator finding"},
+  {"id":"passing","status":"PASS"},
+  {"id":"display-check","status":"BLOCKED","tracking":"ENV-7","prerequisite":"nested compositor image"}
+]}
+JSON
+
+expected=$'release-check [XFAIL] tracking=BUG-42; known allocator finding\ndisplay-check [BLOCKED] tracking=ENV-7; nested compositor image'
+[[ "$(zentty_qualification_gap_report "${temp_matrix}")" == "${expected}" ]]
+
+echo "Qualification gap focused tests passed"

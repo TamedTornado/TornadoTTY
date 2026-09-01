@@ -99,9 +99,9 @@
           ]
         },
         "command": {"type": "string", "minLength": 1},
-        "defect": {"type": "string", "minLength": 1},
-        "prerequisite": {"type": "string", "minLength": 1},
-        "tracking": {"type": "string", "minLength": 1},
+        "defect": {"type": "string", "minLength": 1, "pattern": "\\S"},
+        "prerequisite": {"type": "string", "minLength": 1, "pattern": "\\S"},
+        "tracking": {"type": "string", "minLength": 1, "pattern": "\\S"},
         "expected_exit_code": {
           "type": "integer",
           "minimum": 1,

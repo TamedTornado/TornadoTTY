@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+
+# Render the reviewed policy metadata attached to a declared deferred cell.
+# Matrix validation is responsible for rejecting blank fields before these
+# helpers are called.
+zentty_qualification_gap_json() {
+    local cell="$1"
+    jq -c '
+        if .status == "BLOCKED" or .status == "XFAIL" then
+          {tracking, defect: (.defect // null), prerequisite: (.prerequisite // null)}
+        else null end
+    ' <<<"${cell}"
+}
+
+zentty_qualification_gap_report() {
+    local matrix="$1"
+    jq -r '
+        .cells[] |
+        select(.status == "BLOCKED" or .status == "XFAIL") |
+        .id + " [" + .status + "] tracking=" + .tracking + "; " +
+          (if ((.defect // "") | test("\\S")) then .defect else .prerequisite end)
+    ' "${matrix}"
+}
