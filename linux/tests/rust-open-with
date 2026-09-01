@@ -170,7 +170,7 @@ wait_for_product() {
     window_id=""
     for _ in $(seq 1 300); do
         if [[ "${backend}" == x11 ]]; then
-            window_id="$(xdotool search --onlyvisible --pid "${product_pid}" --name '^Zentty$' 2>/dev/null | head -1 || true)"
+            window_id="$(xdotool search --onlyvisible --pid "${product_pid}" 2>/dev/null | head -1 || true)"
         else
             window_id=wayland-focused
         fi
@@ -284,7 +284,7 @@ find_settings_window() {
             best="${candidate}"
             best_area="${area}"
         fi
-    done < <(xdotool search --name '^Zentty Settings$' 2>/dev/null || true)
+    done < <(xdotool search --name '^Tornado TTY Settings$' 2>/dev/null || true)
     printf '%s' "${best}"
 }
 settings_key() {

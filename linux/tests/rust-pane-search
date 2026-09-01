@@ -1100,7 +1100,7 @@ if [[ "${backend}" == x11 ]]; then
                 second_window_id="${candidate}"
                 break
             fi
-        done < <(xdotool search --onlyvisible --pid "${product_pid}" --name '^Zentty$' 2>/dev/null || true)
+        done < <(xdotool search --onlyvisible --pid "${product_pid}" 2>/dev/null || true)
         [[ "${second_window_id}" =~ ^[1-9][0-9]*$ ]] && break
         sleep 0.05
     done

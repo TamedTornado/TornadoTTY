@@ -434,7 +434,7 @@ fi
 settings_window_id=""
 if [[ "${backend}" == x11 ]]; then
     for _ in $(seq 1 200); do
-        settings_window_id="$(xdotool search --onlyvisible --name '^Zentty Settings$' 2>/dev/null | tail -1 || true)"
+        settings_window_id="$(xdotool search --onlyvisible --name '^Tornado TTY Settings$' 2>/dev/null | tail -1 || true)"
         [[ "${settings_window_id}" =~ ^[1-9][0-9]*$ ]] && break
         sleep 0.05
     done
@@ -734,7 +734,7 @@ if [[ "${backend}" == x11 ]]; then
     done
     settings_window_id=""
     for _ in $(seq 1 200); do
-        settings_window_id="$(xdotool search --onlyvisible --name '^Zentty Settings$' 2>/dev/null | tail -1 || true)"
+        settings_window_id="$(xdotool search --onlyvisible --name '^Tornado TTY Settings$' 2>/dev/null | tail -1 || true)"
         [[ "${settings_window_id}" =~ ^[1-9][0-9]*$ ]] && break
         sleep 0.05
     done

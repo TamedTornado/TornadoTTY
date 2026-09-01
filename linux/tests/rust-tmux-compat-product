@@ -156,7 +156,7 @@ if [[ "${ZENTTY_TOPOLOGY_REPRESENTATIVE:-}" == 1 ]]; then
     if [[ "${ZENTTY_TEST_EXTERNAL_RESIZE:-}" == 1 || \
         "${ZENTTY_NESTED_WAYLAND_OUTER_X11_INPUT:-}" == 1 ]]; then
         if [[ "${GDK_BACKEND}" == x11 ]]; then
-            outer_window="$(xdotool search --onlyvisible --name '^Zentty$' | tail -1)"
+            outer_window="$(xdotool search --onlyvisible --class '^com\.tamedtornado\.tornadotty$' | tail -1)"
         else
             outer_window="${ZENTTY_NESTED_WAYLAND_OUTER_X11_WINDOW:?}"
         fi
@@ -583,7 +583,7 @@ printf 'cli-stage=grid-command-validated\n' >>"${ZENTTY_TMUX_PRODUCT_PROBE}"
 if [[ "${ZENTTY_TEST_EXTERNAL_RESIZE:-}" == 1 || \
     "${ZENTTY_NESTED_WAYLAND_OUTER_X11_INPUT:-}" == 1 ]]; then
 if [[ "${backend}" == x11 ]]; then
-    mapfile -t resize_windows < <(xdotool search --onlyvisible --name '^Zentty$')
+    mapfile -t resize_windows < <(xdotool search --onlyvisible --class '^com\.tamedtornado\.tornadotty$')
 elif [[ -n "${ZENTTY_NESTED_WAYLAND_OUTER_X11_WINDOW:-}" ]]; then
     resize_windows=("${ZENTTY_NESTED_WAYLAND_OUTER_X11_WINDOW}")
 else

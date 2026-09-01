@@ -127,7 +127,7 @@ focus_about_x11() {
     [[ "${backend}" != x11 ]] && return 0
     local about=""
     for _ in {1..200}; do
-        about="$(xdotool search --onlyvisible --name '^About Zentty$' 2>/dev/null | tail -1 || true)"
+        about="$(xdotool search --onlyvisible --name '^About Tornado TTY$' 2>/dev/null | tail -1 || true)"
         [[ "${about}" =~ ^[1-9][0-9]*$ ]] && break
         sleep 0.05
     done
@@ -138,8 +138,8 @@ focus_about_x11() {
 key ctrl+shift+p
 zentty_product_wait_for_log "${log}" 'command-palette-focus=confirmed result=true' \
     "command palette did not receive physical focus" || fail "command palette did not open"
-type_text 'About Zentty'
-zentty_product_wait_for_log "${log}" 'command-palette=query value="About Zentty" results=1' \
+type_text 'About Tornado TTY'
+zentty_product_wait_for_log "${log}" 'command-palette=query value="About Tornado TTY" results=1' \
     "About command did not resolve uniquely" || fail "About palette route failed"
 key Down
 key Return
@@ -227,8 +227,8 @@ zentty_product_prepare_input "${backend}" "${log}" ||
 key ctrl+shift+p
 zentty_product_wait_for_log "${log}" 'command-palette-focus=confirmed result=true' \
     "malformed-bundle command palette did not receive focus" || fail "palette did not open"
-type_text 'About Zentty'
-zentty_product_wait_for_log "${log}" 'command-palette=query value="About Zentty" results=1' \
+type_text 'About Tornado TTY'
+zentty_product_wait_for_log "${log}" 'command-palette=query value="About Tornado TTY" results=1' \
     "malformed-bundle About command did not resolve" || fail "About route failed"
 key Down
 key Return

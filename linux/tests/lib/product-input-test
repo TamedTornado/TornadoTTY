@@ -72,7 +72,7 @@ zentty_wait_for_owned_process "${exited_pid}" "exited fixture" 2 0
 : >"${calls}"
 product_pid=7777
 [[ "$(zentty_product_find_x11_window "${product_pid}" 1)" == 5151 ]]
-expected=$'search --onlyvisible --pid 7777 --name ^Zentty$\ngetwindowpid 5151'
+expected=$'search --onlyvisible --pid 7777\ngetwindowpid 5151'
 [[ "$(cat "${calls}")" == "${expected}" ]] || {
     echo "product-input-test: X11 lookup did not require a mapped PID-owned window" >&2
     exit 1
@@ -98,7 +98,7 @@ fi
 : >"${calls}"
 : >"${receipt_log}"
 zentty_product_prepare_input x11 "${receipt_log}" 3
-expected=$'search --onlyvisible --pid 7777 --name ^Zentty$\ngetwindowpid 5151\nwindowfocus --sync 5151\nmousemove --window 5151 700 400 click 1\ngetwindowfocus\ngetwindowpid 5151'
+expected=$'search --onlyvisible --pid 7777\ngetwindowpid 5151\nwindowfocus --sync 5151\nmousemove --window 5151 700 400 click 1\ngetwindowfocus\ngetwindowpid 5151'
 [[ "$(cat "${calls}")" == "${expected}" ]] || {
     echo "product-input-test: X11 readiness did not bind and focus the product-owned window" >&2
     cat "${calls}" >&2

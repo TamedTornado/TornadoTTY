@@ -145,8 +145,8 @@ run_profile() {
     product_pid=$!
     wait_for_count "${product_log}" 'terminal-ready-pane=' 2 ||
         fail "${profile} did not create both real terminals"
-    mapfile -t windows < <(xdotool search --onlyvisible --name '^Zentty$')
-    [[ "${#windows[@]}" -eq 1 ]] || fail "${profile} exposed ${#windows[@]} Zentty windows"
+    mapfile -t windows < <(xdotool search --onlyvisible --class '^com\.tamedtornado\.tornadotty$')
+    [[ "${#windows[@]}" -eq 1 ]] || fail "${profile} exposed ${#windows[@]} Tornado TTY windows"
     window="${windows[0]}"
     xdotool windowsize --sync "${window}" 1200 800
     geometry="$(xdotool getwindowgeometry --shell "${window}")"

@@ -245,7 +245,7 @@ target_second_window() {
         local candidate_id
         local -a titled_ids candidate_ids
         mapfile -t titled_ids < <(
-            xdotool search --onlyvisible --pid "${product_pid}" --name '^Zentty$' 2>/dev/null
+            xdotool search --onlyvisible --pid "${product_pid}" 2>/dev/null
         )
         candidate_ids=()
         for candidate_id in "${titled_ids[@]}"; do
@@ -617,7 +617,7 @@ create_second_window() {
         'zentty-linux: config-projected window=window-2 automatic-clean-copy=true' \
         "second window did not receive the process clipboard config" || fail "second config projection missing"
     if [[ "${backend}" == x11 ]]; then
-        visible_count="$(xdotool search --onlyvisible --pid "${product_pid}" --name '^Zentty$' 2>/dev/null | wc -l)"
+        visible_count="$(xdotool search --onlyvisible --pid "${product_pid}" 2>/dev/null | wc -l)"
         [[ "${visible_count}" -eq 2 ]] || fail "X11 exposed ${visible_count} product windows instead of two"
     fi
     if [[ "${route_probe}" == true ]]; then
@@ -631,7 +631,7 @@ create_second_window() {
             return
         fi
         mapfile -t idle_window_ids < <(
-            xdotool search --onlyvisible --pid "${product_pid}" --name '^Zentty$' 2>/dev/null |
+            xdotool search --onlyvisible --pid "${product_pid}" 2>/dev/null |
                 while read -r candidate_id; do
                     xprop -id "${candidate_id}" _NET_WM_WINDOW_TYPE 2>/dev/null |
                         grep -Fq '_NET_WM_WINDOW_TYPE_NORMAL' && printf '%s\n' "${candidate_id}"
@@ -735,7 +735,7 @@ capture_multi_window_x11_visual() {
             grep -Fq '_NET_WM_WINDOW_TYPE_NORMAL' || continue
         first_window_id="${candidate_id}"
         break
-    done < <(xdotool search --onlyvisible --pid "${product_pid}" --name '^Zentty$' 2>/dev/null)
+    done < <(xdotool search --onlyvisible --pid "${product_pid}" 2>/dev/null)
     [[ "${first_window_id}" =~ ^[1-9][0-9]*$ ]] ||
         fail "visual evidence could not identify the first native X11 window"
 
@@ -882,7 +882,7 @@ if [[ "${backend}" == x11 ]]; then
             grep -Fq '_NET_WM_WINDOW_TYPE_NORMAL' || continue
         first_window_id="${candidate_id}"
         break
-    done < <(xdotool search --onlyvisible --pid "${product_pid}" --name '^Zentty$' 2>/dev/null)
+    done < <(xdotool search --onlyvisible --pid "${product_pid}" 2>/dev/null)
     [[ "${first_window_id}" =~ ^[1-9][0-9]*$ ]] || fail "first X11 window identity missing for Peek isolation"
     peek_cancel_before="$(grep -Fc 'zentty-linux: worklane-peek=window-cancel reason=window-deactivated' "${log}" || true)"
     xdotool windowfocus --sync "${second_window_id}"

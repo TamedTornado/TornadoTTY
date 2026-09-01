@@ -96,7 +96,7 @@ zentty_product_wait_for_log "${log}" 'zentty-linux: focus-pane pane=pane-window-
     fail "second pane focus missing"
 window_two_id=""
 if [[ "${backend}" == x11 ]]; then
-    for candidate in $(xdotool search --onlyvisible --pid "${product_pid}" --name '^Zentty$'); do
+    for candidate in $(xdotool search --onlyvisible --pid "${product_pid}"); do
         [[ "${candidate}" == "${window_one_id}" ]] || window_two_id="${candidate}"
     done
     [[ "${window_two_id}" =~ ^[1-9][0-9]*$ ]] || fail "second X11 window identity was not discovered"

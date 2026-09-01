@@ -63,7 +63,7 @@ if [[ "${backend}" == wayland ]]; then
 else
     window_id=""
     for _ in {1..300}; do
-        window_id="$(xdotool search --onlyvisible --name '^Zentty$' 2>/dev/null | tail -n 1 || true)"
+        window_id="$(xdotool search --onlyvisible --pid "${product_pid}" 2>/dev/null | tail -n 1 || true)"
         [[ "${window_id}" =~ ^[1-9][0-9]*$ ]] && break
         kill -0 "${product_pid}" 2>/dev/null || fail "product exited before mapping its X11 window"
         sleep 0.02

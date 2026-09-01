@@ -156,3 +156,39 @@
   clipboard delivery, Open With, About/licenses, crash-and-restart topology,
   canonical desktop-entry launch, diagnostics silence, and a machine-readable
   final receipt at `build/linux/installed-package/x11.json`.
+
+## Secondary public-copy and dynamic-title audit
+
+- A targeted post-package audit found that the main identity constants had
+  been changed but secondary public copy still named Zentty in settings
+  descriptions, shortcut/preset dialogs, quit confirmation, agent settings,
+  support-report text, executable/configuration errors, system sleep-inhibitor
+  labels, and command-palette descriptions. These strings are public product
+  identity, not retained internal namespaces, and now say Tornado TTY.
+- The same audit found many real-system X11 journeys selecting windows by an
+  exact `Zentty` title. Replacing that with an exact `Tornado TTY` title exposed
+  the deeper flaw: the main window title is intentionally dynamic and can show
+  active worklane/project context. Shared input now locates a mapped window by
+  its owning PID; identity qualification separately requires the canonical
+  `WM_CLASS`, and scenarios without the PID use the canonical application class
+  rather than mutable title text.
+- An initial identity rerun observed the old `com.zentty.zentty` class because
+  `build/linux/bin/zentty-linux` was an old local bundle. The current tree was
+  rebuilt with the documented build command; the rebuilt real X11 application
+  then passed with `com.tamedtornado.tornadotty`. No source requirement was
+  weakened to accommodate the stale artifact.
+- The focused notification/settings journey reached the real freedesktop
+  notification service but initially failed because its D-Bus receipt still
+  expected application name `Zentty`. After correcting the public expectation
+  to `Tornado TTY`, the journey passed through real GTK settings, physical
+  input, private D-Bus, notification delivery, custom sound import/playback,
+  persistence, deduplication, removal, and restart.
+- PASS: product-input helper tests; TornadoTTY product-identity test; 7 core
+  configuration tests; Linux binary compilation; 6 shortcut, 6 agent-settings,
+  2 general-settings, 6 custom-sound, 3 sleep-inhibitor, 2 fleet, 20 tmux,
+  8 action-router, 2 shortcut-registry, 5 bookmark, 3 close-runtime, and 2
+  updates/privacy tests; real X11 window identity; real X11 About/licenses;
+  real X11 notifications/settings.
+- The focused config-store module run remained **39 PASS, 1 FAIL** at the
+  previously documented exact-maximum rewrite boundary. It was neither caused
+  nor hidden by this rebrand work and is not counted as a rebrand pass.

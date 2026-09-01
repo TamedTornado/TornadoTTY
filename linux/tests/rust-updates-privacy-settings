@@ -189,7 +189,7 @@ open_page() {
     if [[ "${backend}" == x11 ]]; then
         settings_window=""
         for _ in {1..100}; do
-            settings_window="$(xdotool search --onlyvisible --name '^Zentty Settings$' 2>/dev/null | tail -1 || true)"
+            settings_window="$(xdotool search --onlyvisible --name '^Tornado TTY Settings$' 2>/dev/null | tail -1 || true)"
             [[ "${settings_window}" =~ ^[1-9][0-9]*$ ]] && break
             sleep 0.02
         done

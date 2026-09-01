@@ -254,7 +254,7 @@ zentty_product_wait_for_log_count "${log}" 'zentty-linux: config-reload result=a
 settings_window=""
 if [[ "${backend}" == x11 ]]; then
     for _ in {1..100}; do
-        settings_window="$(xdotool search --onlyvisible --pid "${product_pid}" --name '^Zentty Settings$' 2>/dev/null | tail -1 || true)"
+        settings_window="$(xdotool search --onlyvisible --pid "${product_pid}" --name '^Tornado TTY Settings$' 2>/dev/null | tail -1 || true)"
         [[ "${settings_window}" =~ ^[1-9][0-9]*$ ]] && break
         sleep 0.02
     done
@@ -292,7 +292,7 @@ zentty_product_wait_for_log "${log}" \
 if [[ "${backend}" == x11 ]]; then
     settings_window=""
     for _ in {1..100}; do
-        settings_window="$(xdotool search --onlyvisible --pid "${product_pid}" --name '^Zentty Settings$' 2>/dev/null | tail -1 || true)"
+        settings_window="$(xdotool search --onlyvisible --pid "${product_pid}" --name '^Tornado TTY Settings$' 2>/dev/null | tail -1 || true)"
         [[ "${settings_window}" =~ ^[1-9][0-9]*$ ]] && break
         sleep 0.02
     done
@@ -355,7 +355,7 @@ zentty_product_wait_for_log_count "${log}" \
 if [[ "${backend}" == x11 ]]; then
     settings_window=""
     for _ in {1..100}; do
-        settings_window="$(xdotool search --onlyvisible --pid "${product_pid}" --name '^Zentty Settings$' 2>/dev/null | tail -1 || true)"
+        settings_window="$(xdotool search --onlyvisible --pid "${product_pid}" --name '^Tornado TTY Settings$' 2>/dev/null | tail -1 || true)"
         [[ "${settings_window}" =~ ^[1-9][0-9]*$ ]] && break
         sleep 0.02
     done

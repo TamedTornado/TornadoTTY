@@ -143,7 +143,7 @@ find_settings_window() {
             best="${candidate}"
             best_area="${area}"
         fi
-    done < <(xdotool search --onlyvisible --name '^Zentty Settings$' 2>/dev/null || true)
+    done < <(xdotool search --onlyvisible --name '^Tornado TTY Settings$' 2>/dev/null || true)
     printf '%s' "${best}"
 }
 
@@ -292,7 +292,7 @@ if [[ "${backend}" == x11 ]]; then
     xdotool key --window "${settings_window_id}" Escape
     zentty_product_wait_for_log "${log}" 'shortcut-settings hidden parent-presented=true' \
         "Agents settings did not return focus" || fail "settings close missing"
-    ZENTTY_PRODUCT_WINDOW_ID="$(xdotool search --onlyvisible --pid "${product_pid}" --name '^Zentty$' 2>/dev/null | head -1 || true)"
+    ZENTTY_PRODUCT_WINDOW_ID="$(xdotool search --onlyvisible --pid "${product_pid}" 2>/dev/null | head -1 || true)"
     export ZENTTY_PRODUCT_WINDOW_ID
     env_before="$(grep -Fc 'agent-env codex=' "${log}" || true)"
     zentty_product_ctrl_key "${backend}" t

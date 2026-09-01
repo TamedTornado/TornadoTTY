@@ -213,7 +213,7 @@ open_notification_settings() {
     settings_window=""
     if [[ "${backend}" == x11 ]]; then
         for _ in {1..100}; do
-            settings_window="$(xdotool search --onlyvisible --name '^Zentty Settings$' 2>/dev/null | tail -1 || true)"
+            settings_window="$(xdotool search --onlyvisible --name '^Tornado TTY Settings$' 2>/dev/null | tail -1 || true)"
             [[ "${settings_window}" =~ ^[1-9][0-9]*$ ]] && break
             sleep 0.02
         done
@@ -241,7 +241,7 @@ settings_key alt+t
 zentty_product_wait_for_log "${log}" 'notification-settings action=send-test result=sent id=1' \
     "Send Test did not cross the freedesktop service boundary" || fail "test notification failed"
 for _ in {1..100}; do [[ -s "${receipt}" ]] && break; sleep 0.02; done
-grep -Fq 'string "Zentty"' "${receipt}" ||
+grep -Fq 'string "Tornado TTY"' "${receipt}" ||
     fail "D-Bus monitor did not receive the source test payload"
 grep -Fq 'string "This is a test notification."' "${receipt}" ||
     fail "D-Bus monitor did not receive the source test body"
