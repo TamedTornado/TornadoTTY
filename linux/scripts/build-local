@@ -112,7 +112,7 @@ if [[ -n "$(git -C "${ghostty_source}" status --porcelain)" ]]; then
 fi
 zentty_revision="$(git -C "${repo_root}" rev-parse HEAD)"
 if [[ ! "${zentty_revision}" =~ ^[0-9a-f]{40}$ ]]; then
-    echo "error: invalid Zentty revision: ${zentty_revision}" >&2
+    echo "error: invalid TornadoTTY source revision: ${zentty_revision}" >&2
     exit 1
 fi
 zentty_display_revision="${zentty_revision:0:12}"

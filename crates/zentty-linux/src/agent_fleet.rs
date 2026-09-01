@@ -186,7 +186,7 @@ fn append_footer(root: &gtk::Box, initially_empty: bool) {
     settings.connect_clicked(|_| {
         eprintln!("zentty-linux: fleet-footer-activate action=settings");
     });
-    let quit = gtk::Button::with_mnemonic("_Quit Zentty");
+    let quit = gtk::Button::with_mnemonic("_Quit Tornado TTY");
     quit.set_action_name(Some("workspace.quit-application"));
     quit.connect_has_focus_notify(|button| {
         if button.has_focus() {

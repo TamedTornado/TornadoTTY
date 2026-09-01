@@ -103,7 +103,7 @@ pub(crate) fn build(
     let behavior = card("Behavior");
     behavior.append(&setting_row(
         "Claude Code agent _teams (experimental)",
-        "Expose Zentty's tmux-compatible team environment to newly created panes.",
+        "Expose Tornado TTY's tmux-compatible team environment to newly created panes.",
         &teams_switch,
     ));
     let status_item_switch = gtk::Switch::builder()
@@ -298,7 +298,7 @@ fn integration_detail(state: AgentIntegrationState, persistent: bool) -> &'stati
             "Unavailable on Linux; requested disabled and no installed hooks are claimed."
         }
         (false, AgentIntegrationState::On | AgentIntegrationState::Ask) => {
-            "Built in and enabled for newly created panes through Zentty's authenticated wrapper."
+            "Built in and enabled for newly created panes through Tornado TTY's authenticated wrapper."
         }
         (false, AgentIntegrationState::Off) => {
             "Built in but disabled; new panes use the agent executable directly."

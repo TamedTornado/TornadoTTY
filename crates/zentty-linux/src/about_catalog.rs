@@ -191,7 +191,7 @@ pub(crate) fn default_icon_paths(executable: &Path) -> Result<Vec<PathBuf>, Stri
 
 pub(crate) fn load_default_catalog() -> Result<LicenseCatalog, String> {
     let executable = std::env::current_exe()
-        .map_err(|error| format!("could not locate Zentty executable: {error}"))?;
+        .map_err(|error| format!("could not locate Tornado TTY executable: {error}"))?;
     let roots = default_notice_roots(&executable)?;
     load_catalog_from_roots(&roots, compiled_catalog_revision())
 }

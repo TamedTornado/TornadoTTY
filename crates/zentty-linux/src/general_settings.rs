@@ -119,7 +119,7 @@ const LIFECYCLE: &[BoolSpec] = &[
     BoolSpec {
         id: "confirm-quit",
         title: "Confirm before quitting",
-        subtitle: "Show a confirmation dialog when quitting Zentty.",
+        subtitle: "Show a confirmation dialog when quitting Tornado TTY.",
     },
     BoolSpec {
         id: "restore-workspace",

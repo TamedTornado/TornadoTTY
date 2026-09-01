@@ -310,7 +310,7 @@ fn prompt_text(
             "Close Window",
         ),
         CloseTarget::Application => (
-            "Quit Zentty?",
+            "Quit Tornado TTY?",
             "All windows, panes, and running processes will be terminated.",
             "Quit",
         ),

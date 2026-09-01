@@ -71,7 +71,7 @@ impl CustomSoundStore {
 
     pub(crate) fn path_for_name(name: &str) -> Result<PathBuf, String> {
         if !Self::is_custom_name(name) {
-            return Err("custom sound name is not a Zentty-owned asset".into());
+            return Err("custom sound name is not a Tornado TTY-owned asset".into());
         }
         let path = ensure_private_sounds_directory()?.join(name);
         let metadata = fs::symlink_metadata(&path)

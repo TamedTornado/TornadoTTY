@@ -284,7 +284,7 @@ pub(super) const ACTION_SPECS: &[ActionSpec] = &[
         "new-window",
         None,
         "New Window",
-        "Create another Zentty window",
+        "Create another Tornado TTY window",
         "application window",
         true
     ),
@@ -293,7 +293,7 @@ pub(super) const ACTION_SPECS: &[ActionSpec] = &[
         "close-window",
         None,
         "Close Window",
-        "Close this Zentty window",
+        "Close this Tornado TTY window",
         "application window",
         true
     ),
@@ -446,7 +446,7 @@ pub(super) const ACTION_SPECS: &[ActionSpec] = &[
         "show-agent-fleet",
         None,
         "Agent Status",
-        "Inspect agent activity across every Zentty window",
+        "Inspect agent activity across every Tornado TTY window",
         "fleet waiting running idle approval",
         true
     ),
@@ -697,7 +697,7 @@ pub(super) const ACTION_SPECS: &[ActionSpec] = &[
         None,
         MultipleWorkspacePanes,
         source_ui::MOVE_PANE_TO_NEW_WINDOW,
-        "Move the focused live terminal into a new Zentty window",
+        "Move the focused live terminal into a new Tornado TTY window",
         "pane terminal window detach",
         true
     ),
@@ -826,7 +826,7 @@ pub(super) const ACTION_SPECS: &[ActionSpec] = &[
         "copy-raw",
         None,
         "Copy Raw",
-        "Copy the selection without Zentty transformations",
+        "Copy the selection without Tornado TTY transformations",
         "clipboard selection original escape hatch",
         true
     ),

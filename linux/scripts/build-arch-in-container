@@ -12,7 +12,7 @@ fail() {
 for dependency in docker git jq; do
     command -v "${dependency}" >/dev/null || fail "${dependency} is required"
 done
-[[ -z "$(git -C "${repo_root}" status --porcelain=v1)" ]] || fail "Zentty checkout must be clean"
+[[ -z "$(git -C "${repo_root}" status --porcelain=v1)" ]] || fail "TornadoTTY checkout must be clean"
 jq -e '
   .schema_version == 1 and .status == "RATIFIED" and
   (.image | test("^archlinux@sha256:[0-9a-f]{64}$")) and

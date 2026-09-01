@@ -70,12 +70,12 @@ impl SystemdSleepInhibitor {
             .as_ref()
             .ok_or_else(|| "systemd-inhibit is not available".to_owned())?;
         let product = std::env::current_exe()
-            .map_err(|error| format!("could not resolve Zentty executable: {error}"))?;
+            .map_err(|error| format!("could not resolve Tornado TTY executable: {error}"))?;
         let mut child = Command::new(executable)
             .arg("--what=sleep")
             .arg("--mode=block")
-            .arg("--who=Zentty")
-            .arg("--why=Zentty agent is running")
+            .arg("--who=Tornado TTY")
+            .arg("--why=Tornado TTY agent is running")
             .arg(product)
             .arg(HELPER_ARGUMENT)
             .stdin(Stdio::piped())

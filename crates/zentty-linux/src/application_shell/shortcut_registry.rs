@@ -71,7 +71,7 @@ pub(crate) const COMMANDS: &[ShortcutCommandSpec] = &[
     command!(
         "command_palette.show",
         "Command Palette",
-        "Search and run Zentty commands.",
+        "Search and run Tornado TTY commands.",
         General,
         ACTION_SHOW_COMMAND_PALETTE,
         Some("command+shift+p")
@@ -79,7 +79,7 @@ pub(crate) const COMMANDS: &[ShortcutCommandSpec] = &[
     command!(
         "app.open_settings",
         "Open Settings",
-        "Open Zentty settings.",
+        "Open Tornado TTY settings.",
         General,
         ACTION_OPEN_SETTINGS,
         Some("command+,")
@@ -607,7 +607,7 @@ pub(crate) const COMMANDS: &[ShortcutCommandSpec] = &[
     command!(
         "app.new_window",
         "New Window",
-        "Create a new Zentty window.",
+        "Create a new Tornado TTY window.",
         General,
         ACTION_NEW_WINDOW,
         Some("command+shift+n")
@@ -615,7 +615,7 @@ pub(crate) const COMMANDS: &[ShortcutCommandSpec] = &[
     command!(
         "app.close_window",
         "Close Window",
-        "Close the active Zentty window.",
+        "Close the active Tornado TTY window.",
         General,
         ACTION_CLOSE_WINDOW,
         Some("command+shift+w")
@@ -631,7 +631,7 @@ pub(crate) const COMMANDS: &[ShortcutCommandSpec] = &[
     command!(
         "window.minimize",
         "Minimize Window",
-        "Minimize the active Zentty window through the compositor.",
+        "Minimize the active Tornado TTY window through the compositor.",
         General,
         ACTION_MINIMIZE_WINDOW,
         None

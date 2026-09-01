@@ -409,7 +409,7 @@ pub(super) fn choose_import(shell: &Rc<RefCell<ApplicationShell>>) {
     eprintln!("zentty-linux: bookmark-import-chooser-requested=true");
     let window = shell.borrow().window.clone();
     let dialog = gtk::FileDialog::builder()
-        .title("Import Zentty preset")
+        .title("Import Tornado TTY preset")
         .accept_label("Import")
         .modal(true)
         .build();
@@ -478,7 +478,7 @@ pub(super) fn choose_export(shell: &Rc<RefCell<ApplicationShell>>, template_id: 
     };
     let window = shell.borrow().window.clone();
     let dialog = gtk::FileChooserDialog::builder()
-        .title("Export Zentty preset")
+        .title("Export Tornado TTY preset")
         .action(gtk::FileChooserAction::Save)
         .transient_for(&window)
         .modal(true)

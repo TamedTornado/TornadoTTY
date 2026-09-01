@@ -32,7 +32,7 @@ case "${ID:-}" in
     *) fail "Arch or Omarchy build host is required; found ${ID:-unknown}" ;;
 esac
 [[ -z "$(git -C "${repo_root}" status --porcelain=v1)" ]] ||
-    fail "Zentty checkout must be clean"
+    fail "TornadoTTY checkout must be clean"
 zentty_revision="$(git -C "${repo_root}" rev-parse HEAD)"
 zentty_short="${zentty_revision:0:12}"
 source_date_epoch="$(git -C "${repo_root}" show -s --format=%ct HEAD)"

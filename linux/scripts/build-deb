@@ -24,9 +24,9 @@ for dependency in appstreamcli awk cargo cmp cut date desktop-file-validate \
 done
 
 [[ "$(dpkg --print-architecture)" == amd64 ]] || fail "host architecture must be amd64"
-[[ -z "$(git -C "${repo_root}" status --porcelain=v1)" ]] || fail "Zentty checkout must be clean"
+[[ -z "$(git -C "${repo_root}" status --porcelain=v1)" ]] || fail "TornadoTTY checkout must be clean"
 zentty_revision="$(git -C "${repo_root}" rev-parse HEAD)"
-[[ "${zentty_revision}" =~ ^[0-9a-f]{40}$ ]] || fail "invalid Zentty revision"
+[[ "${zentty_revision}" =~ ^[0-9a-f]{40}$ ]] || fail "invalid TornadoTTY source revision"
 zentty_short="${zentty_revision:0:12}"
 source_date_epoch="$(git -C "${repo_root}" show -s --format=%ct HEAD)"
 [[ "${source_date_epoch}" =~ ^[1-9][0-9]*$ ]] || fail "invalid source commit epoch"

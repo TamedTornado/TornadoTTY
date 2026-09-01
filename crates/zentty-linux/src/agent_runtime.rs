@@ -64,7 +64,7 @@ impl AgentRuntime {
             socket_path.display()
         );
         let cli_path = std::env::current_exe()
-            .map_err(|error| format!("could not resolve Zentty executable: {error}"))?
+            .map_err(|error| format!("could not resolve Tornado TTY executable: {error}"))?
             .with_file_name("zentty");
         let wrapper_root = cli_path
             .parent()

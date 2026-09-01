@@ -191,9 +191,9 @@ fn error_reporting_row(
                 show_notice(
                     &parent,
                     if next.enabled {
-                        "Local crash capture will be enabled after restarting Zentty. Reports remain on this device until you review and explicitly submit them."
+                        "Local crash capture will be enabled after restarting Tornado TTY. Reports remain on this device until you review and explicitly submit them."
                     } else {
-                        "Automatic local crash capture will be disabled after restarting Zentty. Existing local reports are not sent or removed."
+                        "Automatic local crash capture will be disabled after restarting Tornado TTY. Existing local reports are not sent or removed."
                     },
                 );
             }
@@ -399,7 +399,7 @@ fn connect_report_review_actions(
         heading.set_halign(gtk::Align::Start);
         content.append(&heading);
         let detail = gtk::Label::new(Some(
-            "Only the payload currently shown will be sent to the configured Zentty support endpoint.",
+            "Only the payload currently shown will be sent to the configured Tornado TTY support endpoint.",
         ));
         detail.set_halign(gtk::Align::Start);
         detail.set_wrap(true);

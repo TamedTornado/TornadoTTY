@@ -192,7 +192,7 @@ impl TmuxCompatProduct {
         if parsed.value("-c").is_some() || parsed.value("-e").is_some() {
             return Err((
                 "unsupported",
-                "respawn-pane -c and -e are not supported by Zentty".to_owned(),
+                "respawn-pane -c and -e are not supported by Tornado TTY".to_owned(),
             ));
         }
         if delimited_command.is_some() && !parsed.positionals().is_empty() {

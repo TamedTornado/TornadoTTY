@@ -121,7 +121,7 @@ fn visible_pane_row(
     set_row_margins(&row);
     let labels = row_labels(
         "_Notify when pane is visible",
-        "Show desktop notifications when the pane is already displayed in a non-minimized Zentty window.",
+        "Show desktop notifications when the pane is already displayed in a non-minimized Tornado TTY window.",
     );
     labels.set_hexpand(true);
     row.append(&labels);

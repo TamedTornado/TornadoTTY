@@ -32,7 +32,7 @@ pub(crate) fn default_diagnostic_store() -> Result<DiagnosticStore, String> {
 pub(crate) fn create_manual_report() -> Result<DiagnosticReport, String> {
     create_report(
         DiagnosticReason::ManualSupport,
-        "The user explicitly created a local Zentty support report.",
+        "The user explicitly created a local Tornado TTY support report.",
     )
 }
 

@@ -869,7 +869,9 @@ fn assign(state: &Rc<RefCell<ViewState>>, shortcut: Option<KeyboardShortcut>) {
             state.selected = selected;
             state.recording = false;
             state.pending_conflict = None;
-            state.physical.set_text("Saved to Zentty configuration.");
+            state
+                .physical
+                .set_text("Saved to Tornado TTY configuration.");
             eprintln!(
                 "zentty-linux: shortcut-settings saved command={} value={}",
                 state.selected,
@@ -960,7 +962,7 @@ enum Preset {
 }
 
 const GHOSTTY_PRESET_REVISION: &str = "eb1eb6281466ee7e85f629012ac77de7d9cac712";
-const GHOSTTY_PRESET_CONFIRMATION: &str = "This replaces all current shortcut bindings with Linux Ghostty-compatible shortcuts while keeping non-conflicting Zentty actions.";
+const GHOSTTY_PRESET_CONFIRMATION: &str = "This replaces all current shortcut bindings with Linux Ghostty-compatible shortcuts while keeping non-conflicting Tornado TTY actions.";
 
 fn confirm_ghostty_preset(window: &gtk::Window, state: &Rc<RefCell<ViewState>>) {
     let dialog = gtk::AlertDialog::builder()
@@ -1191,7 +1193,7 @@ fn toml_string(value: &str) -> String {
 
 fn choose_export(window: &gtk::Window, state: &Rc<RefCell<ViewState>>) {
     let chooser = gtk::FileDialog::builder()
-        .title("Export Zentty Shortcuts")
+        .title("Export Tornado TTY Shortcuts")
         .accept_label("Export")
         .initial_name("zentty-shortcuts.toml")
         .modal(true)
@@ -1237,7 +1239,7 @@ fn choose_export(window: &gtk::Window, state: &Rc<RefCell<ViewState>>) {
 
 fn choose_import(window: &gtk::Window, state: &Rc<RefCell<ViewState>>) {
     let chooser = gtk::FileDialog::builder()
-        .title("Import Zentty Shortcuts")
+        .title("Import Tornado TTY Shortcuts")
         .accept_label("Import")
         .modal(true)
         .build();

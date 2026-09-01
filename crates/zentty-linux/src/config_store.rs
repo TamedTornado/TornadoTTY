@@ -604,7 +604,7 @@ impl ConfigStore {
 
     pub(crate) fn update_default_ghostty_theme(spec: &ThemeSpec) -> Result<PathBuf, String> {
         let executable = std::env::current_exe()
-            .map_err(|error| format!("could not locate Zentty executable: {error}"))?;
+            .map_err(|error| format!("could not locate Tornado TTY executable: {error}"))?;
         let (bundled, user) = crate::theme_catalog::default_theme_directories(
             &executable,
             std::env::var_os("XDG_CONFIG_HOME").as_deref(),
@@ -794,7 +794,7 @@ fn fallback_theme_publication_error(error: &std::io::Error, target: &Path) -> St
 
 fn default_theme_resource_path() -> Result<PathBuf, String> {
     let executable = std::env::current_exe()
-        .map_err(|error| format!("could not locate Zentty executable: {error}"))?;
+        .map_err(|error| format!("could not locate Tornado TTY executable: {error}"))?;
     let prefix = executable.parent().and_then(Path::parent).ok_or_else(|| {
         format!(
             "{} executable has no install prefix: {}",
@@ -1047,14 +1047,14 @@ fn read_config_contents(path: &Path) -> Result<ConfigContents, String> {
         Err(error) if error.kind() == ErrorKind::NotFound => return Ok(ConfigContents::Missing),
         Err(error) => {
             return Err(format!(
-                "could not read Zentty configuration {}: {error}",
+                "could not read Tornado TTY configuration {}: {error}",
                 path.display()
             ));
         }
     };
     let metadata = file.metadata().map_err(|error| {
         format!(
-            "could not inspect Zentty configuration {}: {error}",
+            "could not inspect Tornado TTY configuration {}: {error}",
             path.display()
         )
     })?;
@@ -1070,7 +1070,7 @@ fn read_config_contents(path: &Path) -> Result<ConfigContents, String> {
         Err(BoundedReadError::TooLarge) => return Ok(ConfigContents::Invalid),
         Err(BoundedReadError::Io(error)) => {
             return Err(format!(
-                "could not read Zentty configuration {}: {error}",
+                "could not read Tornado TTY configuration {}: {error}",
                 path.display()
             ));
         }
@@ -1110,7 +1110,7 @@ fn invalid_snapshot(path: PathBuf) -> ConfigSnapshot {
 
 fn content_safe_invalid_warning(path: &Path) -> String {
     format!(
-        "ignored invalid Zentty configuration {}: size, encoding, parse, or known-value validation failed",
+        "ignored invalid Tornado TTY configuration {}: size, encoding, parse, or known-value validation failed",
         path.display()
     )
 }
@@ -1131,7 +1131,7 @@ fn ensure_private_config_parent(path: &Path) -> Result<(), String> {
     match fs::symlink_metadata(parent) {
         Ok(metadata) if metadata.file_type().is_symlink() => {
             return Err(format!(
-                "refusing symlinked Zentty configuration directory: {}",
+                "refusing symlinked Tornado TTY configuration directory: {}",
                 parent.display()
             ));
         }
@@ -1179,7 +1179,7 @@ fn default_config_file_from(
         home,
         Path::new("zentty/config.toml"),
     )
-    .map_err(|error| format!("could not resolve Zentty config: {error}"))
+    .map_err(|error| format!("could not resolve Tornado TTY config: {error}"))
 }
 
 fn default_ghostty_config_file_from(
@@ -1897,7 +1897,7 @@ mod tests {
         let snapshot = ConfigStore::load(path).unwrap();
         assert!(!snapshot.config.clipboard.always_clean_copies);
         let warning = snapshot.warning.unwrap();
-        assert!(warning.contains("ignored invalid Zentty configuration"));
+        assert!(warning.contains("ignored invalid Tornado TTY configuration"));
         assert!(!warning.contains(secret));
         remove(&root);
     }

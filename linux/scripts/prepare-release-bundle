@@ -26,7 +26,7 @@ for input in "${deb}" "${deb_manifest}" "${deb_provenance}" "${arch}" \
     [[ -f "${input}" ]] || fail "release input is missing: ${input}"
 done
 [[ -z "$(git -C "${repo_root}" status --porcelain=v1)" ]] ||
-    fail "Zentty checkout must be clean"
+    fail "TornadoTTY checkout must be clean"
 
 identity="$("${repo_root}/linux/scripts/release-version" "${tag}")"
 version="$(jq -r '.version' <<<"${identity}")"

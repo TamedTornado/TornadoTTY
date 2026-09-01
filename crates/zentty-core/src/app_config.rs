@@ -197,7 +197,7 @@ impl AppConfig {
     /// Returns an error when TOML syntax or any known setting value is invalid.
     pub fn parse_toml(source: &str) -> Result<Self, String> {
         let document = toml::from_str::<Document>(source)
-            .map_err(|error| format!("invalid Zentty configuration: {error}"))?;
+            .map_err(|error| format!("invalid Tornado TTY configuration: {error}"))?;
         Ok(Self {
             sidebar: document.sidebar.into_config()?,
             appearance: document.appearance.into_config()?,
@@ -231,7 +231,7 @@ impl AppConfig {
     /// Returns a content-safe error when the document is not valid TOML.
     pub fn parse_toml_partial(source: &str, last_good: &Self) -> Result<PartialAppConfig, String> {
         let table = toml::from_str::<toml::Table>(source)
-            .map_err(|_| "invalid Zentty configuration syntax".to_owned())?;
+            .map_err(|_| "invalid Tornado TTY configuration syntax".to_owned())?;
         let mut retained_sections = Vec::new();
 
         macro_rules! section {
