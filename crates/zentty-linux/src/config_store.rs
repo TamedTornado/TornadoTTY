@@ -1604,6 +1604,7 @@ mod tests {
                 "confirm_before_quitting = true\n",
                 "[restore]\n",
                 "restore_workspace_on_launch = true\n",
+                "start_restored_sessions_in_background = false\n",
                 "[clipboard]\n",
                 "always_clean_copies = false\n",
                 "flatten_multi_line_commands = true\n",

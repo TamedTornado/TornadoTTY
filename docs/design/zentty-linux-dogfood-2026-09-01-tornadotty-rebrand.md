@@ -189,6 +189,11 @@
   8 action-router, 2 shortcut-registry, 5 bookmark, 3 close-runtime, and 2
   updates/privacy tests; real X11 window identity; real X11 About/licenses;
   real X11 notifications/settings.
-- The focused config-store module run remained **39 PASS, 1 FAIL** at the
-  previously documented exact-maximum rewrite boundary. It was neither caused
-  nor hidden by this rebrand work and is not counted as a rebrand pass.
+- The focused config-store module initially remained **39 PASS, 1 FAIL** at the
+  exact-maximum rewrite boundary. Inspection showed a stale fixture rather than
+  a product-size exception: its 1 MiB source omitted the newer
+  `start_restored_sessions_in_background` field, so a General-settings rewrite
+  correctly added that owned field and refused to publish the resulting
+  over-limit document. The fixture now includes every General-owned field,
+  keeping the exact-limit rewrite size-neutral while retaining the one-byte-over
+  rejection. PASS: the complete config-store module now runs **40/40**.
