@@ -174,3 +174,35 @@ classification, and pins the category arithmetic. It passed directly and as
 part of `qualification-matrix-test`. The audit prioritizes source-text parity
 snapshots, the six largest inline cohorts, widget-smoke migration boundaries,
 and presentation-contract mutation.
+
+## Public tracker reconciliation
+
+The open tracker was reviewed against issue acceptance criteria, commits, and
+recorded real-system receipts rather than age or unchecked boxes.
+
+- Rebrand epic GH-144 closed after current `rebrand-identity-policy-test` and
+  `rebrand-identity-policy` passed. The latter governs 12 identity boundaries.
+  The withdrawn release remains absent; release-tag qualification is separate.
+- Visible-pane notification GH-140 closed on its existing real two-window GTK
+  and private-D-Bus evidence. It no longer waits solely for subjective human
+  review; later dogfood may open a concrete defect.
+- AT-SPI terminal-role GH-141 remains open because its required external,
+  exact-PID installed-product receipt has not succeeded. An in-process GTK
+  assertion was not promoted to equivalent evidence.
+- False paired Codex notification GH-143 previously had an empty body. It now
+  records the observed timestamp/pairing, separates agent-state correctness
+  from GH-140 delivery policy, and has deterministic acceptance criteria that
+  reject timer/debounce masking.
+- Enhancement ledger GH-137 remains open for the fresh upstream comparison and
+  explicitly authorized communication batch; no upstream contact occurred.
+- Stable-Cargo migration GH-96 remains deferred. On 2026-09-01 the official
+  Cargo tracking issue remained open and the Cargo Book still classified
+  `min-publish-age` as unstable; the reviewed nightly enforcement therefore
+  remains necessary.
+- Testing epic GH-145 now explicitly records GH-147 and GH-150 closed, GH-146
+  active, and GH-148/GH-149 genuinely pending.
+
+The resulting open list contains three explicitly deferred enhancements, the
+stable-Cargo follow-up, the enhancement register, two real product bugs, and
+the testing epic with its three unfinished children. No issue was closed by
+weakening its acceptance criteria.
