@@ -154,9 +154,25 @@ family artifact, and each package is then exercised on its native family.
   `contents: write`. Every action is pinned to a full reviewed commit. The same
   bundle validator and publisher are usable locally, so GitHub Actions checks
   and transports artifacts but is not a release-qualification authority.
-- Publication and a real tagged release artifact are still outstanding. A
-  missing or environmentally blocked journey remains explicit and will not be
-  converted into a pass.
+- Publication completed as the GitHub prerelease `linux-v0.1.1` from Zentty
+  revision `c27e0b3505c30903eb96e563f47bfaab4744b8a8` and Ghostty revision
+  `bab8c088f45e47a00ce3bfe2c142d6cb51ecd200`. The public release contains the
+  native Ubuntu/Debian and Omarchy/Arch packages, both expanded manifests, both
+  provenance receipts, aggregate checksums, and release metadata.
+- The final Debian artifact passed its nine-transition disposable-root
+  lifecycle. The final Omarchy artifact passed native pacman installation over
+  retained dogfood version `0.1.0+gitbe70cf5e77af-1`, installed-product help,
+  and uninstall; its receipt explicitly records `upgrade_direction_verified`
+  and an unchanged host package-database fingerprint.
+- Reconstructing the user-local Omarchy release environment over SSH exposed
+  three caller preconditions before compilation: the isolated Rust paths,
+  repository working directory, and explicit Zig path. Each attempt failed at
+  preflight and was not treated as qualification. The manual build was rerun
+  with the dated Rust toolchain, Cargo home, reviewed Zig 0.16 binary, and
+  repository root explicit. The checked-in workflow already invokes its
+  builder from the checkout root; making the native script independent of its
+  caller's current directory remains a tooling-hardening opportunity rather
+  than a product qualification claim.
 
 ## Release-version ordering repair
 
