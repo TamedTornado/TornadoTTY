@@ -69,7 +69,7 @@
 ## Repository and package identity
 
 - Jason renamed the downstream repository to
-  `https://github.com/TamedTornado/tornadotty`. The local `origin`, active
+  `https://github.com/TamedTornado/TornadoTTY`. The local `origin`, active
   source links, package metadata, release publisher, and operator instructions
   now target that repository; `upstream` remains `dedene/zentty`.
 - Debian and Arch package policy now advertise `tornadotty`. Their primary

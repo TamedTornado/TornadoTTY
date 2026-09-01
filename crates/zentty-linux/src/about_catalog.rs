@@ -441,7 +441,7 @@ mod tests {
 
     fn catalog(entry: &str) -> String {
         format!(
-            r#"{{"schema_version":1,"generated_from":{{"zentty":{{"repository":"https://github.com/TamedTornado/tornadotty","revision":"{revision}"}},"ghostty":{{"repository":"https://github.com/TamedTornado/ghostty","revision":"{revision}"}}}},"entries":[{entry}]}}"#,
+            r#"{{"schema_version":1,"generated_from":{{"zentty":{{"repository":"https://github.com/TamedTornado/TornadoTTY","revision":"{revision}"}},"ghostty":{{"repository":"https://github.com/TamedTornado/ghostty","revision":"{revision}"}}}},"entries":[{entry}]}}"#,
             revision = "a".repeat(40)
         )
     }
@@ -619,7 +619,7 @@ mod tests {
         let valid = catalog(valid_entry());
         for invalid in [
             valid.replacen(
-                "https://github.com/TamedTornado/tornadotty",
+                "https://github.com/TamedTornado/TornadoTTY",
                 "http://example.invalid/zentty",
                 1,
             ),

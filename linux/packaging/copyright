@@ -1,6 +1,6 @@
 Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
 Upstream-Name: Zentty
-Source: https://github.com/TamedTornado/tornadotty
+Source: https://github.com/TamedTornado/TornadoTTY
 Comment: Machine-readable dependency license metadata and the corresponding
  source-shipped notice texts are installed under
  /usr/share/doc/tornadotty/third-party.

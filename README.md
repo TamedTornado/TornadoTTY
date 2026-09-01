@@ -11,7 +11,7 @@
 
 <p align="center">
   <a href="#install-on-ubuntu-2404">Install</a> ·
-  <a href="https://github.com/TamedTornado/tornadotty/releases">Releases</a> ·
+  <a href="https://github.com/TamedTornado/TornadoTTY/releases">Releases</a> ·
   <a href="#build-and-run-for-development">Build</a> ·
   <a href="#project-status">Status</a> ·
   <a href="docs/cli.md">CLI</a> ·
@@ -81,14 +81,14 @@ but it has not yet published a signed stable Linux release.
   qualification.
 
 Open work is tracked in the fork's
-[GitHub issues](https://github.com/TamedTornado/tornadotty/issues). The machine-readable
+[GitHub issues](https://github.com/TamedTornado/TornadoTTY/issues). The machine-readable
 qualification authority is
 [`linux/qualification-matrix.json`](linux/qualification-matrix.json).
 
 ## Install on Ubuntu 24.04
 
 Download the latest Linux prerelease `.deb` and `SHA256SUMS` from the
-[GitHub Releases page](https://github.com/TamedTornado/tornadotty/releases), verify
+[GitHub Releases page](https://github.com/TamedTornado/TornadoTTY/releases), verify
 it, and install it with APT:
 
 ```bash
@@ -101,7 +101,7 @@ Launch Tornado TTY from the desktop application menu or run `tornadotty`.
 ## Install on Omarchy 4
 
 Download the latest `.pkg.tar.zst` and `SHA256SUMS` from the
-[GitHub Releases page](https://github.com/TamedTornado/tornadotty/releases), then:
+[GitHub Releases page](https://github.com/TamedTornado/TornadoTTY/releases), then:
 
 ```bash
 sha256sum --check --ignore-missing SHA256SUMS

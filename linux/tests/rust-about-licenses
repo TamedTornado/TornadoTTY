@@ -162,7 +162,7 @@ zentty_product_wait_for_log "${log}" 'zentty-linux: about-focus widget=about-ope
 key Return
 for _ in {1..100}; do [[ -s "${link_receipt}" ]] && break; sleep 0.05; done
 [[ "$(cat "${link_receipt}" 2>/dev/null || true)" == \
-   'https://github.com/TamedTornado/tornadotty' ]] ||
+   'https://github.com/TamedTornado/TornadoTTY' ]] ||
     fail "source action did not open the exact reviewed URI through the controlled handler"
 
 focus_about_x11 || fail "About could not regain focus after the controlled URI action"

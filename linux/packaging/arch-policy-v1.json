@@ -7,7 +7,7 @@
   "supported_distribution": "Omarchy",
   "supported_major": 4,
   "package_description": "Terminal workspace for coding agents",
-  "url": "https://github.com/TamedTornado/tornadotty",
+  "url": "https://github.com/TamedTornado/TornadoTTY",
   "license": "GPL-3.0-only",
   "private_libraries": [
     "libghostty-gtk-embed.so",

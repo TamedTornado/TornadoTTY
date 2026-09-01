@@ -18,7 +18,7 @@
   <provides>
     <binary>tornadotty</binary>
   </provides>
-  <url type="homepage">https://github.com/TamedTornado/tornadotty</url>
+  <url type="homepage">https://github.com/TamedTornado/TornadoTTY</url>
   <releases>
     <release version="0.1.0" date="2026-08-17"/>
   </releases>

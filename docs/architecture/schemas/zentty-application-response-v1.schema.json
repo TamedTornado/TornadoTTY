@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/TamedTornado/tornadotty/blob/linux/port/docs/architecture/schemas/zentty-application-response-v1.schema.json",
+  "$id": "https://github.com/TamedTornado/TornadoTTY/blob/linux/port/docs/architecture/schemas/zentty-application-response-v1.schema.json",
   "title": "Zentty application response v1",
   "type": "object",
   "additionalProperties": false,

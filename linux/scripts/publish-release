@@ -10,7 +10,7 @@ fail() {
 tag="$1"
 bundle="$(readlink -f -- "$2")"
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-repository=TamedTornado/tornadotty
+repository=TamedTornado/TornadoTTY
 for dependency in gh git jq readlink sha256sum; do
     command -v "${dependency}" >/dev/null || fail "${dependency} is required"
 done
