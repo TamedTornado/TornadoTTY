@@ -39,9 +39,9 @@ safe ownership, product policy, and orchestration stay in Zentty.
 |---|---|
 | Official repository | `ghostty-org/ghostty` |
 | Current official base | `6dcf68fc0b12e8caebbfc43770d66edac124b4f8` |
-| Downstream candidate branch | `TamedTornado/ghostty:linux/context-menu-model` |
-| Qualified candidate tip | `eb1eb6281466ee7e85f629012ac77de7d9cac712` |
-| Downstream commits | 34 |
+| Downstream candidate branch | `TamedTornado/ghostty:zentty/gcc16-host-helpers` |
+| Qualified candidate tip | `bab8c088f45e47a00ce3bfe2c142d6cb51ecd200` |
+| Downstream commits | 35 |
 
 The previous pin was rebased rather than merged. Two Ghostty-local commits that
 only added Zentty policy to `AGENTS.md` were deliberately dropped. The candidate

@@ -17,9 +17,9 @@
     "official_repository": "https://github.com/ghostty-org/ghostty.git",
     "fork_repository": "https://github.com/TamedTornado/ghostty.git",
     "official_base": "6dcf68fc0b12e8caebbfc43770d66edac124b4f8",
-    "candidate_branch": "linux/context-menu-model",
-    "head": "eb1eb6281466ee7e85f629012ac77de7d9cac712",
-    "downstream_commit_count": 34
+    "candidate_branch": "zentty/gcc16-host-helpers",
+    "head": "bab8c088f45e47a00ce3bfe2c142d6cb51ecd200",
+    "downstream_commit_count": 35
   },
   "patch_series": [
     {
@@ -63,6 +63,13 @@
       "last": "eb1eb6281466ee7e85f629012ac77de7d9cac712",
       "purpose": "Let an alternate GTK host supply a GMenuModel while Ghostty retains native right-click and popover lifecycle ownership.",
       "upstream_disposition": "small generic embedding operation suitable for a separately approved proposal"
+    },
+    {
+      "id": "gcc16-host-helper-linker",
+      "first": "bab8c088f45e47a00ce3bfe2c142d6cb51ecd200",
+      "last": "bab8c088f45e47a00ce3bfe2c142d6cb51ecd200",
+      "purpose": "Use Zig's LLVM linker for the two native GTK build helpers so GCC 16 .sframe startup objects link correctly.",
+      "upstream_disposition": "two-line generic build fix suitable for independent upstream review"
     }
   ],
   "changed_files": [
@@ -79,6 +86,7 @@
     {"status":"M","path":"src/apprt/gtk/class/global_shortcuts.zig","owner":"ghostty-runtime","purpose":"Avoid default-application assumptions for alternate GTK hosts.","tests":["linux/tests/rust-closed-pane-restore"]},
     {"status":"M","path":"src/apprt/gtk/class/surface.zig","owner":"ghostty-runtime","purpose":"Explicit application ownership, child environment, progress/notification signals, safe IME focus lifecycle, and host menu projection.","tests":["linux/tests/rust-agent-ipc","linux/tests/controlled-ibus-x11","linux/tests/controlled-fcitx","linux/tests/rust-pane-search"]},
     {"status":"M","path":"src/build/SharedDeps.zig","owner":"ghostty-build","purpose":"Link GTK runtime dependencies and map bundled source paths reproducibly.","tests":["zig build gtk-embed-lib","linux/tests/debian-package-clean-checkout"]},
+    {"status":"M","path":"src/build/GhosttyResources.zig","owner":"ghostty-build","purpose":"Use the LLVM linker for the native build-data helper on GCC 16 hosts.","tests":["linux/scripts/build-arch-package"]},
     {"status":"A","path":"src/gtk_embed_lib.version-script","owner":"ghostty-abi","purpose":"Allowlist the exact fourteen product-used symbols under one ELF version node.","tests":["linux/tests/abi-surface","linux/tests/abi-version-node"]},
     {"status":"A","path":"src/gtk_embed_lib.zig","owner":"ghostty-abi","purpose":"Opaque runtime and fourteen language-neutral embedding operations.","tests":["linux/tests/api-contract.c","linux/tests/runtime-init-order","linux/tests/ghostty-api-audit"]},
     {"status":"A","path":"src/gtk_embed_options.zig","owner":"ghostty-abi","purpose":"Size-versioned copied surface option validation.","tests":["zig build gtk-embed-lib-test","linux/tests/api-contract.c"]},

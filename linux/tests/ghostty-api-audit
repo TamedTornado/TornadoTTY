@@ -49,7 +49,7 @@ jq -e '
         (.last | test("^[0-9a-f]{40}$")) and
         (.purpose | length) > 0 and
         (.upstream_disposition | length) > 0) and
-    (.changed_files | length) == 19 and
+    (.changed_files | length) == 20 and
     ([.changed_files[].path] | length == (unique | length)) and
     all(.changed_files[];
         (.status == "A" or .status == "M") and
@@ -170,7 +170,7 @@ while IFS=$'\t' read -r id status; do
     ' "${matrix}" >/dev/null || fail "qualification cell differs from audit: ${id}"
 done < <(jq -r '.qualification_cells[] | [.id, .status] | @tsv' "${inventory}")
 
-pass_message="Ghostty API audit passed: current official base, 19 reviewed files, 14 product-used exports, fixed-width backend ABI, no Zentty policy in Ghostty, downstream maintenance decision recorded"
+pass_message="Ghostty API audit passed: current official base, 20 reviewed files, 14 product-used exports, fixed-width backend ABI, no Zentty policy in Ghostty, downstream maintenance decision recorded"
 echo "${pass_message}"
 
 if [[ "${mode}" == "--self-test" ]]; then

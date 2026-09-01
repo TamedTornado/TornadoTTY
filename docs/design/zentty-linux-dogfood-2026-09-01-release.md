@@ -37,6 +37,11 @@
 4. Do not implement automatic in-app updates as part of this work; GH-75
    remains separate.
 
+The real Omarchy host is also the authoritative Arch build host. Treating it
+only as a post-build install target added a container boundary without adding
+evidence. Ubuntu builds the Debian family artifact; Omarchy builds the Arch
+family artifact, and each package is then exercised on its native family.
+
 ## Portability repair
 
 - The reviewed Apache-2.0 and MPL-2.0 texts are now package inputs rather than
@@ -65,12 +70,16 @@
   both Ghostty build-data helpers. Product compilation had not started; the
   repeated error was an exact toolchain boundary rather than a product test
   failure.
-- Updating or patching the pinned Zig compiler would make the two package
-  families diverge. Instead, the Arch build now selects the explicit
-  `x86_64-linux-gnu` Ghostty target. Zig supplies its pinned GNU CRT while the
-  build continues to compile and link against the real Arch GTK stack.
-  `build-local` exposes this only through a validated optional target argument;
-  the existing Ubuntu build remains native and unchanged.
+- An attempted explicit `x86_64-linux-gnu` target did not repair the build.
+  Ghostty's two generators remain host-native, while the cross-target library
+  also loses native GTK discovery. The workaround was removed rather than
+  retained as dead configuration.
+- Ghostty commit `bab8c088f45e47a00ce3bfe2c142d6cb51ecd200` instead selects
+  its already-supported LLVM linker for exactly the two failing host helpers.
+  This is a two-line, product-neutral build repair; the product and its GTK
+  dependencies remain native. The authoritative Arch artifact will be built
+  on the real Omarchy host, not relabeled from Ubuntu or treated as passing
+  because a container happened to compile it.
 - Node and pnpm were removed from the Arch build environment after the first
   package transaction proved that no JavaScript tool participates in native
   construction. This reduces the release build closure rather than installing
