@@ -74,7 +74,13 @@ cmp -s "${temporary}/archive-paths" "${temporary}/manifest-paths" ||
 while IFS= read -r path; do
     absolute="${temporary}${path}"
     if file "${absolute}" | grep -Fq ELF; then
-        if strings "${absolute}" | grep -Eq '/home/|/tmp/|/build/linux-arch-package'; then
+        # Match concrete absolute build paths, not literal path-pattern data
+        # such as the application's cross-platform `/home//Users/` scanner.
+        # Do not use grep -q here: with pipefail it can close the pipe early
+        # and turn a real match into a false negative when strings gets SIGPIPE.
+        if strings "${absolute}" |
+            grep -E '/home/[[:alnum:]_.-]+/|/tmp/[[:alnum:]_.-]+|/build/linux-arch-package' \
+                >/dev/null; then
             fail "build path leaked into ELF: ${path}"
         fi
     fi

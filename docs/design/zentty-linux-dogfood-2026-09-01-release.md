@@ -175,3 +175,12 @@ family artifact, and each package is then exercised on its native family.
   unless it is strictly newer than the installed fixture. Receipts expose that
   ordering assertion rather than inferring upgrade direction from a command
   name.
+- The final cross-host bundle audit rejected the native Arch binary because it
+  contains the application's legitimate cross-platform scanner token
+  `/home//Users/unsafe`. The Arch-host audit had incorrectly passed the same
+  bytes: `grep -q` closed its `strings` pipeline early and, under `pipefail`,
+  converted the match into a false negative when `strings` received SIGPIPE.
+  The audit now matches concrete home/tmp build paths rather than a bare
+  `/home/` token and consumes the complete pipeline. Positive and negative ELF
+  fixtures prove both that the application token is allowed and a real source
+  path remains rejected even with substantial data after the match.
