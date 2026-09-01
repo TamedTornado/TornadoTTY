@@ -1,0 +1,139 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+fail() {
+    echo "arch-package-lifecycle: error: $*" >&2
+    exit 1
+}
+
+[[ "$#" -eq 3 || "$#" -eq 4 ]] ||
+    fail "usage: $0 PACKAGE MANIFEST PROVENANCE [PREVIOUS_PACKAGE]"
+
+package="$(readlink -f -- "$1")"
+manifest="$(readlink -f -- "$2")"
+provenance="$(readlink -f -- "$3")"
+previous_package="${4:-}"
+[[ -z "${previous_package}" ]] || previous_package="$(readlink -f -- "${previous_package}")"
+
+for dependency in awk bsdtar cp find grep head jq mktemp pacman readlink sed \
+    sha256sum sort unshare xargs; do
+    command -v "${dependency}" >/dev/null || fail "${dependency} is required"
+done
+for input in "${package}" "${manifest}" "${provenance}"; do
+    [[ -f "${input}" ]] || fail "input is missing: ${input}"
+done
+[[ -z "${previous_package}" || -f "${previous_package}" ]] ||
+    fail "previous package is missing: ${previous_package}"
+repo_root="${ZENTTY_REPO_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"
+
+if [[ "${ZENTTY_ARCH_LIFECYCLE_NAMESPACE_ROOT:-false}" != true ]]; then
+    lifecycle_arguments=("${package}" "${manifest}" "${provenance}")
+    [[ -z "${previous_package}" ]] || lifecycle_arguments+=("${previous_package}")
+    exec unshare -Ur -- env ZENTTY_ARCH_LIFECYCLE_NAMESPACE_ROOT=true \
+        ZENTTY_ARCH_LIFECYCLE_RECEIPT="${ZENTTY_ARCH_LIFECYCLE_RECEIPT:-}" \
+        ZENTTY_REPO_ROOT="${repo_root}" \
+        "${BASH_SOURCE[0]}" "${lifecycle_arguments[@]}"
+fi
+
+[[ -d "${repo_root}/.git" ]] || fail "Zentty repository root is invalid: ${repo_root}"
+# shellcheck disable=SC1091
+source /etc/os-release
+[[ "${ID:-}" == omarchy || "${ID:-}" == arch ]] ||
+    fail "Arch or Omarchy host is required"
+
+"${repo_root}/linux/tests/arch-package-audit" \
+    "${package}" "${manifest}" "${provenance}" >/dev/null
+
+temporary="$(mktemp -d)"
+trap 'rm -rf -- "${temporary}"' EXIT
+root="${temporary}/root"
+database="${root}/var/lib/pacman"
+cache="${root}/var/cache/pacman/pkg"
+config="${temporary}/pacman.conf"
+log="${temporary}/pacman.log"
+mkdir -p -- "${database}" "${cache}"
+cp -a --no-preserve=ownership -- /var/lib/pacman/local "${database}/"
+cat >"${config}" <<'EOF'
+[options]
+Architecture = auto
+SigLevel = Required DatabaseOptional
+LocalFileSigLevel = Optional
+EOF
+
+database_fingerprint() {
+    find /var/lib/pacman/local -type f -print0 |
+        LC_ALL=C sort -z |
+        xargs -0 sha256sum |
+        sha256sum |
+        awk '{print $1}'
+}
+
+package_version() {
+    bsdtar -xOf "$1" .PKGINFO |
+        sed -n 's/^pkgver = //p' |
+        head -1
+}
+
+pacman_root() {
+    pacman --config "${config}" --root "${root}" --dbpath "${database}" \
+        --cachedir "${cache}" "$@"
+}
+
+host_database_before="$(database_fingerprint)"
+previous_version=null
+if [[ -n "${previous_package}" ]]; then
+    previous_version="$(package_version "${previous_package}")"
+    [[ "${previous_version}" != "$(package_version "${package}")" ]] ||
+        fail "upgrade fixture and current package have the same version"
+    pacman_root --noconfirm -U "${previous_package}" >>"${log}" 2>&1
+    [[ "$(pacman_root -Q zentty | awk '{print $2}')" == "${previous_version}" ]] ||
+        fail "previous package did not install at its declared version"
+fi
+
+pacman_root --noconfirm -U "${package}" >>"${log}" 2>&1
+current_version="$(jq -r '.package_version + "-1"' "${provenance}")"
+[[ "$(pacman_root -Q zentty | awk '{print $2}')" == "${current_version}" ]] ||
+    fail "current package did not install at its provenance version"
+pacman_root -Qkk zentty >>"${log}" 2>&1
+grep -Fq '0 altered files' "${log}" || fail "installed package payload differs"
+
+help_output="${temporary}/help"
+LD_LIBRARY_PATH="${root}/usr/lib/zentty/lib" \
+    "${root}/usr/lib/zentty/bin/zentty-linux" --help >"${help_output}"
+grep -Fxq 'Usage: zentty-linux [OPTIONS]' "${help_output}" ||
+    fail "installed application help contract failed"
+
+pacman_root --noconfirm -R zentty >>"${log}" 2>&1
+if pacman_root -Q zentty >/dev/null 2>&1; then
+    fail "package remains registered after uninstall"
+fi
+while IFS= read -r path; do
+    [[ ! -e "${root}${path}" && ! -L "${root}${path}" ]] ||
+        fail "owned path remains after uninstall: ${path}"
+done < <(jq -r '.files[].path' "${manifest}")
+host_database_after="$(database_fingerprint)"
+[[ "${host_database_before}" == "${host_database_after}" ]] ||
+    fail "host pacman database changed during disposable lifecycle"
+
+receipt="${ZENTTY_ARCH_LIFECYCLE_RECEIPT:-${package%.pkg.tar.zst}.lifecycle.json}"
+jq -n \
+    --arg package "$(basename "${package}")" \
+    --arg package_sha256 "$(sha256sum "${package}" | awk '{print $1}')" \
+    --arg current_version "${current_version}" \
+    --arg previous_version "${previous_version}" \
+    --arg help_sha256 "$(sha256sum "${help_output}" | awk '{print $1}')" \
+    --arg host_database_sha256 "${host_database_after}" \
+    --arg os_id "${ID}" --arg os_version "${VERSION_ID:-rolling}" \
+    '{schema_version:1,claim:"PASS",
+      environment:{kind:"unprivileged-user-namespace",pacman_root:"disposable",
+        pacman_database:"copy-of-real-host",host_root_mutated:false,
+        os_id:$os_id,os_version:$os_version},
+      package:{file:$package,sha256:$package_sha256,version:$current_version},
+      previous_version:(if $previous_version == "null" then null else $previous_version end),
+      transitions:(if $previous_version == "null"
+        then ["install","installed-help","uninstall"]
+        else ["install-previous","upgrade","installed-help","uninstall"] end),
+      evidence:{help_sha256:$help_sha256,
+        host_pacman_database_sha256:$host_database_sha256}}' >"${receipt}"
+
+echo "arch-package-lifecycle: PASS version=${current_version} upgrade=$([[ "${previous_version}" == null ]] && echo no || echo yes)"

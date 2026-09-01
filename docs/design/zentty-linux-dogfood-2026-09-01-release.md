@@ -114,6 +114,20 @@ family artifact, and each package is then exercised on its native family.
   `libxkbcommon`, and `pango` enter through GTK/libadwaita rather than a direct
   Zentty ELF edge. The ratified dependency list now matches the measured direct
   owners exactly; pacman still installs the transitive GTK closure normally.
+- The real Omarchy host does allow unprivileged overlayfs for ordinary trees,
+  but it rejects using or bind-mounting `/` as an unprivileged overlay lower
+  layer. The lifecycle harness therefore uses real pacman with a disposable
+  root and an explicit temporary copy of the host package database. Pacman
+  performs dependency, integrity, conflict, install, query, and remove
+  operations there; the installed application binary runs with the host's
+  native libraries. A before/after fingerprint proves the host pacman database
+  is unchanged. The harness also supports a distinct prior package for a real
+  upgrade transition.
+- The first scripted run tried to preserve host-root ownership while copying
+  the package database inside a one-user namespace. Host UID 0 is deliberately
+  unmapped there, so the copy failed before pacman ran. The disposable database
+  now preserves content, modes, timestamps, and links but assigns its files to
+  namespace root; ownership is not part of libalpm's local database semantics.
 
 ## Evidence
 
