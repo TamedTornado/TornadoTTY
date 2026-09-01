@@ -25,8 +25,28 @@ product_pid=""
 desktop_pid=""
 diagnostic_capture_pid=""
 diagnostic_capture_body=""
+current_phase="bootstrap"
+progress_log="${output_dir}/progress-${backend:-unknown}.log"
+
+progress() {
+    local event="$1" phase="$2" detail="${3:-}"
+    mkdir -p -- "${output_dir}"
+    printf '%s %-5s phase=%s%s\n' \
+        "$(date --iso-8601=seconds)" "${event}" "${phase}" \
+        "${detail:+ ${detail}}" | tee -a "${progress_log}" >&2
+}
+
+phase_start() {
+    current_phase="$1"
+    progress START "${current_phase}" "${2:-}"
+}
+
+phase_pass() {
+    progress PASS "${current_phase}" "${1:-}"
+}
 
 fail() {
+    progress FAIL "${current_phase}" "reason=$*"
     [[ -z "${product_log}" || ! -f "${product_log}" ]] || tail -120 "${product_log}" >&2
     [[ -z "${desktop_log}" || ! -f "${desktop_log}" ]] || tail -120 "${desktop_log}" >&2
     echo "debian-package-installed-product: error: $*" >&2
@@ -46,9 +66,13 @@ state_dir="${TMPDIR}/zentty-installed-state-${short_revision}-${backend}"
 receipts="${TMPDIR}/zentty-installed-receipts-${short_revision}-${backend}"
 product_log="${run_root}/product.log"
 desktop_log="${run_root}/desktop.log"
+mkdir -p -- "${output_dir}"
+: >"${progress_log}"
+progress START bootstrap "backend=${backend} revision=${revision}"
 
 record_unhandled_failure() {
     local status="$?" line="${BASH_LINENO[0]:-${LINENO}}"
+    progress FAIL "${current_phase}" "unhandled-line=${line} status=${status}"
     mkdir -p -- "${output_dir}/failure-${backend}"
     [[ ! -f "${product_log}" ]] || cp -- "${product_log}" "${output_dir}/failure-${backend}/product.log"
     [[ ! -f "${desktop_log}" ]] || cp -- "${desktop_log}" "${output_dir}/failure-${backend}/desktop.log"
@@ -107,7 +131,7 @@ case "${backend}" in
     *) fail "GDK_BACKEND must be x11 or wayland" ;;
 esac
 
-for dependency in dpkg dpkg-deb dpkg-query find git grep jq ps readlink sha256sum socat stat unshare; do
+for dependency in date dpkg dpkg-deb dpkg-query find git grep jq ps readlink sha256sum socat stat tee unshare; do
     command -v "${dependency}" >/dev/null || fail "${dependency} is required"
 done
 if [[ "${backend}" == x11 ]]; then
@@ -119,6 +143,8 @@ fi
 [[ -f "${artifact}" && ! -L "${artifact}" ]] || fail "exact package is missing: ${artifact}"
 [[ -f "${manifest}" && ! -L "${manifest}" ]] || fail "exact manifest is missing"
 [[ -f "${provenance}" && ! -L "${provenance}" ]] || fail "exact provenance is missing"
+package_name="$(dpkg-deb -f "${artifact}" Package)"
+[[ "${package_name}" == tornadotty ]] || fail "package identity differs: ${package_name}"
 [[ "$(jq -r '.zentty_revision' "${manifest}")" == "${revision}" ]] ||
     fail "package is not the current clean revision"
 [[ "$(jq -r '.artifact.sha256' "${provenance}")" == "$(sha256sum "${artifact}" | awk '{print $1}')" ]] ||
@@ -126,6 +152,7 @@ fi
 [[ "$(jq -r '.manifest.sha256' "${provenance}")" == "$(sha256sum "${manifest}" | awk '{print $1}')" ]] ||
     fail "manifest provenance hash differs"
 
+phase_start package-install "package=${package_name}"
 mkdir -p "${install_root}/var/lib/dpkg" "${install_root}/var/log" \
     "${output_dir}" "${state_dir}" "${receipts}"
 rm -rf -- "${output_dir}/failure-${backend}"
@@ -160,6 +187,7 @@ grep -Fxq 'StartupWMClass=com.tamedtornado.tornadotty' "${desktop_entry}" ||
 grep -Fq '<id>com.tamedtornado.tornadotty</id>' "${appstream}" || fail "AppStream application ID differs"
 grep -Fq '<launchable type="desktop-id">com.tamedtornado.tornadotty.desktop</launchable>' "${appstream}" ||
     fail "AppStream desktop identity differs"
+phase_pass "resources-and-metadata=verified"
 
 mkdir -p "${receipts}/bin" "${XDG_CONFIG_HOME}/zentty"
 diagnostic_capture_body="${receipts}/unexpected-diagnostic-request"
@@ -325,7 +353,7 @@ wait_for_file() {
 }
 
 find_product_pid() {
-    local needle="${1:-${state_dir}}" pid cmdline parent desktop_launch=false
+    local needle="${1:-${state_dir}}" pid cmdline executable parent desktop_launch=false
     if [[ "${needle}" == --desktop ]]; then
         needle=""
         desktop_launch=true
@@ -336,7 +364,11 @@ find_product_pid() {
             pid="${pid%/cmdline}"
             [[ -r "${path}" ]] || continue
             cmdline="$(tr '\0' ' ' <"${path}" 2>/dev/null || true)"
-            if [[ "${cmdline}" == "/usr/bin/zentty-linux "* &&
+            executable="${cmdline%% *}"
+            if [[ ( "${executable}" == /usr/bin/tornadotty ||
+                    "${executable}" == /usr/bin/zentty-linux ||
+                    "${executable}" == tornadotty ||
+                    "${executable}" == zentty-linux ) &&
                 ( -z "${needle}" || "${cmdline}" == *"${needle}"* ) ]]; then
                 if [[ "${desktop_launch}" == true ]] &&
                     [[ -n "$(readlink "/proc/${pid}/exe" 2>/dev/null || true)" ]] &&
@@ -357,6 +389,8 @@ find_product_pid() {
         done
         sleep 0.025
     done
+    progress INFO "${current_phase}" \
+        "pid-not-found expected=/usr/bin/tornadotty|/usr/bin/zentty-linux needle=${needle:-desktop-environment}"
     return 1
 }
 
@@ -385,6 +419,7 @@ audit_process() {
         >"${receipts}/${phase}-process.json"
 }
 
+phase_start first-launch "entry=/usr/bin/zentty-linux compatibility-alias=true"
 start_direct first
 wait_for_file "${receipts}/first-ready" "first installed CLI mutation"
 first_product="$(find_product_pid)" || fail "first installed product PID was not observable"
@@ -395,11 +430,13 @@ grep -Fxq 'passed' "${receipts}/installed-integration-cli.receipt" ||
     fail "installed integration CLI did not complete install and uninstall"
 grep -Fq 'zentty-linux: agent-event pane=' "${product_log}" ||
     fail "installed Codex wrapper did not deliver an authenticated hook event"
+phase_pass "pty-cli-agent=verified"
 # Use the established real-input helper to invoke one installed Open With
 # action. The configured executable is outside PATH and is launched by the
 # product through its real platform service.
 supervisor_pid="${product_pid}"
 product_pid="${first_product}"
+phase_start interactive-actions "palette-clipboard-open-with-about=true"
 zentty_product_prepare_input "${backend}" "${product_log}" ||
     fail "installed product input did not become ready"
 activate_palette_action() {
@@ -433,10 +470,14 @@ activate_palette_action() {
     fail "installed palette action did not complete: ${query}"
 }
 
-# Select and copy through Zentty's real action router and Ghostty selection.
+# Select and copy through Tornado TTY's real action router and Ghostty selection.
 # An independent compositor client then verifies the result.
 activate_palette_action 'Select All' 'zentty-linux: action=select-all pane='
-activate_palette_action 'Copy' 'zentty-linux: action=copy pane=' 5
+# The exact-title Copy action ranks first. The full result set also includes
+# Copy Path, Copy Raw, Copy as Markdown, General Settings, Duplicate This Pane,
+# and Clean Copy; asserting the count catches unexpected palette drift while
+# the action receipt and compositor clipboard below prove which result ran.
+activate_palette_action 'Copy' 'zentty-linux: action=copy pane=' 7
 clipboard=""
 for _ in {1..200}; do
     if [[ "${backend}" == x11 ]]; then
@@ -468,14 +509,14 @@ installed_ghostty_revision="$(jq -er '.generated_from.ghostty.revision' "${insta
     fail "installed About catalog has the wrong Zentty revision"
 [[ "${installed_ghostty_revision}" == "$(jq -r '.ghostty_revision' "${provenance}")" ]] ||
     fail "installed About catalog has the wrong Ghostty revision"
-activate_palette_action 'About Zentty' 'zentty-linux: about-view state=shown'
+activate_palette_action 'About Tornado TTY' 'zentty-linux: about-view state=shown'
 grep -Fq \
     "licenses-catalog result=loaded entries=${installed_entries} zentty-revision=${revision} ghostty-revision=${installed_ghostty_revision}" \
     "${product_log}" || fail "installed About did not load the exact packaged catalog"
 if [[ "${backend}" == x11 ]]; then
     about_window=""
     for _ in {1..200}; do
-        about_window="$(xdotool search --onlyvisible --name '^About Zentty$' 2>/dev/null | tail -1 || true)"
+        about_window="$(xdotool search --onlyvisible --name '^About Tornado TTY$' 2>/dev/null | tail -1 || true)"
         [[ "${about_window}" =~ ^[1-9][0-9]*$ ]] && break
         sleep 0.025
     done
@@ -485,7 +526,9 @@ if [[ "${backend}" == x11 ]]; then
 else
     zentty_product_alt_key "${backend}" F4
 fi
+phase_pass "clipboard-open-with-about=verified"
 product_pid="${supervisor_pid}"
+phase_start persistence-restart "injected-crash=true"
 for _ in {1..400}; do
     if jq -e '
       .workspace.windows[0].worklanes[0].title == "Installed qualified" and
@@ -518,7 +561,9 @@ wait "${product_pid}" || fail "restarted installed product exited unsuccessfully
 product_pid=""
 grep -Fxq 'zentty-linux: lifecycle complete' "${product_log}" ||
     fail "restarted installed lifecycle did not complete"
+phase_pass "topology-restored=true"
 
+phase_start desktop-entry "desktop-id=com.tamedtornado.tornadotty.desktop"
 cat >"${receipts}/desktop-shell" <<'DESKTOP_SHELL'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -566,7 +611,9 @@ touch "${receipts}/desktop-release"
 wait "${desktop_pid}" || fail "installed desktop-entry launch exited unsuccessfully"
 desktop_pid=""
 product_pid=""
+phase_pass "canonical-launch=true"
 
+phase_start final-audit "diagnostics-and-receipt=true"
 [[ ! -e "${diagnostic_capture_body}" ]] ||
     fail "installed product silently transmitted diagnostics during representative use"
 pid_running "${diagnostic_capture_pid}" ||
@@ -575,7 +622,7 @@ pid_running "${diagnostic_capture_pid}" ||
 artifact_sha="$(sha256sum "${artifact}" | awk '{print $1}')"
 manifest_sha="$(sha256sum "${manifest}" | awk '{print $1}')"
 installed_paths="${run_root}/installed-paths.txt"
-dpkg-query --admindir="${install_root}/var/lib/dpkg" -L zentty | LC_ALL=C sort >"${installed_paths}"
+dpkg-query --admindir="${install_root}/var/lib/dpkg" -L "${package_name}" | LC_ALL=C sort >"${installed_paths}"
 jq -n \
     --arg backend "${backend}" \
     --arg display_session_id "${display_session_id}" \
@@ -610,4 +657,5 @@ jq -n \
     }
 ' >"${output_dir}/${backend}.json"
 
+phase_pass "receipt=${output_dir}/${backend}.json"
 echo "debian-package-installed-product: PASS backend=${backend} session=${display_session_id} package=${artifact_sha}"

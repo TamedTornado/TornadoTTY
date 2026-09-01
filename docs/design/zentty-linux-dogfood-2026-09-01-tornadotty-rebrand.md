@@ -102,9 +102,9 @@
   sandbox, and the pre-existing exact-maximum config rewrite test exceeded its
   output bound even in isolation. The focused rebrand tests passed; these
   unrelated cells remain explicit and do not establish release qualification.
-- Native TornadoTTY packages have not yet been built from the committed clean
-  tree. Package publication remains blocked until those artifacts and their
-  real installed-product journeys pass.
+- Release publication remains blocked pending release-tag qualification. The
+  focused native package and X11 journey receipts below establish the current
+  rebrand slice, not release qualification or exhaustive Linux QA.
 
 ## Real Debian package discovery and repair
 
@@ -125,3 +125,34 @@
   fresh install, reinstall, supported upgrade, injected failed upgrade,
   remove, purge, and a second install/remove cycle, while preserving user XDG
   data and unrelated system files.
+
+## Installed-product rebrand discoveries and repair
+
+- The lifecycle-qualified current-source build produced
+  `tornadotty_0.1.1+gitfec6f65be297_amd64.deb`; its structural audit covered
+  1,300 declared files and the real Debian lifecycle passed all 9 transitions.
+- The first controlled X11 installed-product journey exposed two stale public
+  UI expectations in the journey rather than the package: the command-palette
+  query `Copy` now returns seven legitimate matches instead of five, and the
+  About action/window is now `About Tornado TTY` rather than `About Zentty`.
+  The Copy assertion still requires the exact-title action to execute and an
+  independent compositor client to observe its clipboard result; it was not
+  weakened into an arbitrary-match pass.
+- A later desktop-entry phase appeared to hang because the PID locator only
+  recognized the compatibility command `/usr/bin/zentty-linux`, while the
+  canonical desktop entry launches `/usr/bin/tornadotty`. The final installed
+  path inventory also still queried the obsolete package name `zentty`.
+  Both checks now recognize/require the canonical public identities while
+  retaining the old executable solely as a tested compatibility alias.
+- The apparent hang was needlessly opaque: product output was redirected to a
+  temporary file, PID discovery was silent, and durable evidence was copied
+  only after the failure trap ran. The journey now emits timestamped
+  `START`/`PASS`/`FAIL` phase lines, preserves them immediately in
+  `build/linux/installed-package/progress-<backend>.log`, and reports the
+  expected executable identities when PID discovery fails.
+- PASS: the repaired real installed-product X11 journey completed in a
+  controlled private Xvfb session. It verified package resources and metadata,
+  real PTYs and CLI mutation, the controlled Codex adapter, compositor
+  clipboard delivery, Open With, About/licenses, crash-and-restart topology,
+  canonical desktop-entry launch, diagnostics silence, and a machine-readable
+  final receipt at `build/linux/installed-package/x11.json`.
