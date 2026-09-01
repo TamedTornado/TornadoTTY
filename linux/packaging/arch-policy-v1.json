@@ -16,18 +16,13 @@
   "required_runtime_packages": [
     "cairo",
     "fontconfig",
-    "gcc-libs",
-    "gdk-pixbuf2",
     "glib2",
     "glibc",
     "graphene",
     "gtk4",
-    "harfbuzz",
     "libadwaita",
-    "libepoxy",
+    "libgcc",
     "libx11",
-    "libxkbcommon",
-    "pango",
     "wayland"
   ],
   "optional_runtime_packages": [

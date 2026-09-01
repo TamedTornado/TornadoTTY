@@ -108,6 +108,12 @@ family artifact, and each package is then exercised on its native family.
   The resolver now compares the basename of absolute left-hand paths, handles
   both redirected and direct loader rows, and still asks pacman which installed
   package owns the resolved path.
+- The completed native ELF scan found ten direct package owners rather than the
+  fifteen initially reviewed. Current Omarchy owns `libgcc_s.so.1` in `libgcc`,
+  not the older aggregate `gcc-libs`; `gdk-pixbuf2`, `harfbuzz`, `libepoxy`,
+  `libxkbcommon`, and `pango` enter through GTK/libadwaita rather than a direct
+  Zentty ELF edge. The ratified dependency list now matches the measured direct
+  owners exactly; pacman still installs the transitive GTK closure normally.
 
 ## Evidence
 
