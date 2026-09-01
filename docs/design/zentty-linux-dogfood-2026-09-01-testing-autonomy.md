@@ -96,3 +96,55 @@ broadened.
 - Product receipts remain fragmented across log strings.
 - Large Bash journeys remain in production until the Rust driver proves real
   equivalence and individual migrations remove their predecessors.
+
+## GH-147 pane-divider semantic cohort
+
+### Discovery
+
+The original `pane_dividers.rs` mixed four responsibilities: topology identity,
+axis selection, physical-event interpretation, and GTK widget construction.
+Its only local test asserted the strings produced by `name()` and `label()`.
+The actual bounded resize lived behind callbacks and was not represented at the
+public `zentty-linux` crate boundary.
+
+### Repair
+
+- Added a display-independent `pane_divider_model` public module. It owns the
+  typed column/pane boundary, axis, axis-specific pointer coordinate, physical
+  key eligibility and sign, nonzero resize request, callback payload, and
+  bounded visible-margin calculation.
+- Kept GTK as an adapter: GDK keys are translated once, and both drag and key
+  paths now submit the same typed request to the existing workspace callback.
+  No second resize or topology state was added.
+- Removed the formatter-only inline test and added
+  `tests/pane_divider_semantics.rs`, which crosses the crate boundary without a
+  display. Six tests cover horizontal/vertical exclusivity, both keyboard
+  directions, delimiter-like and deliberately confusable IDs, signed callback
+  payloads, callback suppression at zero, rounding, and both integer bounds.
+
+### Failures and evidence
+
+- The first mutation invocation stopped at its unmutated baseline because the
+  safe `gitignore=true` policy correctly omitted the ignored multi-gigabyte
+  `build/` tree, including Ghostty's native library. The rerun supplied the
+  existing library through an absolute `GHOSTTY_LIB_DIR`; no ignored tree was
+  copied and no isolation rule was weakened.
+- Final scoped mutation result: **24 generated, 21 caught, 3 compiler-unviable,
+  0 missed, 0 timed out**. The unviable replacements required `Default` for
+  semantic enums/types that intentionally have no meaningless default. All
+  viable mutations—including sign deletion, callback replacement, zero-bound
+  inversion, coordinate replacement, and bound arithmetic replacement—were
+  killed.
+- `cargo test -p zentty-linux --test pane_divider_semantics`: 6 passed.
+- `cargo check -p zentty-linux --bin zentty-linux`: passed, proving the GTK
+  adapter consumes the new model.
+- Focused `cargo clippy --no-deps ... -D warnings`: passed. The first clippy
+  invocation without `--no-deps` exposed two pre-existing `zentty-core`
+  pedantic failures (`assigning_clones` and `too_many_lines`); they were not
+  changed or hidden by this slice.
+
+The remaining GH-147 acceptance item is the explicit classification audit of
+all 364 remaining inline GTK-crate tests. That count is one lower than the
+baseline because the weak divider test was replaced rather than merely added
+to. The issue remains open until the audit and prioritized remediation list are
+reviewable.

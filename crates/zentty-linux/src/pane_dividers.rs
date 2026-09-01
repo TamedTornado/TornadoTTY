@@ -3,49 +3,8 @@ use std::rc::Rc;
 
 use gtk::gdk;
 use gtk::prelude::*;
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) enum PaneDivider {
-    Column {
-        after_column_id: String,
-    },
-    Pane {
-        column_id: String,
-        after_pane_id: String,
-    },
-}
-
-impl PaneDivider {
-    fn axis(&self) -> gtk::Orientation {
-        match self {
-            Self::Column { .. } => gtk::Orientation::Horizontal,
-            Self::Pane { .. } => gtk::Orientation::Vertical,
-        }
-    }
-
-    fn name(&self) -> String {
-        match self {
-            Self::Column { after_column_id } => {
-                format!("pane-divider-column-after-{after_column_id}")
-            }
-            Self::Pane {
-                column_id,
-                after_pane_id,
-            } => format!("pane-divider-{column_id}-after-{after_pane_id}"),
-        }
-    }
-
-    fn label(&self) -> String {
-        match self {
-            Self::Column { after_column_id } => {
-                format!("Resize columns after {after_column_id}")
-            }
-            Self::Pane { after_pane_id, .. } => {
-                format!("Resize panes after {after_pane_id}")
-            }
-        }
-    }
-}
+pub(crate) use zentty_linux::pane_divider_model::PaneDivider;
+use zentty_linux::pane_divider_model::{DividerAxis, DividerKey, adjusted_vertical_margin};
 
 pub(crate) fn install_styles() {
     let provider = gtk::CssProvider::new();
@@ -71,25 +30,26 @@ pub(crate) fn new_handle(
     let axis = divider.axis();
     let handle = gtk::Box::new(gtk::Orientation::Horizontal, 0);
     handle.add_css_class("zentty-pane-divider");
-    handle.set_widget_name(&divider.name());
+    handle.set_widget_name(&divider.widget_name());
     handle.set_focusable(true);
     handle.set_can_focus(true);
     handle.set_accessible_role(gtk::AccessibleRole::Separator);
-    handle.update_property(&[gtk::accessible::Property::Label(&divider.label())]);
+    handle.update_property(&[gtk::accessible::Property::Label(
+        &divider.accessible_label(),
+    )]);
     match axis {
-        gtk::Orientation::Horizontal => {
+        DividerAxis::Horizontal => {
             handle.set_width_request(9);
             handle.set_halign(gtk::Align::End);
             handle.set_valign(gtk::Align::Fill);
             handle.set_cursor_from_name(Some("col-resize"));
         }
-        gtk::Orientation::Vertical => {
+        DividerAxis::Vertical => {
             handle.set_height_request(9);
             handle.set_halign(gtk::Align::Fill);
             handle.set_valign(gtk::Align::Start);
             handle.set_cursor_from_name(Some("row-resize"));
         }
-        _ => unreachable!("GTK orientation is exhaustive for pane dividers"),
     }
 
     let on_delta: Rc<dyn Fn(f64) -> f64> = Rc::new(on_delta);
@@ -100,23 +60,21 @@ pub(crate) fn new_handle(
     let update_offset = Rc::clone(&last_offset);
     let update_callback = Rc::clone(&on_delta);
     let drag_handle = handle.clone();
+    let drag_divider = divider.clone();
     drag.connect_drag_update(move |_, x, y| {
-        let offset = if axis == gtk::Orientation::Horizontal {
-            x
-        } else {
-            y
-        };
+        let offset = drag_divider.pointer_offset(x, y);
         let delta = offset - update_offset.replace(offset);
-        if delta.abs() > f64::EPSILON {
-            let applied = update_callback(delta);
-            if axis == gtk::Orientation::Vertical && applied.abs() > f64::EPSILON {
-                drag_handle.set_margin_top(adjusted_margin(&drag_handle, applied));
+        if let Some(request) = drag_divider.resize_request(delta) {
+            let applied = request.apply(|payload| update_callback(payload.delta));
+            if axis == DividerAxis::Vertical && applied.abs() > f64::EPSILON {
+                drag_handle
+                    .set_margin_top(adjusted_vertical_margin(drag_handle.margin_top(), applied));
             }
         }
     });
     handle.add_controller(drag);
 
-    let pointer_identity = divider.name();
+    let pointer_identity = divider.widget_name();
     let pointer = gtk::EventControllerMotion::new();
     pointer.connect_enter(move |_, _, _| {
         eprintln!("zentty-linux: pane-divider-pointer id={pointer_identity} state=enter");
@@ -134,21 +92,23 @@ pub(crate) fn new_handle(
 
     let key_callback = Rc::clone(&on_delta);
     let key_handle = handle.clone();
+    let key_divider = divider.clone();
     let keys = gtk::EventControllerKey::new();
     keys.connect_key_pressed(move |_, key, _, _| {
-        let delta = match (axis, key) {
-            (gtk::Orientation::Horizontal, gdk::Key::Left)
-            | (gtk::Orientation::Vertical, gdk::Key::Up) => Some(-16.0),
-            (gtk::Orientation::Horizontal, gdk::Key::Right)
-            | (gtk::Orientation::Vertical, gdk::Key::Down) => Some(16.0),
+        let key = match key {
+            gdk::Key::Left => Some(DividerKey::Left),
+            gdk::Key::Right => Some(DividerKey::Right),
+            gdk::Key::Up => Some(DividerKey::Up),
+            gdk::Key::Down => Some(DividerKey::Down),
             _ => None,
         };
-        if let Some(delta) = delta {
-            let applied = key_callback(delta);
-            if axis == gtk::Orientation::Vertical && applied.abs() > f64::EPSILON {
+        if let Some(request) = key.and_then(|key| key_divider.keyboard_request(key)) {
+            let applied = request.apply(|payload| key_callback(payload.delta));
+            if axis == DividerAxis::Vertical && applied.abs() > f64::EPSILON {
                 // Keyboard movement must keep the visible handle attached to
                 // the resized boundary just like pointer movement.
-                key_handle.set_margin_top(adjusted_margin(&key_handle, applied));
+                key_handle
+                    .set_margin_top(adjusted_vertical_margin(key_handle.margin_top(), applied));
             }
             gtk::glib::Propagation::Stop
         } else {
@@ -157,37 +117,4 @@ pub(crate) fn new_handle(
     });
     handle.add_controller(keys);
     handle
-}
-
-fn adjusted_margin(handle: &gtk::Box, delta: f64) -> i32 {
-    let margin = (f64::from(handle.margin_top()) + delta)
-        .round()
-        .clamp(0.0, f64::from(i32::MAX));
-    #[allow(clippy::cast_possible_truncation)]
-    {
-        margin as i32
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::PaneDivider;
-
-    #[test]
-    fn divider_identity_exposes_source_axis_and_stable_accessibility_text() {
-        let column = PaneDivider::Column {
-            after_column_id: "column-left".to_owned(),
-        };
-        assert_eq!(column.axis(), gtk::Orientation::Horizontal);
-        assert_eq!(column.name(), "pane-divider-column-after-column-left");
-        assert_eq!(column.label(), "Resize columns after column-left");
-
-        let pane = PaneDivider::Pane {
-            column_id: "column-left".to_owned(),
-            after_pane_id: "pane-top".to_owned(),
-        };
-        assert_eq!(pane.axis(), gtk::Orientation::Vertical);
-        assert_eq!(pane.name(), "pane-divider-column-left-after-pane-top");
-        assert_eq!(pane.label(), "Resize panes after pane-top");
-    }
 }
