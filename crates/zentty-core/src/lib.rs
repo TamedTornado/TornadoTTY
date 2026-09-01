@@ -131,8 +131,10 @@ pub use workspace_template::{
 };
 
 /// Stable product identity shared by platform composition roots.
-pub const PRODUCT_NAME: &str = "Zentty";
-pub const APPLICATION_ID: &str = "com.zentty.zentty";
+pub const PRODUCT_NAME: &str = "Tornado TTY";
+pub const COMPACT_PRODUCT_NAME: &str = "TornadoTTY";
+pub const APPLICATION_ID: &str = "com.tamedtornado.tornadotty";
+pub const FORK_ATTRIBUTION: &str = "TornadoTTY is an unofficial fork of Zentty. It is not affiliated with or endorsed by Zenjoy BV.";
 pub use agent_adapters::{
     AgentAdapterError, adapt_agy_hook, adapt_claude_hook, adapt_codex_hook, adapt_codex_notify,
     adapt_copilot_hook, adapt_cursor_hook, adapt_droid_hook, adapt_gemini_hook, adapt_grok_hook,

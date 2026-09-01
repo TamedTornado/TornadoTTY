@@ -68,7 +68,7 @@ impl Presentation {
         };
         Self {
             status,
-            title: "Zentty Agent Fleet".to_owned(),
+            title: format!("{} Agent Fleet", zentty_core::PRODUCT_NAME),
             tooltip: summary.header(),
         }
     }
@@ -408,7 +408,7 @@ mod tests {
         );
         assert_eq!(
             property_value("Title", &presentation).get::<String>(),
-            Some("Zentty Agent Fleet".to_owned())
+            Some(format!("{} Agent Fleet", zentty_core::PRODUCT_NAME))
         );
         assert_eq!(
             property_value("Status", &presentation).get::<String>(),
@@ -435,7 +435,10 @@ mod tests {
             .expect("tooltip has its declared tuple type");
         assert_eq!(tooltip.0, "zentty");
         assert!(tooltip.1.is_empty());
-        assert_eq!(tooltip.2, "Zentty Agent Fleet");
+        assert_eq!(
+            tooltip.2,
+            format!("{} Agent Fleet", zentty_core::PRODUCT_NAME)
+        );
         assert_eq!(tooltip.3, "1 waiting");
     }
 }

@@ -52,3 +52,16 @@
   prompt on a dark tile. It does not reuse the upstream blue interwoven-ribbon
   icon or its geometry. The generated source and reviewed 256px launcher asset
   are stored separately so packaging can consume the exact reviewed output.
+
+## Public application identity implementation
+
+- The shared Linux composition-root constants now expose `Tornado TTY`,
+  `TornadoTTY`, and `com.tamedtornado.tornadotty`. GTK host identity, window and
+  settings titles, notifications, diagnostics, About, command-palette copy,
+  version output, and accessibility labels consume that public identity.
+- The About view includes explicit unofficial-fork and non-endorsement text.
+- Local build staging installs the new icon under the new application ID while
+  leaving the executable, resource, hook, state, and runtime internals named
+  `zentty`.
+- Focused Rust coverage verifies the public constants, attribution, pane
+  notification identity, version output, and staged/installed icon discovery.

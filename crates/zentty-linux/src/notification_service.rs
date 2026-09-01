@@ -252,7 +252,7 @@ impl NotificationService {
             &config.sound_name
         };
         let mut child = Command::new("canberra-gtk-play")
-            .args(["-i", sound, "-d", "Zentty notification preview"])
+            .args(["-i", sound, "-d", "Tornado TTY notification preview"])
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
@@ -314,7 +314,7 @@ fn send_with_proxy(
         hints.insert("sound-name".into(), config.sound_name.to_variant());
     }
     let parameters = (
-        "Zentty",
+        zentty_core::PRODUCT_NAME,
         0_u32,
         "",
         title,

@@ -335,7 +335,7 @@ pub(super) const ACTION_SPECS: &[ActionSpec] = &[
         "open-settings",
         None,
         "Settings",
-        "Open Zentty settings",
+        "Open Tornado TTY settings",
         "preferences configuration general",
         true
     ),
@@ -343,7 +343,7 @@ pub(super) const ACTION_SPECS: &[ActionSpec] = &[
         ACTION_SHOW_ABOUT,
         "show-about",
         None,
-        "About Zentty",
+        "About Tornado TTY",
         "Build identity, documentation, source, and third-party licenses",
         "version commit license privacy trust",
         true

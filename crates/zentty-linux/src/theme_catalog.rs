@@ -212,7 +212,8 @@ pub(crate) fn default_theme_directories(
 ) -> Result<(PathBuf, PathBuf), String> {
     let prefix = executable.parent().and_then(Path::parent).ok_or_else(|| {
         format!(
-            "Zentty executable has no install prefix: {}",
+            "{} executable has no install prefix: {}",
+            zentty_core::PRODUCT_NAME,
             executable.display()
         )
     })?;

@@ -97,7 +97,7 @@ pub(crate) fn show(
     install_styles();
     crate::appearance_settings::install_styles();
     let window = gtk::Window::builder()
-        .title("Zentty Settings")
+        .title(format!("{} Settings", zentty_core::PRODUCT_NAME))
         .default_width(1080)
         .default_height(720)
         .modal(false)

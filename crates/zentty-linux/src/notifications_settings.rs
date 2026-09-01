@@ -97,7 +97,7 @@ fn notification_row(state: &Rc<RefCell<NotificationsConfig>>) -> gtk::Widget {
     let state_for_send = Rc::clone(state);
     send.connect_clicked(move |_| {
         match NotificationService::send(
-            "Zentty",
+            zentty_core::PRODUCT_NAME,
             "This is a test notification.",
             &state_for_send.borrow(),
         ) {

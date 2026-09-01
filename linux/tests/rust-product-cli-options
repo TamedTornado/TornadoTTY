@@ -32,7 +32,7 @@ run_without_desktop() {
 run_without_desktop "${product}" --help >"${stdout}" 2>"${stderr}" ||
     fail "--help did not exit successfully"
 [[ ! -s "${stderr}" ]] || fail "--help wrote to stderr"
-grep -Fxq 'Usage: zentty-linux [OPTIONS]' "${stdout}" || fail "--help omitted usage"
+grep -Fxq 'Usage: tornadotty [OPTIONS]' "${stdout}" || fail "--help omitted usage"
 for option in --command --state-directory --no-session-restore --async-backend --help --version; do
     grep -Fq -- "${option}" "${stdout}" || fail "--help omitted ${option}"
 done
@@ -45,7 +45,7 @@ revision="$(sed -n 's/^zentty_revision=//p' "${metadata}")"
 [[ -n "${profile}" && -n "${tree}" ]] || fail "build identity is incomplete"
 [[ "${revision}" =~ ^[0-9a-f]{40}$ ]] || fail "build revision is malformed"
 cat >"${stderr}.expected" <<EOF
-Zentty ${version}
+Tornado TTY ${version}
 Build: ${profile} (${tree})
 Commit: ${revision:0:12}
 EOF
@@ -61,8 +61,8 @@ set -e
 [[ "${status}" -ne 0 ]] || fail "unknown option exited successfully"
 [[ ! -s "${stdout}" ]] || fail "unknown option wrote to stdout"
 cat >"${stdout}.expected" <<'EOF'
-zentty-linux: unknown argument: --definitely-unknown
-Try 'zentty-linux --help' for usage.
+TornadoTTY: unknown argument: --definitely-unknown
+Try 'tornadotty --help' for usage.
 EOF
 cmp -s "${stderr}" "${stdout}.expected" || fail "unknown option diagnostic is not actionable"
 

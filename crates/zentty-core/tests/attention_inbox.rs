@@ -18,7 +18,7 @@ fn pane_notification_is_recorded_without_fabricating_an_agent_delivery() {
     assert!(inbox.drain_deliveries().is_empty());
     let item = &inbox.items()[0];
     assert_eq!(item.target, target);
-    assert_eq!(item.agent_name, "Zentty");
+    assert_eq!(item.agent_name, zentty_core::PRODUCT_NAME);
     assert_eq!(item.state, AttentionState::Ready);
     assert_eq!(item.status_text, "Build complete");
     assert_eq!(item.primary_text, "Review the result");

@@ -163,7 +163,8 @@ impl LicenseCatalog {
 pub(crate) fn default_notice_roots(executable: &Path) -> Result<Vec<PathBuf>, String> {
     let prefix = executable.parent().and_then(Path::parent).ok_or_else(|| {
         format!(
-            "Zentty executable has no install prefix: {}",
+            "{} executable has no install prefix: {}",
+            zentty_core::PRODUCT_NAME,
             executable.display()
         )
     })?;
@@ -176,11 +177,12 @@ pub(crate) fn default_notice_roots(executable: &Path) -> Result<Vec<PathBuf>, St
 pub(crate) fn default_icon_paths(executable: &Path) -> Result<Vec<PathBuf>, String> {
     let prefix = executable.parent().and_then(Path::parent).ok_or_else(|| {
         format!(
-            "Zentty executable has no install prefix: {}",
+            "{} executable has no install prefix: {}",
+            zentty_core::PRODUCT_NAME,
             executable.display()
         )
     })?;
-    let relative = Path::new("share/icons/hicolor/256x256/apps/com.zentty.zentty.png");
+    let relative = Path::new("share/icons/hicolor/256x256/apps/com.tamedtornado.tornadotty.png");
     Ok(vec![
         prefix.join(relative),
         Path::new("/usr").join(relative),
@@ -551,8 +553,12 @@ mod tests {
         assert_eq!(
             default_icon_paths(Path::new("/opt/zentty/bin/zentty-linux")).unwrap(),
             vec![
-                PathBuf::from("/opt/zentty/share/icons/hicolor/256x256/apps/com.zentty.zentty.png"),
-                PathBuf::from("/usr/share/icons/hicolor/256x256/apps/com.zentty.zentty.png"),
+                PathBuf::from(
+                    "/opt/zentty/share/icons/hicolor/256x256/apps/com.tamedtornado.tornadotty.png",
+                ),
+                PathBuf::from(
+                    "/usr/share/icons/hicolor/256x256/apps/com.tamedtornado.tornadotty.png",
+                ),
             ]
         );
     }

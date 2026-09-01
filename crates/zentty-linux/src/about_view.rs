@@ -4,20 +4,20 @@ use crate::about_catalog::{
 use gtk::prelude::*;
 use std::rc::Rc;
 
-const DOCS_URL: &str = "https://zentty.org/docs";
+const DOCS_URL: &str = "https://github.com/TamedTornado/zentty#readme";
 const SOURCE_URL: &str = "https://github.com/TamedTornado/zentty";
 
 pub(crate) fn show(parent: &gtk::Window) -> gtk::Window {
     install_styles();
     let window = gtk::Window::builder()
-        .title("About Zentty")
+        .title(format!("About {}", zentty_core::PRODUCT_NAME))
         .transient_for(parent)
         .destroy_with_parent(true)
         .default_width(760)
         .default_height(640)
         .build();
     window.set_widget_name("zentty-about-window");
-    window.update_property(&[gtk::accessible::Property::Label("About Zentty")]);
+    window.update_property(&[gtk::accessible::Property::Label("About Tornado TTY")]);
 
     let stack = gtk::Stack::new();
     stack.set_transition_type(gtk::StackTransitionType::None);
@@ -61,10 +61,12 @@ fn about_page(
     icon.set_halign(gtk::Align::Center);
     icon.set_pixel_size(112);
     icon.set_widget_name("about-application-icon");
-    icon.update_property(&[gtk::accessible::Property::Label("Zentty application icon")]);
+    icon.update_property(&[gtk::accessible::Property::Label(
+        "Tornado TTY application icon",
+    )]);
     root.append(&icon);
 
-    let title = gtk::Label::new(Some("Zentty"));
+    let title = gtk::Label::new(Some(zentty_core::PRODUCT_NAME));
     title.add_css_class("title-1");
     title.set_widget_name("about-title");
     root.append(&title);
@@ -77,6 +79,13 @@ fn about_page(
     subtitle.add_css_class("dim-label");
     subtitle.set_widget_name("about-subtitle");
     root.append(&subtitle);
+
+    let attribution = gtk::Label::new(Some(zentty_core::FORK_ATTRIBUTION));
+    attribution.set_wrap(true);
+    attribution.set_justify(gtk::Justification::Center);
+    attribution.add_css_class("dim-label");
+    attribution.set_widget_name("about-fork-attribution");
+    root.append(&attribution);
 
     let metadata_grid = gtk::Grid::new();
     metadata_grid.set_column_spacing(14);

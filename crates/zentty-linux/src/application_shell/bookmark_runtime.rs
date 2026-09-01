@@ -532,7 +532,7 @@ fn safe_filename(name: &str) -> String {
         .collect::<String>();
     let name = name.trim();
     if name.is_empty() {
-        "Zentty preset".to_owned()
+        "Tornado TTY preset".to_owned()
     } else {
         name.to_owned()
     }

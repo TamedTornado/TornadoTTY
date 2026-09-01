@@ -87,7 +87,7 @@ enum StartupAction {
 }
 
 const HELP_TEXT: &str = concat!(
-    "Usage: zentty-linux [OPTIONS]\n",
+    "Usage: tornadotty [OPTIONS]\n",
     "\n",
     "Options:\n",
     "      --command <COMMAND>          Start each new pane with COMMAND\n",
@@ -156,7 +156,7 @@ fn parse_options_from(
             }
             _ => {
                 return Err(format!(
-                    "unknown argument: {argument}\nTry 'zentty-linux --help' for usage."
+                    "unknown argument: {argument}\nTry 'tornadotty --help' for usage."
                 ));
             }
         }
@@ -171,8 +171,11 @@ fn parse_options() -> Result<StartupAction, String> {
 fn version_text() -> String {
     let metadata = about_catalog::AboutMetadata::compiled();
     format!(
-        "Zentty {}\nBuild: {}\nCommit: {}",
-        metadata.version, metadata.build, metadata.commit
+        "{} {}\nBuild: {}\nCommit: {}",
+        zentty_core::PRODUCT_NAME,
+        metadata.version,
+        metadata.build,
+        metadata.commit
     )
 }
 
@@ -208,7 +211,7 @@ fn run_lifecycle_cycle(
         };
         let tick_result = application.borrow_mut().tick();
         if let Err(error) = tick_result {
-            eprintln!("zentty-linux: {error}");
+            eprintln!("{}: {error}", zentty_core::COMPACT_PRODUCT_NAME);
             application.borrow_mut().record_terminal_error(error);
             tick_loop.quit();
         }
@@ -328,7 +331,7 @@ fn run() -> Result<(), String> {
     // Ghostty initializes GLib for its embedded runtime first. Restore the
     // host product identity before GTK creates the external accessibility
     // application root; otherwise assistive technologies see "ghostty" even
-    // though Zentty owns every toplevel and its navigation hierarchy.
+    // though the host owns every toplevel and its navigation hierarchy.
     runtime
         .set_host_application_identity(
             zentty_core::APPLICATION_ID,
@@ -376,7 +379,7 @@ fn main() -> ExitCode {
         Ok(true) => return ExitCode::SUCCESS,
         Ok(false) => {}
         Err(error) => {
-            eprintln!("zentty-linux: {error}");
+            eprintln!("{}: {error}", zentty_core::COMPACT_PRODUCT_NAME);
             return ExitCode::FAILURE;
         }
     }
@@ -417,7 +420,11 @@ mod tests {
         assert!(matches!(parse(&["-V"]), Ok(StartupAction::Version)));
         assert!(HELP_TEXT.contains("--async-backend <BACKEND>"));
         let version = version_text();
-        assert!(version.starts_with(&format!("Zentty {}\n", env!("CARGO_PKG_VERSION"))));
+        assert!(version.starts_with(&format!(
+            "{} {}\n",
+            zentty_core::PRODUCT_NAME,
+            env!("CARGO_PKG_VERSION")
+        )));
         assert!(version.contains("\nBuild: "));
         assert!(version.contains("\nCommit: "));
     }
@@ -426,7 +433,7 @@ mod tests {
     fn unknown_options_point_to_public_help() {
         assert_eq!(
             parse(&["--unknown"]).unwrap_err(),
-            "unknown argument: --unknown\nTry 'zentty-linux --help' for usage."
+            "unknown argument: --unknown\nTry 'tornadotty --help' for usage."
         );
     }
 

@@ -797,7 +797,8 @@ fn default_theme_resource_path() -> Result<PathBuf, String> {
         .map_err(|error| format!("could not locate Zentty executable: {error}"))?;
     let prefix = executable.parent().and_then(Path::parent).ok_or_else(|| {
         format!(
-            "Zentty executable has no install prefix: {}",
+            "{} executable has no install prefix: {}",
+            zentty_core::PRODUCT_NAME,
             executable.display()
         )
     })?;
@@ -1059,7 +1060,8 @@ fn read_config_contents(path: &Path) -> Result<ConfigContents, String> {
     })?;
     if !metadata.is_file() {
         return Err(format!(
-            "Zentty configuration is not a regular file: {}",
+            "{} configuration is not a regular file: {}",
+            zentty_core::PRODUCT_NAME,
             path.display()
         ));
     }
@@ -1135,7 +1137,8 @@ fn ensure_private_config_parent(path: &Path) -> Result<(), String> {
         }
         Ok(metadata) if !metadata.is_dir() => {
             return Err(format!(
-                "Zentty configuration parent is not a directory: {}",
+                "{} configuration parent is not a directory: {}",
+                zentty_core::PRODUCT_NAME,
                 parent.display()
             ));
         }

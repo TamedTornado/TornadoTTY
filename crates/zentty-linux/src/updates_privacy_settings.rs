@@ -491,7 +491,7 @@ fn begin_reviewed_report_submission(
 fn show_notice(parent: &gtk::Window, detail: &str) {
     gtk::AlertDialog::builder()
         .modal(true)
-        .message("Zentty Diagnostics")
+        .message("Tornado TTY Diagnostics")
         .detail(detail)
         .buttons(["OK"])
         .build()

@@ -1,4 +1,4 @@
-use crate::{AgentInteractionKind, AgentPhase, PaneAgentStatus};
+use crate::{AgentInteractionKind, AgentPhase, PRODUCT_NAME, PaneAgentStatus};
 use std::collections::{HashMap, HashSet};
 
 const MAX_ITEMS: usize = 50;
@@ -239,7 +239,7 @@ impl AttentionInbox {
             AttentionItem {
                 id: self.next_id,
                 target,
-                agent_name: "Zentty".to_owned(),
+                agent_name: PRODUCT_NAME.to_owned(),
                 state: AttentionState::Ready,
                 interaction: AgentInteractionKind::None,
                 status_text: title.into(),

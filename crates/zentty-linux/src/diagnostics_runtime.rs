@@ -170,7 +170,10 @@ fn capture_panic(information: &PanicHookInfo<'_>) -> Result<(), String> {
     );
     create_report(
         DiagnosticReason::Panic,
-        &format!("Zentty encountered an internal panic at {location}."),
+        &format!(
+            "{} encountered an internal panic at {location}.",
+            zentty_core::PRODUCT_NAME
+        ),
     )?;
     Ok(())
 }

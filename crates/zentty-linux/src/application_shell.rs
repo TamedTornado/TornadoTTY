@@ -661,10 +661,10 @@ impl ApplicationShell {
                     });
                     sources.push(crate::task_manager::PaneSource {
                         window_id: self.window_template.id.clone(),
-                        window_title: self
-                            .window
-                            .title()
-                            .map_or_else(|| "Zentty".to_owned(), |title| title.to_string()),
+                        window_title: self.window.title().map_or_else(
+                            || zentty_core::PRODUCT_NAME.to_owned(),
+                            |title| title.to_string(),
+                        ),
                         worklane_id: worklane.id.clone(),
                         worklane_title: worklane
                             .title
@@ -768,8 +768,8 @@ impl ApplicationShell {
             let context = gtk::prelude::WidgetExt::display(&self.window).app_launch_context();
             context.set_timestamp(event_time);
             let app_info = gtk::gio::AppInfo::create_from_commandline(
-                "zentty",
-                Some("Zentty"),
+                "tornadotty",
+                Some(zentty_core::PRODUCT_NAME),
                 gtk::gio::AppInfoCreateFlags::SUPPORTS_STARTUP_NOTIFICATION,
             )
             .ok()?;
@@ -885,10 +885,10 @@ impl ApplicationShell {
     pub(crate) fn fleet_source(
         &self,
     ) -> (String, String, Vec<zentty_core::SidebarWorklaneSummary>) {
-        let title = self
-            .window
-            .title()
-            .map_or_else(|| "Zentty".to_owned(), |title| title.to_string());
+        let title = self.window.title().map_or_else(
+            || zentty_core::PRODUCT_NAME.to_owned(),
+            |title| title.to_string(),
+        );
         (
             self.window_template.id.clone(),
             title,
@@ -2189,7 +2189,7 @@ impl ApplicationShell {
                 appearance,
                 apply_appearance: Rc::new(move |appearance| {
                     let shell = appearance_weak.upgrade().ok_or_else(|| {
-                        "Zentty window closed while applying appearance".to_owned()
+                        "Tornado TTY window closed while applying appearance".to_owned()
                     })?;
                     shell.borrow_mut().apply_appearance(appearance, false)
                 }),
@@ -2206,7 +2206,7 @@ impl ApplicationShell {
                 notifications: self.config.notifications.clone(),
                 apply_notifications: Rc::new(move |notifications| {
                     let shell = notifications_weak.upgrade().ok_or_else(|| {
-                        "Zentty window closed while applying notifications".to_owned()
+                        "Tornado TTY window closed while applying notifications".to_owned()
                     })?;
                     shell.borrow_mut().apply_notifications(notifications)
                 }),
@@ -2219,7 +2219,7 @@ impl ApplicationShell {
                 }),
                 apply_error_reporting: Rc::new(move |error_reporting| {
                     let shell = error_reporting_weak.upgrade().ok_or_else(|| {
-                        "Zentty window closed while applying privacy settings".to_owned()
+                        "Tornado TTY window closed while applying privacy settings".to_owned()
                     })?;
                     shell.borrow_mut().apply_error_reporting(error_reporting)
                 }),
@@ -2228,7 +2228,8 @@ impl ApplicationShell {
                 panes: self.config.panes,
                 apply_workspace_panes: Rc::new(move |worklanes, pane_layout, panes| {
                     let shell = workspace_panes_weak.upgrade().ok_or_else(|| {
-                        "Zentty window closed while applying Worklanes & Panes settings".to_owned()
+                        "Tornado TTY window closed while applying Worklanes & Panes settings"
+                            .to_owned()
                     })?;
                     shell
                         .borrow_mut()
@@ -2237,13 +2238,13 @@ impl ApplicationShell {
                 open_with_projection,
                 apply_open_with: Rc::new(move |config| {
                     let shell = open_with_weak.upgrade().ok_or_else(|| {
-                        "Zentty window closed while applying Open With settings".to_owned()
+                        "Tornado TTY window closed while applying Open With settings".to_owned()
                     })?;
                     shell.borrow_mut().apply_open_with(config)
                 }),
                 refresh_open_with: Rc::new(move || {
                     let shell = refresh_open_with_weak.upgrade().ok_or_else(|| {
-                        "Zentty window closed while refreshing Open With settings".to_owned()
+                        "Tornado TTY window closed while refreshing Open With settings".to_owned()
                     })?;
                     shell.borrow_mut().refresh_open_with_projection()
                 }),
@@ -2251,7 +2252,7 @@ impl ApplicationShell {
                 server_browser_targets,
                 apply_dev_servers: Rc::new(move |config| {
                     let shell = dev_servers_weak.upgrade().ok_or_else(|| {
-                        "Zentty window closed while applying Dev Servers settings".to_owned()
+                        "Tornado TTY window closed while applying Dev Servers settings".to_owned()
                     })?;
                     shell.borrow_mut().apply_dev_servers(config)
                 }),
@@ -2262,7 +2263,7 @@ impl ApplicationShell {
                 available_agent_wrappers: self.agent_events.available_integration_wrappers(),
                 apply_agents: Rc::new(move |teams, caffeination, menu_bar, integrations| {
                     let shell = agents_weak.upgrade().ok_or_else(|| {
-                        "Zentty window closed while applying Agents settings".to_owned()
+                        "Tornado TTY window closed while applying Agents settings".to_owned()
                     })?;
                     shell
                         .borrow_mut()
