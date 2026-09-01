@@ -105,3 +105,23 @@
 - Native TornadoTTY packages have not yet been built from the committed clean
   tree. Package publication remains blocked until those artifacts and their
   real installed-product journeys pass.
+
+## Real Debian package discovery and repair
+
+- Clean-tree construction produced and audited
+  `tornadotty_0.1.1+gitcd73112f44f7_amd64.deb` with 1,300 declared payload
+  files. Its structural negative suite passed.
+- The installed-product runner correctly rejected a direct arbitrary-artifact
+  invocation because its only accepted input is the lifecycle-qualified
+  locator. No bypass was added.
+- The first lifecycle run then exposed a genuine stale contract: lifecycle
+  queries, verification, removal, and purge still named the old public Debian
+  package `zentty`. Fresh installation therefore succeeded while the audit
+  looked up the wrong database record.
+- Repair: derive the package name from the candidate control metadata, require
+  it to equal `tornadotty`, and use that value for every dpkg lifecycle
+  operation. Internal XDG and private install paths remain unchanged.
+- PASS: the repaired real lifecycle completed all 9 transitions, including
+  fresh install, reinstall, supported upgrade, injected failed upgrade,
+  remove, purge, and a second install/remove cycle, while preserving user XDG
+  data and unrelated system files.

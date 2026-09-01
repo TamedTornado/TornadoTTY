@@ -76,13 +76,13 @@ normalize_archive_paths() {
 
 normalize_database_paths() {
     local output="$1"
-    dpkg-query --admindir="${lifecycle_root}/var/lib/dpkg" -L zentty |
+    dpkg-query --admindir="${lifecycle_root}/var/lib/dpkg" -L "${package_name}" |
         sed 's#^/\.$#/#' | LC_ALL=C sort -u >"${output}"
 }
 
 package_status() {
     dpkg-query --admindir="${lifecycle_root}/var/lib/dpkg" \
-        -W -f='${db:Status-Abbrev}|${Version}' zentty 2>/dev/null || true
+        -W -f='${db:Status-Abbrev}|${Version}' "${package_name}" 2>/dev/null || true
 }
 
 run_dpkg() {
@@ -252,7 +252,7 @@ audit_installed_candidate() {
     (cd "${lifecycle_root}" && sha256sum --quiet --strict -c "${checksum_file}") ||
         fail "${transition} installed file digest differs"
 
-    dpkg --root="${lifecycle_root}" --verify zentty >/dev/null ||
+    dpkg --root="${lifecycle_root}" --verify "${package_name}" >/dev/null ||
         fail "${transition} failed dpkg payload verification"
     {
         cat "${expected_metadata}"
@@ -335,6 +335,9 @@ inner_journey() {
     expanded_manifest="$3"
     candidate_provenance="$4"
     output_dir="$5"
+    package_name="$(dpkg-deb -f "${candidate_package}" Package)"
+    [[ "${package_name}" == tornadotty ]] ||
+        fail "candidate package name is not tornadotty: ${package_name}"
     [[ "${lifecycle_root}" == /tmp/zentty-dpkg-lifecycle.* && "${lifecycle_root}" != / ]] ||
         fail "refusing non-disposable dpkg root: ${lifecycle_root}"
     [[ -d "${lifecycle_root}/var/lib/dpkg" && -f "${lifecycle_root}/var/lib/dpkg/status" ]] ||
@@ -395,7 +398,7 @@ inner_journey() {
     assert_user_and_sentinels reinstall
     record_transition same-version-reinstall 'dpkg --install' PASS "${reinstall_fingerprint}"
 
-    run_dpkg --remove zentty >"${work_dir}/remove.log" 2>&1
+    run_dpkg --remove "${package_name}" >"${work_dir}/remove.log" 2>&1
     [[ -z "$(package_status)" ]] || fail "remove left a package database record"
     assert_system_baseline remove
     assert_user_and_sentinels remove
@@ -411,7 +414,7 @@ inner_journey() {
         fail "fixture package database ownership differs from its archive"
     legacy_path="$(jq -r '.package_delta.added_owned_file' "${fixture_contract}")"
     [[ -f "${lifecycle_root}${legacy_path}" ]] || fail "fixture legacy file was not installed"
-    dpkg --root="${lifecycle_root}" --verify zentty >/dev/null ||
+    dpkg --root="${lifecycle_root}" --verify "${package_name}" >/dev/null ||
         fail "fixture failed dpkg payload verification"
     assert_installed_system_paths fixture-install "${upgrade_package}"
     assert_user_and_sentinels fixture-install
@@ -443,7 +446,7 @@ inner_journey() {
     assert_user_and_sentinels failed-upgrade
     record_transition injected-failed-upgrade 'dpkg --install' EXPECTED_FAILURE "${failed_fingerprint}"
 
-    run_dpkg --purge zentty >"${work_dir}/purge.log" 2>&1
+    run_dpkg --purge "${package_name}" >"${work_dir}/purge.log" 2>&1
     [[ -z "$(package_status)" ]] || fail "purge left a package database record"
     assert_system_baseline purge
     assert_user_and_sentinels purge
@@ -456,7 +459,7 @@ inner_journey() {
     assert_installed_system_paths second-install
     assert_user_and_sentinels second-install
     record_transition second-install 'dpkg --install' PASS "${second_fingerprint}"
-    run_dpkg --remove zentty >"${work_dir}/second-remove.log" 2>&1
+    run_dpkg --remove "${package_name}" >"${work_dir}/second-remove.log" 2>&1
     [[ -z "$(package_status)" ]] || fail "second remove left a package database record"
     assert_system_baseline second-remove
     assert_user_and_sentinels second-remove
