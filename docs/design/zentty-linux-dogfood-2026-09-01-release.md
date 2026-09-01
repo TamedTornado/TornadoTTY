@@ -148,6 +148,12 @@ family artifact, and each package is then exercised on its native family.
   validator as the Arch builder and emits the plain application version for a
   tagged release. It also owns its locked Cargo fetch rather than assuming a
   caller populated the sparse index.
+- Release publication is an explicit, manually dispatched workflow. The build
+  job has read-only repository permission and produces both native package
+  families plus manifests/provenance; only the conditional publisher job has
+  `contents: write`. Every action is pinned to a full reviewed commit. The same
+  bundle validator and publisher are usable locally, so GitHub Actions checks
+  and transports artifacts but is not a release-qualification authority.
 - Publication and a real tagged release artifact are still outstanding. A
   missing or environmentally blocked journey remains explicit and will not be
   converted into a pass.

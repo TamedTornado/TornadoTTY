@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+workflow="${repo_root}/.github/workflows/linux-release.yml"
+validator="${repo_root}/linux/tests/release-workflow-contract"
+temporary="$(mktemp -d)"
+trap 'rm -rf -- "${temporary}"' EXIT
+
+fail() {
+    echo "release-workflow-contract-test: error: $*" >&2
+    exit 1
+}
+
+"${validator}" >/dev/null
+expect_rejected() {
+    local name="$1" old="$2" new="$3" candidate="${temporary}/$1.yml"
+    sed "s|${old}|${new}|" "${workflow}" >"${candidate}"
+    if ZENTTY_RELEASE_WORKFLOW="${candidate}" "${validator}" >/dev/null 2>&1; then
+        fail "${name} mutation was accepted"
+    fi
+}
+expect_rejected mutable-action \
+    'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1' 'actions/checkout@v7'
+expect_rejected persisted-credentials 'persist-credentials: false' 'persist-credentials: true'
+expect_rejected mutable-runner 'runs-on: ubuntu-24.04' 'runs-on: ubuntu-latest'
+expect_rejected broad-write 'contents: read' 'contents: write'
+expect_rejected missing-arch-build 'linux/scripts/build-arch-in-container' 'true # missing Arch build'
+expect_rejected automatic-trigger 'workflow_dispatch:' 'push:'
+
+echo "release-workflow-contract-test: PASS negatives=action+credentials+runner+permission+artifact-family+trigger"

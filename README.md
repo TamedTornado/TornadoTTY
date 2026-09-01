@@ -11,6 +11,7 @@
 
 <p align="center">
   <a href="#install-on-ubuntu-2404">Install</a> ·
+  <a href="https://github.com/TamedTornado/zentty/releases">Releases</a> ·
   <a href="#build-and-run-for-development">Build</a> ·
   <a href="#project-status">Status</a> ·
   <a href="docs/cli.md">CLI</a> ·
@@ -68,12 +69,12 @@ The Linux port is in **daily-dogfood / pre-release** status. It is useful now,
 but it has not yet published a signed stable Linux release.
 
 - The initial product feature inventory is implemented.
-- The currently qualified package target is **Ubuntu 24.04 LTS (Noble),
-  amd64**.
+- Native packages target **Ubuntu 24.04 LTS (Noble), amd64** and **Omarchy 4,
+  x86_64**.
 - Both GTK Wayland and X11 paths are exercised by controlled real-product
   integration journeys. Desktop- and GPU-specific defects may still exist.
-- Linux update discovery and installation UI is intentionally deferred until
-  release preparation. Install upgrades explicitly with a newer `.deb`.
+- Linux update discovery and installation UI is intentionally deferred. Install
+  upgrades explicitly with a newer `.deb` or `.pkg.tar.zst`.
 - The optional terminal performance diagnostics overlay is deferred.
 - Task Manager network/container telemetry is a future enhancement.
 - The qualification matrix still contains explicit blocked, expected-failure,
@@ -87,10 +88,37 @@ qualification authority is
 
 ## Install on Ubuntu 24.04
 
-There is no public release download yet. Build the native Debian package from
-the exact checked-out revision, then install it with APT.
+Download the latest Linux prerelease `.deb` and `SHA256SUMS` from the
+[GitHub Releases page](https://github.com/TamedTornado/zentty/releases), verify
+it, and install it with APT:
 
-### 1. Install the reviewed build environment
+```bash
+sha256sum --check --ignore-missing SHA256SUMS
+sudo apt install ./zentty_*_amd64.deb
+```
+
+Launch Zentty from the desktop application menu or run `zentty-linux`.
+
+## Install on Omarchy 4
+
+Download the latest `.pkg.tar.zst` and `SHA256SUMS` from the
+[GitHub Releases page](https://github.com/TamedTornado/zentty/releases), then:
+
+```bash
+sha256sum --check --ignore-missing SHA256SUMS
+sudo pacman -U ./zentty-*-x86_64.pkg.tar.zst
+```
+
+The Omarchy artifact is built natively for the Arch package family. Release
+qualification exercises real pacman install, upgrade, installed-product help,
+and uninstall transitions on Omarchy 4.
+
+## Build a package from source
+
+Package construction requires a clean checkout. The Ubuntu bootstrap below is
+also the supported development setup.
+
+### 1. Install the reviewed Ubuntu build environment
 
 The repository owns a pinned Ubuntu environment manifest and bootstrap. Run
 the package installation as root, but install the pinned language tools as

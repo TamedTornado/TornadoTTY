@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+workflow="${ZENTTY_RELEASE_WORKFLOW:-${repo_root}/.github/workflows/linux-release.yml}"
+actions="${ZENTTY_RELEASE_ACTIONS:-${repo_root}/linux/release/actions-v1.json}"
+
+fail() {
+    echo "release-workflow-contract: error: $*" >&2
+    exit 1
+}
+
+[[ -f "${workflow}" && -f "${actions}" ]] || fail "release workflow inputs are missing"
+jq -e '.schema_version == 1 and (.actions | length) == 4 and
+  ([.actions[].repository] | length == (unique | length)) and
+  all(.actions[]; (.revision | test("^[0-9a-f]{40}$")) and
+    (.release | test("^v[0-9]+\\.[0-9]+\\.[0-9]+$")))' "${actions}" >/dev/null ||
+    fail "release action manifest is invalid"
+while IFS=$'\t' read -r repository revision; do
+    grep -Fq "uses: ${repository}@${revision}" "${workflow}" ||
+        fail "workflow does not pin ${repository} to ${revision}"
+done < <(jq -r '.actions[] | [.repository,.revision] | @tsv' "${actions}")
+if grep -Eq 'uses: [^#[:space:]]+@(v[0-9]+|main|master|latest)([[:space:]#]|$)' "${workflow}"; then
+    fail "workflow contains a mutable action reference"
+fi
+grep -Fq 'workflow_dispatch:' "${workflow}" || fail "release is not operator-dispatched"
+grep -Fq 'publish:' "${workflow}" || fail "publish control is missing"
+grep -Fq 'contents: read' "${workflow}" || fail "default permission is not read-only"
+[[ "$(grep -Fc 'contents: write' "${workflow}")" -eq 1 ]] ||
+    fail "write permission is not isolated to one job"
+[[ "$(grep -Fc 'persist-credentials: false' "${workflow}")" -eq 2 ]] ||
+    fail "checkout credentials are persisted"
+grep -Fq 'runs-on: ubuntu-24.04' "${workflow}" || fail "runner baseline is mutable"
+grep -Fq 'linux/scripts/build-deb' "${workflow}" || fail "Debian package is not built"
+grep -Fq 'linux/scripts/build-arch-in-container' "${workflow}" || fail "Arch package is not built"
+grep -Fq 'linux/scripts/prepare-release-bundle' "${workflow}" || fail "bundle is not validated"
+grep -Fq 'linux/scripts/publish-release' "${workflow}" || fail "release publisher is absent"
+grep -Fq 'retention-days: 14' "${workflow}" || fail "staging retention is unbounded"
+
+echo "release-workflow-contract: PASS actions=4 default-permissions=read publish-permissions=write"
