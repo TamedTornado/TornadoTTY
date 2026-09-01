@@ -39,6 +39,9 @@ if sed -n '/resolved="$(ldd/,/'"'"')"/p' \
     "${repo_root}/linux/scripts/build-arch-package" | grep -Fq 'exit'; then
     fail "dependency resolver can SIGPIPE ldd under pipefail"
 fi
+grep -Fq 'sub(/^.*\//, "", path)' \
+    "${repo_root}/linux/scripts/build-arch-package" ||
+    fail "dependency resolver does not handle absolute ELF interpreter rows"
 if grep -Eq 'archlinux:(latest|base-devel)' "${wrapper}"; then
     fail "wrapper contains an unpinned container image"
 fi
