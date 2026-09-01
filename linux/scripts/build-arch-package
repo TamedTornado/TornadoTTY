@@ -17,9 +17,9 @@ fail() {
     exit 1
 }
 
-for dependency in appstreamcli awk bsdtar cargo desktop-file-validate file find \
-    git gzip install jq ldd makepkg pacman patchelf readelf rustc sed sha256sum \
-    sort stat strip touch xargs zstd; do
+for dependency in appstreamcli awk blueprint-compiler bsdtar cargo \
+    desktop-file-validate file find git gzip install jq ldd makepkg pacman \
+    patchelf readelf rustc sed sha256sum sort stat strip touch xargs zstd; do
     command -v "${dependency}" >/dev/null || fail "${dependency} is required"
 done
 

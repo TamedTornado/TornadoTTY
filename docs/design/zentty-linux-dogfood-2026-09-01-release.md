@@ -84,6 +84,12 @@ family artifact, and each package is then exercised on its native family.
   package transaction proved that no JavaScript tool participates in native
   construction. This reduces the release build closure rather than installing
   unused tooling defensively.
+- The first real-Omarchy build passed both formerly failing Ghostty host-helper
+  links, then stopped because `blueprint-compiler` was absent. The dependency
+  was already in the reviewed build manifest but missing from the native
+  builder's command preflight. The preflight now names it explicitly; the
+  laptop uses Omarchy's signed `blueprint-compiler` package from a user-local
+  extraction rather than silently altering the host system.
 
 ## Evidence
 
