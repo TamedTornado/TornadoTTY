@@ -1,0 +1,98 @@
+{
+  "schema_version": 1,
+  "display": {
+    "product_name": "Tornado TTY",
+    "compact_name": "TornadoTTY",
+    "fork_attribution": "TornadoTTY is an unofficial fork of Zentty. It is not affiliated with or endorsed by Zenjoy BV."
+  },
+  "canonical": {
+    "application_id": "com.tamedtornado.tornadotty",
+    "package": "tornadotty",
+    "gui_executable": "tornadotty",
+    "cli_executable": "tornadotty-cli"
+  },
+  "compatibility": {
+    "product_name": "Zentty",
+    "application_id": "com.zentty.zentty",
+    "package": "zentty",
+    "gui_executable": "zentty-linux",
+    "cli_executable": "zentty",
+    "xdg_directory": "zentty",
+    "runtime_directory": "zentty",
+    "environment_prefix": "ZENTTY_"
+  },
+  "boundaries": [
+    {
+      "id": "display-brand",
+      "action": "rename",
+      "legacy": "Zentty",
+      "canonical": "Tornado TTY"
+    },
+    {
+      "id": "desktop-application-id",
+      "action": "rename",
+      "legacy": "com.zentty.zentty",
+      "canonical": "com.tamedtornado.tornadotty"
+    },
+    {
+      "id": "package-name",
+      "action": "replace-package",
+      "legacy": "zentty",
+      "canonical": "tornadotty"
+    },
+    {
+      "id": "public-cli",
+      "action": "compatibility-alias",
+      "legacy": "/usr/bin/zentty",
+      "canonical": "/usr/bin/tornadotty-cli"
+    },
+    {
+      "id": "public-gui",
+      "action": "compatibility-alias",
+      "legacy": "/usr/bin/zentty-linux",
+      "canonical": "/usr/bin/tornadotty"
+    },
+    {
+      "id": "config-directory",
+      "action": "retain-internal-compatibility",
+      "legacy": "$XDG_CONFIG_HOME/zentty",
+      "canonical": "$XDG_CONFIG_HOME/zentty"
+    },
+    {
+      "id": "state-directory",
+      "action": "retain-internal-compatibility",
+      "legacy": "$XDG_STATE_HOME/zentty",
+      "canonical": "$XDG_STATE_HOME/zentty"
+    },
+    {
+      "id": "runtime-discovery",
+      "action": "retain-internal-compatibility",
+      "legacy": "$XDG_RUNTIME_DIR/zentty",
+      "canonical": "$XDG_RUNTIME_DIR/zentty"
+    },
+    {
+      "id": "agent-environment",
+      "action": "retain-internal-compatibility",
+      "legacy": "ZENTTY_*",
+      "canonical": "ZENTTY_*"
+    },
+    {
+      "id": "rust-and-source-identifiers",
+      "action": "retain-internal-compatibility",
+      "legacy": "zentty-* crates, modules, and source paths",
+      "canonical": "zentty-* crates, modules, and source paths"
+    },
+    {
+      "id": "private-install-layout",
+      "action": "retain-internal-compatibility",
+      "legacy": "/usr/lib/zentty",
+      "canonical": "/usr/lib/zentty"
+    },
+    {
+      "id": "upstream-name",
+      "action": "nominative-attribution",
+      "legacy": "Zentty",
+      "canonical": "Zentty"
+    }
+  ]
+}

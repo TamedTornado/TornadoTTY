@@ -1,0 +1,56 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+policy="${1:-${repo_root}/linux/rebrand/identity-v1.json}"
+
+fail() {
+    echo "rebrand-identity-policy: error: $*" >&2
+    exit 1
+}
+
+command -v jq >/dev/null || fail "jq is required"
+[[ -f "${policy}" ]] || fail "policy is missing: ${policy}"
+
+jq -e '
+  .schema_version == 1 and
+  .display.product_name == "Tornado TTY" and
+  .display.compact_name == "TornadoTTY" and
+  (.display.fork_attribution | contains("unofficial fork of Zentty")) and
+  .canonical == {
+    application_id:"com.tamedtornado.tornadotty",
+    package:"tornadotty",
+    gui_executable:"tornadotty",
+    cli_executable:"tornadotty-cli"
+  } and
+  .compatibility.application_id == "com.zentty.zentty" and
+  .compatibility.package == "zentty" and
+  .compatibility.environment_prefix == "ZENTTY_" and
+  ([.boundaries[].id] | length == (unique | length)) and
+  ([.boundaries[].action] - [
+    "rename",
+    "replace-package",
+    "compatibility-alias",
+    "retain-internal-compatibility",
+    "nominative-attribution"
+  ] | length == 0) and
+  ([
+    "display-brand",
+    "desktop-application-id",
+    "package-name",
+    "public-cli",
+    "public-gui",
+    "config-directory",
+    "state-directory",
+    "runtime-discovery",
+    "agent-environment",
+    "rust-and-source-identifiers",
+    "private-install-layout",
+    "upstream-name"
+  ] - [.boundaries[].id] | length == 0) and
+  (all(.boundaries[]; (.legacy | length > 0) and (.canonical | length > 0))) and
+  (all(.boundaries[] | select(.action == "retain-internal-compatibility");
+    .legacy == .canonical))
+' "${policy}" >/dev/null || fail "identity policy is incomplete or invalid"
+
+echo "rebrand-identity-policy: PASS boundaries=$(jq '.boundaries | length' "${policy}")"

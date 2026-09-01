@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+subject="${repo_root}/linux/tests/rebrand-identity-policy"
+source_policy="${repo_root}/linux/rebrand/identity-v1.json"
+temporary="$(mktemp -d)"
+trap 'rm -rf -- "${temporary}"' EXIT
+
+fail() {
+    echo "rebrand-identity-policy-test: error: $*" >&2
+    exit 1
+}
+
+expect_failure() {
+    local fixture="$1"
+    if "${subject}" "${fixture}" >"${temporary}/failure.log" 2>&1; then
+        fail "invalid fixture unexpectedly passed: ${fixture}"
+    fi
+    grep -Fq 'identity policy is incomplete or invalid' "${temporary}/failure.log" ||
+        fail "invalid fixture did not produce the policy diagnostic"
+}
+
+"${subject}" "${source_policy}" >/dev/null
+
+jq 'del(.boundaries[] | select(.id == "state-directory"))' \
+    "${source_policy}" >"${temporary}/missing-boundary.json"
+expect_failure "${temporary}/missing-boundary.json"
+
+jq '(.boundaries[] | select(.id == "runtime-discovery")).action = "silently-break"' \
+    "${source_policy}" >"${temporary}/unknown-action.json"
+expect_failure "${temporary}/unknown-action.json"
+
+jq '.canonical.package = "zentty"' \
+    "${source_policy}" >"${temporary}/stale-canonical.json"
+expect_failure "${temporary}/stale-canonical.json"
+
+jq '.boundaries += [.boundaries[0]]' \
+    "${source_policy}" >"${temporary}/duplicate-boundary.json"
+expect_failure "${temporary}/duplicate-boundary.json"
+
+jq '(.boundaries[] | select(.id == "state-directory")).canonical = "$XDG_STATE_HOME/tornadotty"' \
+    "${source_policy}" >"${temporary}/internal-namespace-migration.json"
+expect_failure "${temporary}/internal-namespace-migration.json"
+
+echo "rebrand-identity-policy-test: PASS"
