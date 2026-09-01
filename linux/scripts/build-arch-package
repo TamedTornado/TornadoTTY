@@ -166,8 +166,8 @@ while IFS= read -r elf; do
             libghostty-gtk-embed.so|libgtk4-layer-shell.so) continue ;;
         esac
         resolved="$(ldd "${elf}" | awk -v library="${library}" '
-          $1 == library && $2 == "=>" { print $3; exit }
-          $1 == library && $2 ~ /^\(/ { print $1; exit }
+          !found && $1 == library && $2 == "=>" { print $3; found = 1 }
+          !found && $1 == library && $2 ~ /^\(/ { print $1; found = 1 }
         ')"
         [[ "${resolved}" == /* && -f "${resolved}" ]] ||
             fail "could not resolve direct dependency ${library} for ${elf}"

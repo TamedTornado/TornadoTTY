@@ -96,6 +96,12 @@ family artifact, and each package is then exercised on its native family.
   accidentally dependent on its caller. The native builder now performs its
   own `cargo fetch --locked` before the age audit; the audit itself remains
   unchanged and cannot turn missing registry evidence into a pass.
+- The first warm-cache packaging pass stopped without its own diagnostic while
+  resolving the first ELF dependency. An execution trace showed `awk` exiting
+  as soon as it found a match in `ldd` output; under `pipefail`, the resulting
+  SIGPIPE from `ldd` terminated the builder. The resolver now consumes the full
+  output and emits only its first match, preserving strict pipeline failure
+  handling instead of disabling it.
 
 ## Evidence
 
