@@ -90,6 +90,12 @@ family artifact, and each package is then exercised on its native family.
   builder's command preflight. The preflight now names it explicitly; the
   laptop uses Omarchy's signed `blueprint-compiler` package from a user-local
   extraction rather than silently altering the host system.
+- After Ghostty compiled, the Cargo publication-age audit correctly refused to
+  run without a crates.io sparse-index cache. The container wrapper had fetched
+  the lockfile before invoking the native package builder, making the builder
+  accidentally dependent on its caller. The native builder now performs its
+  own `cargo fetch --locked` before the age audit; the audit itself remains
+  unchanged and cannot turn missing registry evidence into a pass.
 
 ## Evidence
 

@@ -40,6 +40,7 @@ export SOURCE_DATE_EPOCH="${source_date_epoch}"
 
 cargo_version="$(cargo metadata --locked --no-deps --format-version 1 |
     jq -er '.packages[] | select(.name == "zentty-linux") | .version')"
+cargo fetch --locked
 if [[ -n "${ZENTTY_RELEASE_TAG:-}" ]]; then
     release_receipt="$("${repo_root}/linux/scripts/release-version" "${ZENTTY_RELEASE_TAG}")"
     package_version="$(jq -r '.version' <<<"${release_receipt}")"

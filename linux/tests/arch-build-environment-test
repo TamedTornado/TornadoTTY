@@ -28,6 +28,9 @@ fi
 grep -Fq 'archive.archlinux.org/repos/' "${wrapper}" ||
     fail "wrapper does not use the pinned Arch package archive"
 grep -Fq 'cargo fetch --locked' "${wrapper}" || fail "Cargo inputs are not locked"
+grep -Fq 'cargo fetch --locked' \
+    "${repo_root}/linux/scripts/build-arch-package" ||
+    fail "native Arch builder does not populate the locked sparse index"
 grep -Fq 'ZENTTY_GHOSTTY_PREPARED=true' "${wrapper}" || fail "Ghostty is not pinned"
 grep -Fq 'blueprint-compiler bsdtar cargo' \
     "${repo_root}/linux/scripts/build-arch-package" ||
