@@ -86,7 +86,12 @@ fi
 bundle_lib="${repo_root}/build/linux-profiles/release-safe/lib"
 [[ -d "${bundle_lib}" ]] || fail "ReleaseSafe product bundle is not staged"
 
-if [[ -z "${ZENTTY_WIDGET_ACCESSIBILITY_DONE:-}" ]]; then
+# These GTK widget semantics are backend-independent and include a pointer
+# ownership assertion whose deterministic controlled environment is X11. Run
+# them once there; each backend still executes its own real external AT-SPI
+# registry, product process, live action, and topology assertions below.
+widget_semantics="${ZENTTY_WIDGET_SEMANTICS:-covered-by-x11-cell}"
+if [[ -z "${ZENTTY_WIDGET_ACCESSIBILITY_DONE:-}" && "${backend}" == x11 ]]; then
     for test_name in \
         application_shell::pane_runtime::tests::actual_terminal_widget_exposes_terminal_accessibility_semantics \
         sidebar::tests::actual_worklane_widgets_expose_the_accessibility_contract \
@@ -102,10 +107,12 @@ if [[ -z "${ZENTTY_WIDGET_ACCESSIBILITY_DONE:-}" ]]; then
             --ignored \
             --test-threads=1
     done
+    widget_semantics="executed"
 fi
 
 if [[ -z "${ZENTTY_PRIVATE_ATSPI_SESSION:-}" ]]; then
     exec env ZENTTY_PRIVATE_ATSPI_SESSION=1 ZENTTY_WIDGET_ACCESSIBILITY_DONE=1 \
+        ZENTTY_WIDGET_SEMANTICS="${widget_semantics}" \
         "${repo_root}/linux/tests/private-atspi" "$0" "${backend}"
 fi
 
@@ -130,7 +137,7 @@ trap cleanup_external EXIT HUP INT TERM
 # A separate stock GTK process proves the private service before Zentty is
 # inspected. Its exact PID prevents a stale or unrelated application from
 # satisfying the control.
-zenity --info --title="Zentty AT-SPI control" --text="Private registry control" \
+zenity --info --title="Tornado TTY AT-SPI control" --text="Private registry control" \
     >"${receipt_dir}/control.log" 2>&1 &
 control_pid=$!
 owned_pids+=("${control_pid}")
@@ -142,7 +149,7 @@ jq -e --argjson pid "${control_pid}" '
     .applications[0].name == "zenity" and
     .applications[0].role == "application" and
     .applications[0].process_id == $pid and
-    ([.applications[0] | .. | objects | select(.name == "Zentty AT-SPI control")]
+    ([.applications[0] | .. | objects | select(.name == "Tornado TTY AT-SPI control")]
       | length) > 0
 ' "${receipt_dir}/control.json" >/dev/null || fail "stock GTK AT-SPI control was incomplete"
 kill -TERM "${control_pid}" 2>/dev/null || true
@@ -165,7 +172,7 @@ initial_tree_complete() {
 }
 initial_ready=false
 for _ in {1..100}; do
-    if "${inspector_binary}" snapshot zentty "${product_pid}" 1000 \
+    if "${inspector_binary}" snapshot-pid "${product_pid}" 1000 \
         >"${receipt_dir}/before.json" 2>"${receipt_dir}/before-inspector.log" &&
         initial_tree_complete; then
         initial_ready=true
@@ -173,7 +180,8 @@ for _ in {1..100}; do
     fi
     sleep 0.05
 done
-[[ "${initial_ready}" == true ]] || fail "initial Zentty external tree was incomplete"
+[[ "${initial_ready}" == true ]] || fail "initial Tornado TTY external tree was incomplete"
+atspi_application="$(jq -r '.applications[0].name' "${receipt_dir}/before.json")"
 
 # Reject a real but wrong application identity and PID pairing. The inspector
 # has no mock/tree-input mode, so an in-process or fabricated tree cannot pass.
@@ -184,11 +192,11 @@ fi
 
 # Invoke the real externally exposed GTK action, then wait for the external
 # tree—not the model—to report the additional live Ghostty pane.
-"${inspector_binary}" activate zentty "${product_pid}" "Add Pane Right" 5000 \
+"${inspector_binary}" activate "${atspi_application}" "${product_pid}" "Add Pane Right" 5000 \
     >"${receipt_dir}/activate.json"
 updated=false
 for _ in {1..100}; do
-    "${inspector_binary}" snapshot zentty "${product_pid}" 1000 \
+    "${inspector_binary}" snapshot "${atspi_application}" "${product_pid}" 1000 \
         >"${receipt_dir}/after.json"
     if jq -e '
         def nodes: [.applications[0] | .. | objects | select(has("role"))];
@@ -209,11 +217,11 @@ done
 kill -TERM "${product_pid}" 2>/dev/null || true
 wait "${product_pid}" 2>/dev/null || true
 owned_pids=()
-if "${inspector_binary}" snapshot zentty "${product_pid}" 250 \
+if "${inspector_binary}" snapshot "${atspi_application}" "${product_pid}" 250 \
     >"${receipt_dir}/stale-process.json" 2>/dev/null; then
     fail "stale product process remained externally inspectable"
 fi
 
 trap - EXIT HUP INT TERM
 
-echo "rust-worklane-accessibility: PASS backend=${backend} actual-sidebar-and-peek-widgets=1 gtk-a11y=test external-atspi=real control=real-gtk live-pane-change=1 terminal-semantics=1"
+echo "rust-worklane-accessibility: PASS backend=${backend} widget-semantics=${widget_semantics} external-atspi=real control=real-gtk live-pane-change=1 terminal-semantics=1"

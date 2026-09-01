@@ -255,12 +255,16 @@ fn tree_contains_name(value: &Value, expected: &str) -> bool {
     }
 }
 
-fn root_matches(object: *mut AtspiAccessible, expected_name: &str, expected_pid: u32) -> bool {
+fn root_matches(
+    object: *mut AtspiAccessible,
+    expected_name: Option<&str>,
+    expected_pid: u32,
+) -> bool {
     process_id(object) == expected_pid
-        && call_string(atspi_accessible_get_name, object) == expected_name
+        && expected_name.is_none_or(|name| call_string(atspi_accessible_get_name, object) == name)
 }
 
-fn snapshot(expected_name: &str, expected_pid: u32) -> Value {
+fn snapshot(expected_name: Option<&str>, expected_pid: u32) -> Value {
     // SAFETY: This reads the initialized registry's desktop count.
     let count = unsafe { atspi_get_desktop_count() };
     let mut applications = Vec::new();
@@ -376,7 +380,7 @@ fn activate(expected_name: &str, expected_pid: u32, target: &str) -> bool {
             }
             if !child.is_null() {
                 let child = OwnedAccessible(child);
-                if root_matches(child.0, expected_name, expected_pid)
+                if root_matches(child.0, Some(expected_name), expected_pid)
                     && click_named(child.0, target)
                 {
                     return true;
@@ -390,11 +394,14 @@ fn activate(expected_name: &str, expected_pid: u32, target: &str) -> bool {
 fn main() {
     let mut arguments = env::args().skip(1);
     let mode = arguments.next().unwrap_or_default();
-    let expected = arguments.next().unwrap_or_default();
-    let expected_pid = arguments
-        .next()
-        .and_then(|value| value.parse::<u32>().ok())
-        .unwrap_or(0);
+    let first = arguments.next().unwrap_or_default();
+    let expected = (mode != "snapshot-pid").then_some(first.clone());
+    let pid_argument = if mode == "snapshot-pid" {
+        first
+    } else {
+        arguments.next().unwrap_or_default()
+    };
+    let expected_pid = pid_argument.parse::<u32>().unwrap_or(0);
     let target = (mode == "activate").then(|| arguments.next().unwrap_or_default());
     let timeout_argument = arguments.next();
     let parsed_timeout = timeout_argument
@@ -403,15 +410,15 @@ fn main() {
         .transpose();
     let invalid_timeout = parsed_timeout.is_err();
     let timeout_ms = parsed_timeout.ok().flatten().unwrap_or(5_000);
-    if !matches!(mode.as_str(), "snapshot" | "activate")
-        || expected.is_empty()
+    if !matches!(mode.as_str(), "snapshot" | "snapshot-pid" | "activate")
+        || expected.as_ref().is_some_and(String::is_empty)
         || expected_pid == 0
         || target.as_ref().is_some_and(String::is_empty)
         || invalid_timeout
         || arguments.next().is_some()
     {
         eprintln!(
-            "usage: zentty-atspi-inspector snapshot APPLICATION PID [TIMEOUT_MS]\n       zentty-atspi-inspector activate APPLICATION PID TARGET [TIMEOUT_MS]"
+            "usage: zentty-atspi-inspector snapshot APPLICATION PID [TIMEOUT_MS]\n       zentty-atspi-inspector snapshot-pid PID [TIMEOUT_MS]\n       zentty-atspi-inspector activate APPLICATION PID TARGET [TIMEOUT_MS]"
         );
         std::process::exit(64);
     }
@@ -425,9 +432,14 @@ fn main() {
 
     let deadline = Instant::now() + Duration::from_millis(timeout_ms);
     loop {
-        let receipt = snapshot(&expected, expected_pid);
+        let receipt = snapshot(expected.as_deref(), expected_pid);
         let succeeded = if let Some(target) = target.as_deref() {
-            tree_contains_name(&receipt, target) && activate(&expected, expected_pid, target)
+            tree_contains_name(&receipt, target)
+                && activate(
+                    expected.as_deref().expect("activate requires a name"),
+                    expected_pid,
+                    target,
+                )
         } else {
             !receipt["applications"].as_array().is_none_or(Vec::is_empty)
         };

@@ -68,7 +68,7 @@ fi
 [[ -n "${ZENTTY_NESTED_X11_SESSION_ID:-}${ZENTTY_NESTED_WAYLAND_SESSION_ID:-}${ZENTTY_NESTED_WAYLAND_INPUT_SESSION_ID:-}" ]] ||
     fail "must run inside a controlled nested display"
 for dependency in \
-    dbus-run-session gdbus grep sleep mktemp chmod rm findmnt fusermount3; do
+    dbus-run-session gdbus grep sleep mktemp chmod mkdir cat rm findmnt fusermount3; do
     command -v "${dependency}" >/dev/null || fail "${dependency} is required"
 done
 [[ -x /usr/libexec/at-spi-bus-launcher ]] ||
@@ -83,6 +83,16 @@ export GTK_A11Y=atspi
 outer_runtime="${XDG_RUNTIME_DIR:?}"
 private_runtime="$(mktemp -d "${outer_runtime}/zentty-private-atspi.XXXXXX")"
 chmod 700 "${private_runtime}"
+# The controlled compositor is not the host GNOME session. Prevent portal
+# discovery from inheriting XDG_CURRENT_DESKTOP=GNOME and repeatedly starting
+# xdg-desktop-portal-gnome, which requires GNOME Shell and crashes under Cage.
+# The generic GTK portal is sufficient for the stock GTK control and product.
+private_config="${private_runtime}/config"
+mkdir -p "${private_config}/xdg-desktop-portal"
+cat >"${private_config}/xdg-desktop-portal/portals.conf" <<'EOF'
+[preferred]
+default=gtk
+EOF
 private_wayland_display="${WAYLAND_DISPLAY:-}"
 if [[ "${GDK_BACKEND:-}" == wayland && "${private_wayland_display}" != /* ]]; then
     [[ -S "${outer_runtime}/${private_wayland_display}" ]] ||
@@ -111,11 +121,15 @@ trap 'exit 143' TERM
 set +e
 if [[ "${GDK_BACKEND:-}" == wayland ]]; then
     XDG_RUNTIME_DIR="${private_runtime}" \
+        XDG_CONFIG_HOME="${private_config}" \
+        XDG_CURRENT_DESKTOP=zentty-test \
         ZENTTY_PRIVATE_ATSPI_RUNTIME="${private_runtime}" \
         WAYLAND_DISPLAY="${private_wayland_display}" \
         dbus-run-session -- "$0" --inner "$@"
 else
     XDG_RUNTIME_DIR="${private_runtime}" \
+        XDG_CONFIG_HOME="${private_config}" \
+        XDG_CURRENT_DESKTOP=zentty-test \
         ZENTTY_PRIVATE_ATSPI_RUNTIME="${private_runtime}" \
         dbus-run-session -- "$0" --inner "$@"
 fi
