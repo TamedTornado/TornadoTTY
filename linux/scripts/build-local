@@ -34,6 +34,7 @@ fi
 optimize="${GHOSTTY_OPTIMIZE:-ReleaseSafe}"
 ghostty_system_integrations="${GHOSTTY_SYSTEM_INTEGRATIONS:-}"
 ghostty_system_integration_args=()
+ghostty_target_args=()
 if [[ -n "${ghostty_system_integrations}" ]]; then
     IFS=, read -r -a requested_integrations <<<"${ghostty_system_integrations}"
     for integration in "${requested_integrations[@]}"; do
@@ -43,6 +44,13 @@ if [[ -n "${ghostty_system_integrations}" ]]; then
         }
         ghostty_system_integration_args+=("-fsys=${integration}")
     done
+fi
+if [[ -n "${GHOSTTY_TARGET:-}" ]]; then
+    [[ "${GHOSTTY_TARGET}" =~ ^[A-Za-z0-9._-]+$ ]] || {
+        echo "error: invalid Ghostty target: ${GHOSTTY_TARGET}" >&2
+        exit 1
+    }
+    ghostty_target_args+=("-Dtarget=${GHOSTTY_TARGET}")
 fi
 c_probe_flags=(
     -std=c17
@@ -136,6 +144,7 @@ fi
         --prefix "${ghostty_install_dir}" \
         -Doptimize="${optimize}" \
         -Dcpu=baseline \
+        "${ghostty_target_args[@]}" \
         -Demit-terminfo=true \
         "${ghostty_system_integration_args[@]}" \
         -fno-sys=gtk4-layer-shell

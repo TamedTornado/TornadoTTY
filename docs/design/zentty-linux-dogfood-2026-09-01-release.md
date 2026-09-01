@@ -58,6 +58,24 @@
   provenance receipt. Its audit has negative fixtures for undeclared payload,
   dependency drift, and stale provenance.
 
+## First native-build failure and repair
+
+- The pinned Arch snapshot uses GCC 16 startup objects with `.sframe`
+  `R_X86_64_PC64` relocations. Zig 0.16's linker rejected `crt1.o` while linking
+  both Ghostty build-data helpers. Product compilation had not started; the
+  repeated error was an exact toolchain boundary rather than a product test
+  failure.
+- Updating or patching the pinned Zig compiler would make the two package
+  families diverge. Instead, the Arch build now selects the explicit
+  `x86_64-linux-gnu` Ghostty target. Zig supplies its pinned GNU CRT while the
+  build continues to compile and link against the real Arch GTK stack.
+  `build-local` exposes this only through a validated optional target argument;
+  the existing Ubuntu build remains native and unchanged.
+- Node and pnpm were removed from the Arch build environment after the first
+  package transaction proved that no JavaScript tool participates in native
+  construction. This reduces the release build closure rather than installing
+  unused tooling defensively.
+
 ## Evidence
 
 Evidence will be appended as package construction, lifecycle, and publication

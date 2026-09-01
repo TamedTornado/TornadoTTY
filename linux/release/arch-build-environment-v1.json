@@ -27,10 +27,8 @@
     "libxkbcommon",
     "meson",
     "ninja",
-    "nodejs",
     "pango",
     "patchelf",
-    "pnpm",
     "rustup",
     "wayland"
   ]

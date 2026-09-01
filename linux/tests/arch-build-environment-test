@@ -20,10 +20,18 @@ jq -e '
     "patchelf","rustup"] - .packages | length == 0)
 ' "${manifest}" >/dev/null || fail "pinned Arch build environment is malformed"
 
+if jq -e 'any(.packages[]; . == "nodejs" or . == "npm" or . == "pnpm")' \
+    "${manifest}" >/dev/null; then
+    fail "unused JavaScript tooling entered the native package build"
+fi
+
 grep -Fq 'archive.archlinux.org/repos/' "${wrapper}" ||
     fail "wrapper does not use the pinned Arch package archive"
 grep -Fq 'cargo fetch --locked' "${wrapper}" || fail "Cargo inputs are not locked"
 grep -Fq 'ZENTTY_GHOSTTY_PREPARED=true' "${wrapper}" || fail "Ghostty is not pinned"
+grep -Fq 'GHOSTTY_TARGET=x86_64-linux-gnu' \
+    "${repo_root}/linux/scripts/build-arch-package" ||
+    fail "Arch build does not avoid incompatible native GCC startup objects"
 if grep -Eq 'archlinux:(latest|base-devel)' "${wrapper}"; then
     fail "wrapper contains an unpinned container image"
 fi
