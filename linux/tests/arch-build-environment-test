@@ -42,6 +42,9 @@ fi
 grep -Fq 'sub(/^.*\//, "", path)' \
     "${repo_root}/linux/scripts/build-arch-package" ||
     fail "dependency resolver does not handle absolute ELF interpreter rows"
+grep -Fq 'path == library && $2 == "=>"' \
+    "${repo_root}/linux/scripts/build-arch-package" ||
+    fail "dependency resolver does not handle redirected absolute interpreter rows"
 if grep -Eq 'archlinux:(latest|base-devel)' "${wrapper}"; then
     fail "wrapper contains an unpinned container image"
 fi

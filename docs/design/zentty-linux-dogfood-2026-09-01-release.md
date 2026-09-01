@@ -103,10 +103,11 @@ family artifact, and each package is then exercised on its native family.
   output and emits only its first match, preserving strict pipeline failure
   handling instead of disabling it.
 - With the pipeline fixed, the scan reached the ELF interpreter and rejected
-  it because `readelf` reports `ld-linux-x86-64.so.2` while Arch's `ldd` prints
-  `/lib64/ld-linux-x86-64.so.2`. The resolver now compares the basename of
-  absolute-path loader rows and still asks pacman which installed package owns
-  the resolved path.
+  it because `readelf` reports `ld-linux-x86-64.so.2` while Omarchy's `ldd`
+  prints `/lib64/ld-linux-x86-64.so.2 => /usr/lib64/ld-linux-x86-64.so.2`.
+  The resolver now compares the basename of absolute left-hand paths, handles
+  both redirected and direct loader rows, and still asks pacman which installed
+  package owns the resolved path.
 
 ## Evidence
 
