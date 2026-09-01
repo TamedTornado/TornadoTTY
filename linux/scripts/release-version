@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+policy="${ZENTTY_RELEASE_POLICY:-${repo_root}/linux/release/policy-v1.json}"
+
+fail() {
+    echo "release-version: error: $*" >&2
+    exit 1
+}
+
+[[ $# -eq 1 ]] || fail "usage: $0 TAG"
+tag="$1"
+[[ -f "${policy}" ]] || fail "release policy is missing: ${policy}"
+
+for dependency in cargo git jq; do
+    command -v "${dependency}" >/dev/null || fail "${dependency} is required"
+done
+
+tag_prefix="$(jq -er '.tag_prefix | select(type == "string" and length > 0)' "${policy}")" ||
+    fail "release tag prefix is invalid"
+cargo_version="${ZENTTY_RELEASE_CARGO_VERSION:-$(
+    cargo metadata --locked --no-deps --format-version 1 |
+        jq -er '.packages[] | select(.name == "zentty-linux") | .version'
+)}"
+expected_tag="${tag_prefix}${cargo_version}"
+[[ "${tag}" == "${expected_tag}" ]] ||
+    fail "tag ${tag} does not match application version ${cargo_version}; expected ${expected_tag}"
+
+if [[ -n "${ZENTTY_RELEASE_HEAD_TAGS:-}" ]]; then
+    head_tags="${ZENTTY_RELEASE_HEAD_TAGS}"
+else
+    head_tags="$(git -C "${repo_root}" tag --points-at HEAD)"
+fi
+grep -Fxq -- "${tag}" <<<"${head_tags}" ||
+    fail "tag ${tag} does not point at HEAD"
+
+jq -cn \
+    --arg tag "${tag}" \
+    --arg version "${cargo_version}" \
+    --arg title "$(jq -r '.release_title_prefix' "${policy}")${cargo_version}" \
+    '{schema_version:1,tag:$tag,version:$version,title:$title}'

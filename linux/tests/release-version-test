@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+subject="${repo_root}/linux/scripts/release-version"
+
+fail() {
+    echo "release-version-test: error: $*" >&2
+    exit 1
+}
+
+expect_failure() {
+    local name="$1" expected="$2"
+    shift 2
+    local output
+    if output="$("$@" 2>&1)"; then
+        fail "${name} unexpectedly passed"
+    fi
+    grep -Fq -- "${expected}" <<<"${output}" ||
+        fail "${name} did not report ${expected}: ${output}"
+}
+
+receipt="$(
+    ZENTTY_RELEASE_CARGO_VERSION=0.1.0 \
+    ZENTTY_RELEASE_HEAD_TAGS=$'unrelated\nlinux-v0.1.0' \
+        "${subject}" linux-v0.1.0
+)"
+jq -e '
+  .schema_version == 1 and .tag == "linux-v0.1.0" and
+  .version == "0.1.0" and .title == "Zentty for Linux 0.1.0"
+' <<<"${receipt}" >/dev/null || fail "valid release identity receipt is malformed"
+
+expect_failure wrong-prefix 'expected linux-v0.1.0' \
+    env ZENTTY_RELEASE_CARGO_VERSION=0.1.0 ZENTTY_RELEASE_HEAD_TAGS=linux-v0.1.0 \
+    "${subject}" v0.1.0
+expect_failure version-mismatch 'expected linux-v0.1.0' \
+    env ZENTTY_RELEASE_CARGO_VERSION=0.1.0 ZENTTY_RELEASE_HEAD_TAGS=linux-v0.2.0 \
+    "${subject}" linux-v0.2.0
+expect_failure tag-not-at-head 'does not point at HEAD' \
+    env ZENTTY_RELEASE_CARGO_VERSION=0.1.0 ZENTTY_RELEASE_HEAD_TAGS=unrelated \
+    "${subject}" linux-v0.1.0
+
+echo "release-version-test: PASS"

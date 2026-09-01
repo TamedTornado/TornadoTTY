@@ -1,0 +1,44 @@
+{
+  "schema_version": 1,
+  "status": "RATIFIED",
+  "tracking_issue": 142,
+  "package": "zentty",
+  "architecture": "x86_64",
+  "supported_distribution": "Omarchy",
+  "supported_major": 4,
+  "package_description": "Terminal workspace for coding agents",
+  "url": "https://github.com/TamedTornado/zentty",
+  "license": "GPL-3.0-only",
+  "private_libraries": [
+    "libghostty-gtk-embed.so",
+    "libgtk4-layer-shell.so"
+  ],
+  "required_runtime_packages": [
+    "cairo",
+    "fontconfig",
+    "gcc-libs",
+    "gdk-pixbuf2",
+    "glib2",
+    "glibc",
+    "graphene",
+    "gtk4",
+    "harfbuzz",
+    "libadwaita",
+    "libepoxy",
+    "libx11",
+    "libxkbcommon",
+    "pango",
+    "wayland"
+  ],
+  "optional_runtime_packages": [
+    {"package": "libnotify", "reason": "desktop notification command integration"},
+    {"package": "openssh", "reason": "SSH worklanes and remote transfer"},
+    {"package": "wl-clipboard", "reason": "Wayland clipboard interoperability"},
+    {"package": "xdg-utils", "reason": "opening URLs and files with desktop defaults"}
+  ],
+  "build_environment": {
+    "os_ids": ["arch", "omarchy"],
+    "package_manager": "pacman",
+    "package_builder": "makepkg"
+  }
+}

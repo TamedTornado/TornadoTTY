@@ -1,0 +1,74 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+environment="${repo_root}/linux/release/arch-build-environment-v1.json"
+
+fail() {
+    echo "build-arch-in-container: error: $*" >&2
+    exit 1
+}
+
+for dependency in docker git jq; do
+    command -v "${dependency}" >/dev/null || fail "${dependency} is required"
+done
+[[ -z "$(git -C "${repo_root}" status --porcelain=v1)" ]] || fail "Zentty checkout must be clean"
+jq -e '
+  .schema_version == 1 and .status == "RATIFIED" and
+  (.image | test("^archlinux@sha256:[0-9a-f]{64}$")) and
+  (.archive_date | test("^[0-9]{4}/[0-9]{2}/[0-9]{2}$")) and
+  .architecture == "x86_64" and
+  (.packages == (.packages | sort | unique)) and
+  all(.packages[]; test("^[a-z0-9@._+-]+$"))
+' "${environment}" >/dev/null || fail "Arch build environment is malformed"
+
+image="$(jq -r '.image' "${environment}")"
+archive_date="$(jq -r '.archive_date' "${environment}")"
+packages="$(jq -r '.packages | join(" ")' "${environment}")"
+zig_version="$(jq -r '.toolchains.zig.version' "${repo_root}/linux/ci/environment-v1.json")"
+zig_url="$(jq -r '.toolchains.zig.url' "${repo_root}/linux/ci/environment-v1.json")"
+zig_sha="$(jq -r '.toolchains.zig.sha256' "${repo_root}/linux/ci/environment-v1.json")"
+rust_channel="$(jq -r '.toolchains.rust.channel' "${repo_root}/linux/ci/environment-v1.json")"
+
+docker run --rm \
+    --volume "${repo_root}:/workspace" \
+    --workdir /workspace \
+    --env "ARCHIVE_DATE=${archive_date}" \
+    --env "BUILD_UID=$(id -u)" \
+    --env "BUILD_GID=$(id -g)" \
+    --env "BUILD_PACKAGES=${packages}" \
+    --env "RUST_CHANNEL=${rust_channel}" \
+    --env "ZIG_SHA=${zig_sha}" \
+    --env "ZIG_URL=${zig_url}" \
+    --env "ZIG_VERSION=${zig_version}" \
+    --env "ZENTTY_RELEASE_TAG=${ZENTTY_RELEASE_TAG:-}" \
+    "${image}" \
+    bash -euo pipefail -c '
+      printf "Server = https://archive.archlinux.org/repos/%s/\$repo/os/\$arch\n" \
+        "${ARCHIVE_DATE}" >/etc/pacman.d/mirrorlist
+      pacman -Syu --noconfirm --needed ${BUILD_PACKAGES}
+      groupadd --gid "${BUILD_GID}" builder
+      useradd --uid "${BUILD_UID}" --gid "${BUILD_GID}" --create-home builder
+      install -d -o builder -g builder /opt/zentty-tools
+      su builder -c "
+        set -euo pipefail
+        export HOME=/home/builder
+        export CARGO_HOME=\${HOME}/.cargo
+        export RUSTUP_HOME=\${HOME}/.rustup
+        rustup toolchain install ${RUST_CHANNEL} --profile minimal --component clippy,rustfmt
+        archive=\$(mktemp)
+        trap '\''rm -f -- \"\${archive}\"'\'' EXIT
+        curl -fsSL ${ZIG_URL} -o \"\${archive}\"
+        test \"\$(sha256sum \"\${archive}\" | awk '\''{print \$1}'\'')\" = ${ZIG_SHA}
+        tar -xJf \"\${archive}\" -C /opt/zentty-tools
+        rm -f -- \"\${archive}\"
+        trap - EXIT
+        export ZIG=/opt/zentty-tools/zig-x86_64-linux-${ZIG_VERSION}/zig
+        export BLUEPRINT_COMPILER_DIR=/usr/bin
+        export PATH=\${CARGO_HOME}/bin:\${PATH}
+        cd /workspace
+        cargo fetch --locked
+        linux/scripts/prepare-ghostty-source
+        ZENTTY_GHOSTTY_PREPARED=true linux/scripts/build-arch-package
+      "
+    '

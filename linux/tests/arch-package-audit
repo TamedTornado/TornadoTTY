@@ -1,0 +1,105 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+policy="${repo_root}/linux/packaging/arch-policy-v1.json"
+artifact="${1:?usage: arch-package-audit PACKAGE MANIFEST PROVENANCE}"
+manifest="${2:?usage: arch-package-audit PACKAGE MANIFEST PROVENANCE}"
+provenance="${3:?usage: arch-package-audit PACKAGE MANIFEST PROVENANCE}"
+temporary="$(mktemp -d)"
+trap 'rm -rf -- "${temporary}"' EXIT
+
+fail() {
+    echo "arch-package-audit: error: $*" >&2
+    exit 1
+}
+
+for dependency in bsdtar file find jq patchelf sha256sum sort stat strings; do
+    command -v "${dependency}" >/dev/null || fail "${dependency} is required"
+done
+[[ -f "${artifact}" && -f "${manifest}" && -f "${provenance}" ]] ||
+    fail "artifact evidence set is incomplete"
+
+bsdtar -xf "${artifact}" -C "${temporary}"
+[[ -f "${temporary}/.PKGINFO" ]] || fail ".PKGINFO is missing"
+pkginfo="${temporary}/.PKGINFO"
+[[ "$(sed -n 's/^pkgname = //p' "${pkginfo}")" == zentty ]] || fail "wrong package name"
+[[ "$(sed -n 's/^arch = //p' "${pkginfo}")" == x86_64 ]] || fail "wrong architecture"
+package_version="$(sed -n 's/^pkgver = //p' "${pkginfo}")"
+package_version="${package_version%-1}"
+[[ -n "${package_version}" ]] || fail "package version is missing"
+
+mapfile -t actual_dependencies < <(sed -n 's/^depend = //p' "${pkginfo}" | LC_ALL=C sort)
+mapfile -t expected_dependencies < <(jq -r '.required_runtime_packages[]' "${policy}")
+[[ "$(printf '%s\n' "${actual_dependencies[@]}")" == \
+   "$(printf '%s\n' "${expected_dependencies[@]}")" ]] ||
+    fail "package dependencies do not match reviewed policy"
+
+jq -e --arg version "${package_version}" '
+  .schema_version == 1 and .package == "zentty" and
+  .package_family == "arch" and .architecture == "x86_64" and
+  .version == $version and (.zentty_revision | test("^[0-9a-f]{40}$")) and
+  (.files | length > 0) and ([.files[].path] | length == (unique | length)) and
+  all(.files[];
+    (.path | startswith("/usr/")) and (.path | contains("..") | not) and
+    (.type == "file" or .type == "symlink"))
+' "${manifest}" >/dev/null || fail "expanded manifest is invalid"
+
+while IFS= read -r path; do
+    absolute="${temporary}${path}"
+    [[ -e "${absolute}" || -L "${absolute}" ]] || fail "manifest path is absent: ${path}"
+    type="$(jq -r --arg path "${path}" '.files[] | select(.path == $path) | .type' "${manifest}")"
+    if [[ "${type}" == symlink ]]; then
+        [[ -L "${absolute}" ]] || fail "manifest symlink is not a symlink: ${path}"
+        expected="$(jq -r --arg path "${path}" '.files[] | select(.path == $path) | .target' "${manifest}")"
+        [[ "$(readlink "${absolute}")" == "${expected}" ]] || fail "symlink target mismatch: ${path}"
+    else
+        [[ -f "${absolute}" && ! -L "${absolute}" ]] || fail "manifest file is not regular: ${path}"
+        expected="$(jq -r --arg path "${path}" '.files[] | select(.path == $path) | .sha256' "${manifest}")"
+        [[ "$(sha256sum "${absolute}" | awk '{print $1}')" == "${expected}" ]] ||
+            fail "payload hash mismatch: ${path}"
+        mode="$(jq -r --arg path "${path}" '.files[] | select(.path == $path) | .mode' "${manifest}")"
+        [[ "$(stat -c %a "${absolute}")" == "${mode}" ]] || fail "payload mode mismatch: ${path}"
+    fi
+done < <(jq -r '.files[].path' "${manifest}")
+
+find "${temporary}/usr" \( -type f -o -type l \) -printf '/usr/%P\n' | LC_ALL=C sort \
+    >"${temporary}/archive-paths"
+jq -r '.files[].path' "${manifest}" | LC_ALL=C sort >"${temporary}/manifest-paths"
+cmp -s "${temporary}/archive-paths" "${temporary}/manifest-paths" ||
+    fail "archive contains missing or undeclared payload files"
+[[ ! -e "${temporary}/usr/share/doc/zentty/changelog.Debian.gz" ]] ||
+    fail "Debian changelog leaked into Arch package"
+
+while IFS= read -r path; do
+    absolute="${temporary}${path}"
+    if file "${absolute}" | grep -Fq ELF; then
+        if strings "${absolute}" | grep -Eq '/home/|/tmp/|/build/linux-arch-package'; then
+            fail "build path leaked into ELF: ${path}"
+        fi
+    fi
+done < <(jq -r '.files[] | select(.type == "file") | .path' "${manifest}")
+# The expected loader token is intentionally literal.
+# shellcheck disable=SC2016
+[[ "$(patchelf --print-rpath "${temporary}/usr/lib/zentty/lib/libghostty-gtk-embed.so")" == '$ORIGIN' ]] ||
+    fail "private Ghostty RUNPATH is not normalized"
+
+jq -e \
+    --arg version "${package_version}" \
+    --arg artifact "$(basename "${artifact}")" \
+    --arg artifact_sha "$(sha256sum "${artifact}" | awk '{print $1}')" \
+    --arg manifest "$(basename "${manifest}")" \
+    --arg manifest_sha "$(sha256sum "${manifest}" | awk '{print $1}')" '
+  .schema_version == 1 and .package == "zentty" and
+  .package_version == $version and .architecture == "x86_64" and
+  .baseline == "omarchy-4-x86_64" and
+  .artifact == {file:$artifact,sha256:$artifact_sha} and
+  .manifest == {file:$manifest,sha256:$manifest_sha} and
+  (.zentty_revision | test("^[0-9a-f]{40}$")) and
+  (.ghostty_revision | test("^[0-9a-f]{40}$")) and
+  (.environment.installed_packages_sha256 | test("^[0-9a-f]{64}$")) and
+  (.dependencies.arch_runtime | length > 0) and
+  .dependencies.direct_elf_owners == .dependencies.arch_runtime
+' "${provenance}" >/dev/null || fail "provenance is incomplete or stale"
+
+echo "arch-package-audit: PASS files=$(jq '.files | length' "${manifest}") package=$(basename "${artifact}")"

@@ -6,6 +6,12 @@ ghostty_source="${GHOSTTY_SOURCE_DIR:-${repo_root}/build/linux-deps/ghostty}"
 temporary="$(mktemp -d)"
 trap 'rm -rf -- "${temporary}"' EXIT
 
+if jq -e 'any(.components[]; has("system_source"))' \
+    "${repo_root}/linux/packaging/ghostty-notices-v1.json" >/dev/null; then
+    echo "package-notices-test: package notices depend on distro-specific system paths" >&2
+    exit 1
+fi
+
 "${repo_root}/linux/scripts/collect-package-notices" \
     "${ghostty_source}" "${temporary}/positive" >/dev/null
 jq -e 'map(.name + "@" + .version) |

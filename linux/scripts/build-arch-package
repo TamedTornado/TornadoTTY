@@ -1,0 +1,278 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+policy="${repo_root}/linux/packaging/arch-policy-v1.json"
+manifest="${repo_root}/linux/packaging/install-manifest-v1.json"
+output_root="${ZENTTY_ARCH_PACKAGE_OUTPUT_DIR:-${repo_root}/build/linux-arch-package}"
+work_root="${ZENTTY_ARCH_PACKAGE_WORK_DIR:-${repo_root}/build/linux-arch-package-work}"
+ghostty_source="${GHOSTTY_SOURCE_DIR:-${repo_root}/build/linux-deps/ghostty}"
+ghostty_install="${work_root}/ghostty-install"
+stage="${work_root}/stage"
+package_root="${work_root}/package-root"
+receipt_rows="${work_root}/expanded-manifest.ndjson"
+
+fail() {
+    echo "build-arch-package: error: $*" >&2
+    exit 1
+}
+
+for dependency in appstreamcli awk bsdtar cargo desktop-file-validate file find \
+    git gzip install jq ldd makepkg pacman patchelf readelf rustc sed sha256sum \
+    sort stat strip touch xargs zstd; do
+    command -v "${dependency}" >/dev/null || fail "${dependency} is required"
+done
+
+[[ "$(uname -m)" == x86_64 ]] || fail "host architecture must be x86_64"
+[[ -r /etc/os-release ]] || fail "/etc/os-release is required"
+# shellcheck disable=SC1091
+source /etc/os-release
+case "${ID:-}" in
+    arch|omarchy) ;;
+    *) fail "Arch or Omarchy build host is required; found ${ID:-unknown}" ;;
+esac
+[[ -z "$(git -C "${repo_root}" status --porcelain=v1)" ]] ||
+    fail "Zentty checkout must be clean"
+zentty_revision="$(git -C "${repo_root}" rev-parse HEAD)"
+zentty_short="${zentty_revision:0:12}"
+source_date_epoch="$(git -C "${repo_root}" show -s --format=%ct HEAD)"
+export SOURCE_DATE_EPOCH="${source_date_epoch}"
+
+cargo_version="$(cargo metadata --locked --no-deps --format-version 1 |
+    jq -er '.packages[] | select(.name == "zentty-linux") | .version')"
+if [[ -n "${ZENTTY_RELEASE_TAG:-}" ]]; then
+    release_receipt="$("${repo_root}/linux/scripts/release-version" "${ZENTTY_RELEASE_TAG}")"
+    package_version="$(jq -r '.version' <<<"${release_receipt}")"
+else
+    package_version="${cargo_version}+git${zentty_short}"
+fi
+[[ "${package_version}" =~ ^[0-9][0-9A-Za-z.+_]*$ ]] ||
+    fail "package version is not valid for pacman: ${package_version}"
+
+ghostty_revision="$(sed -n 's/^revision=//p' "${repo_root}/linux/ghostty.lock")"
+if [[ "${ZENTTY_GHOSTTY_PREPARED:-false}" == true ]]; then
+    [[ "$(git -C "${ghostty_source}" rev-parse HEAD 2>/dev/null)" == "${ghostty_revision}" ]] ||
+        fail "prepared Ghostty checkout does not match the pinned revision"
+    [[ -z "$(git -C "${ghostty_source}" status --porcelain=v1)" ]] ||
+        fail "prepared Ghostty checkout is dirty"
+fi
+
+"${repo_root}/linux/tests/arch-packaging-policy" --validate-only
+desktop-file-validate "${repo_root}/linux/packaging/com.zentty.zentty.desktop"
+appstreamcli validate --no-net --pedantic \
+    "${repo_root}/linux/packaging/com.zentty.zentty.metainfo.xml" >/dev/null
+
+rm -rf -- "${work_root}"
+mkdir -p -- "${output_root}" "${stage}" "${ghostty_install}" "${package_root}"
+build_environment=(
+    "ZENTTY_GHOSTTY_INSTALL_DIR=${ghostty_install}"
+    "ZENTTY_BUILD_OUTPUT_DIR=${stage}"
+    "GHOSTTY_OPTIMIZE=ReleaseSafe"
+    "GHOSTTY_SYSTEM_INTEGRATIONS=fontconfig"
+    "RUSTFLAGS=--remap-path-prefix=${repo_root}=/usr/src/zentty --remap-path-prefix=${CARGO_HOME:-${HOME}/.cargo}=/usr/src/cargo"
+)
+[[ "${ZENTTY_GHOSTTY_PREPARED:-false}" == true ]] &&
+    build_environment+=("ZENTTY_GHOSTTY_PREPARED=true")
+[[ -n "${GHOSTTY_SOURCE_DIR:-}" ]] &&
+    build_environment+=("GHOSTTY_SOURCE_DIR=${ghostty_source}")
+env "${build_environment[@]}" "${repo_root}/linux/scripts/build-local"
+
+copy_file() {
+    local source="$1" destination="$2" mode="$3"
+    mkdir -p -- "$(dirname "${package_root}${destination}")"
+    install -m "${mode}" "${repo_root}/${source}" "${package_root}${destination}"
+}
+
+copy_stage_file() {
+    local source="$1" destination="$2" mode="$3"
+    [[ -f "${source}" ]] || fail "staged file is missing: ${source}"
+    mkdir -p -- "$(dirname "${package_root}${destination}")"
+    install -m "${mode}" "${source}" "${package_root}${destination}"
+}
+
+while IFS=$'\t' read -r source destination mode; do
+    if [[ "${source}" == build/linux/* ]]; then
+        copy_stage_file "${stage}/${source#build/linux/}" "${destination}" "${mode}"
+    else
+        copy_file "${source}" "${destination}" "${mode}"
+    fi
+done < <(jq -r '.entries[] | select(.kind == "file") |
+    [.source, .destination, .mode] | @tsv' "${manifest}")
+
+while IFS=$'\t' read -r destination target; do
+    mkdir -p -- "$(dirname "${package_root}${destination}")"
+    ln -s -- "${target}" "${package_root}${destination}"
+done < <(jq -r '.entries[] | select(.kind == "symlink") |
+    [.destination, .target] | @tsv' "${manifest}")
+
+while IFS=$'\t' read -r source destination mode_policy; do
+    source_path="${stage}/${source#build/linux/}"
+    [[ -d "${source_path}" ]] || fail "staged tree is missing: ${source}"
+    mkdir -p -- "${package_root}${destination}"
+    while IFS= read -r relative; do
+        skip=false
+        while IFS= read -r exclusion; do
+            [[ -z "${exclusion}" ]] && continue
+            if [[ "${relative}" == "${exclusion}" || "${relative}" == "${exclusion}/"* ]]; then
+                skip=true
+                break
+            fi
+        done < <(jq -r --arg source "${source}" '.entries[] | select(.source == $source) |
+            (.exclude // [])[]' "${manifest}")
+        "${skip}" && continue
+        source_file="${source_path}/${relative}"
+        destination_file="${package_root}${destination}/${relative}"
+        mkdir -p -- "$(dirname "${destination_file}")"
+        if [[ "${mode_policy}" == preserve-reviewed-executables && -x "${source_file}" ]]; then
+            install -m 0755 "${source_file}" "${destination_file}"
+        else
+            install -m 0644 "${source_file}" "${destination_file}"
+        fi
+    done < <(cd "${source_path}" && find . -type f -printf '%P\n' | LC_ALL=C sort)
+done < <(jq -r '.entries[] | select(.kind == "tree") |
+    [.source, .destination, .mode_policy] | @tsv' "${manifest}")
+
+terminfo_source="${ghostty_install}/share/terminfo/x/xterm-ghostty"
+[[ -f "${terminfo_source}" ]] || fail "pinned Ghostty terminfo was not generated"
+mkdir -p -- "${package_root}/usr/share/terminfo/x" "${package_root}/usr/share/terminfo/g"
+install -m 0644 "${terminfo_source}" "${package_root}/usr/share/terminfo/x/xterm-ghostty"
+ln -s ../x/xterm-ghostty "${package_root}/usr/share/terminfo/g/ghostty"
+
+# Arch owns release identity in package metadata rather than Debian's generated
+# changelog path. The common manifest's Debian-only generated entry is omitted.
+# The loader token must remain literal.
+# shellcheck disable=SC2016
+patchelf --set-rpath '$ORIGIN' "${package_root}/usr/lib/zentty/lib/libghostty-gtk-embed.so"
+while IFS= read -r candidate; do
+    file "${candidate}" | grep -Fq ELF && strip --strip-debug "${candidate}"
+done < <(find "${package_root}" -type f -print | LC_ALL=C sort)
+find "${package_root}" -type d -exec chmod 0755 {} +
+find "${package_root}" -exec touch -h -d "@${SOURCE_DATE_EPOCH}" {} +
+
+mapfile -t required_dependencies < <(jq -r '.required_runtime_packages[]' "${policy}")
+mapfile -t optional_dependencies < <(jq -r '.optional_runtime_packages[] |
+    .package + ": " + .reason' "${policy}")
+(( ${#required_dependencies[@]} > 0 )) || fail "runtime dependency policy is empty"
+
+# Derive the owners of every direct dynamic dependency from the final ELF
+# payload. Transitive libraries are owned by those direct Arch packages and do
+# not become accidental top-level package dependencies.
+derived_rows="${work_root}/derived-arch-dependencies"
+: >"${derived_rows}"
+while IFS= read -r elf; do
+    while IFS= read -r library; do
+        case "${library}" in
+            libghostty-gtk-embed.so|libgtk4-layer-shell.so) continue ;;
+        esac
+        resolved="$(ldd "${elf}" | awk -v library="${library}" '
+          $1 == library && $2 == "=>" { print $3; exit }
+          $1 == library && $2 ~ /^\(/ { print $1; exit }
+        ')"
+        [[ "${resolved}" == /* && -f "${resolved}" ]] ||
+            fail "could not resolve direct dependency ${library} for ${elf}"
+        owner="$(pacman -Qoq "${resolved}" 2>/dev/null)" ||
+            fail "no installed Arch package owns ${resolved}"
+        printf '%s\n' "${owner}" >>"${derived_rows}"
+    done < <(readelf -d "${elf}" | sed -n 's/.*Shared library: \[\([^]]*\)\].*/\1/p')
+done < <(printf '%s\n' \
+    "${package_root}/usr/lib/zentty/bin/zentty-linux" \
+    "${package_root}/usr/lib/zentty/bin/zentty" \
+    "${package_root}/usr/lib/zentty/lib/libghostty-gtk-embed.so" \
+    "${package_root}/usr/lib/zentty/lib/libgtk4-layer-shell.so")
+mapfile -t derived_dependencies < <(LC_ALL=C sort -u "${derived_rows}")
+[[ "$(printf '%s\n' "${derived_dependencies[@]}")" == \
+   "$(printf '%s\n' "${required_dependencies[@]}")" ]] || {
+    printf 'build-arch-package: reviewed dependencies:\n%s\n' \
+        "$(printf '%s\n' "${required_dependencies[@]}")" >&2
+    printf 'build-arch-package: derived dependencies:\n%s\n' \
+        "$(printf '%s\n' "${derived_dependencies[@]}")" >&2
+    fail "derived runtime dependencies differ from reviewed policy"
+}
+
+mkdir -p -- "${work_root}/makepkg"
+cp -a -- "${package_root}" "${work_root}/makepkg/payload"
+{
+    printf 'pkgname=zentty\n'
+    printf 'pkgver=%q\n' "${package_version}"
+    printf 'pkgrel=1\n'
+    printf 'pkgdesc=%q\n' "$(jq -r '.package_description' "${policy}")"
+    printf 'arch=(x86_64)\n'
+    printf 'url=%q\n' "$(jq -r '.url' "${policy}")"
+    printf 'license=(GPL-3.0-only)\n'
+    printf 'depends=('; printf '%q ' "${required_dependencies[@]}"; printf ')\n'
+    printf 'optdepends=('; printf '%q ' "${optional_dependencies[@]}"; printf ')\n'
+    printf "options=('!strip' '!debug')\n"
+    # makepkg expands these variables while evaluating package().
+    # shellcheck disable=SC2016
+    printf 'package() { cp -a -- "$startdir/payload/." "$pkgdir/"; }\n'
+} >"${work_root}/makepkg/PKGBUILD"
+(
+    cd "${work_root}/makepkg"
+    PKGDEST="${output_root}" makepkg --force --nodeps --noconfirm
+)
+artifact="${output_root}/zentty-${package_version}-1-x86_64.pkg.tar.zst"
+[[ -f "${artifact}" ]] || fail "makepkg did not produce the expected artifact"
+
+: >"${receipt_rows}"
+while IFS= read -r payload_path; do
+    absolute="${package_root}${payload_path}"
+    owner_component="$(jq -er --arg path "${payload_path}" '
+      [.entries[] as $entry |
+        select($entry.id != "changelog" and
+          ($path == $entry.destination or ($path | startswith($entry.destination + "/")))) |
+        $entry] | sort_by(.destination | length) | last.owner_component' "${manifest}")"
+    if [[ -L "${absolute}" ]]; then
+        jq -cn --arg path "${payload_path}" --arg owner_component "${owner_component}" \
+            --arg target "$(readlink "${absolute}")" \
+            '{path:$path,type:"symlink",mode:"0777",owner_component:$owner_component,target:$target}' \
+            >>"${receipt_rows}"
+    else
+        jq -cn --arg path "${payload_path}" --arg owner_component "${owner_component}" \
+            --arg mode "$(stat -c %a "${absolute}")" \
+            --arg sha256 "$(sha256sum "${absolute}" | awk '{print $1}')" \
+            '{path:$path,type:"file",mode:$mode,owner_component:$owner_component,sha256:$sha256}' \
+            >>"${receipt_rows}"
+    fi
+done < <(find "${package_root}" -mindepth 1 \( -type f -o -type l \) \
+    -printf '/%P\n' | LC_ALL=C sort)
+
+expanded_manifest="${output_root}/zentty-${package_version}-1-x86_64.manifest.json"
+jq -s --arg version "${package_version}" --arg revision "${zentty_revision}" \
+    '{schema_version:1,package:"zentty",version:$version,architecture:"x86_64",
+      package_family:"arch",zentty_revision:$revision,files:.}' \
+    "${receipt_rows}" >"${expanded_manifest}"
+
+build_packages_sha256="$(pacman -Q | LC_ALL=C sort | sha256sum | awk '{print $1}')"
+provenance="${output_root}/zentty-${package_version}-1-x86_64.provenance.json"
+jq -n \
+    --arg package_version "${package_version}" --arg zentty_revision "${zentty_revision}" \
+    --arg ghostty_revision "${ghostty_revision}" --argjson source_date_epoch "${source_date_epoch}" \
+    --arg artifact "$(basename "${artifact}")" \
+    --arg artifact_sha256 "$(sha256sum "${artifact}" | awk '{print $1}')" \
+    --arg manifest "$(basename "${expanded_manifest}")" \
+    --arg manifest_sha256 "$(sha256sum "${expanded_manifest}" | awk '{print $1}')" \
+    --arg os_id "${ID}" --arg os_version "${VERSION_ID:-rolling}" \
+    --arg build_packages_sha256 "${build_packages_sha256}" \
+    --argjson dependencies "$(printf '%s\n' "${required_dependencies[@]}" | jq -R . | jq -s .)" \
+    --argjson derived_dependencies "$(printf '%s\n' "${derived_dependencies[@]}" | jq -R . | jq -s .)" \
+    --arg rustc "$(rustc --version)" --arg cargo "$(cargo --version)" \
+    --arg zig "$("${ZIG:-zig}" version)" --arg makepkg "$(makepkg --version | head -1)" \
+    '{schema_version:1,package:"zentty",package_version:$package_version,
+      architecture:"x86_64",baseline:"omarchy-4-x86_64",
+      zentty_revision:$zentty_revision,ghostty_revision:$ghostty_revision,
+      source_date_epoch:$source_date_epoch,
+      artifact:{file:$artifact,sha256:$artifact_sha256},
+      manifest:{file:$manifest,sha256:$manifest_sha256},
+      dependencies:{arch_runtime:$dependencies,direct_elf_owners:$derived_dependencies},
+      environment:{os_id:$os_id,os_version:$os_version,
+        installed_packages_sha256:$build_packages_sha256},
+      toolchain:{rustc:$rustc,cargo:$cargo,zig:$zig,makepkg:$makepkg}}' >"${provenance}"
+
+"${repo_root}/linux/tests/arch-package-audit" \
+    "${artifact}" "${expanded_manifest}" "${provenance}"
+(
+    cd "${output_root}"
+    sha256sum "$(basename "${artifact}")" "$(basename "${expanded_manifest}")" \
+        "$(basename "${provenance}")" >SHA256SUMS
+)
+echo "build-arch-package: PASS artifact=${artifact} version=${package_version}"

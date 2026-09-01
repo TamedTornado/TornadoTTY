@@ -29,7 +29,7 @@
     {"name":"zf","license":"MIT","source":"zig-pkg/zf-0.11.0-OIRy8X-RAAAwaRXHMYpj2uvBnuGTZWEE_3V7acqHQNtW/LICENSE","notice":"zf-LICENSE"},
     {"name":"zigimg","license":"MIT","source":"zig-pkg/zigimg-0.1.0-8_eo2oyaFwBZwJpmqPkCfVXWBrHcqbYwmrp1I6bTD3lI/LICENSE","notice":"zigimg-LICENSE"},
     {"name":"zig-gobject","license":"MIT","project_source":"linux/packaging/notices/zig-gobject-LICENSE","notice":"zig-gobject-LICENSE"},
-    {"name":"z2d","license":"MPL-2.0","system_source":"/usr/share/common-licenses/MPL-2.0","notice":"z2d-MPL-2.0"}
+    {"name":"z2d","license":"MPL-2.0","project_source":"linux/packaging/notices/MPL-2.0","notice":"z2d-MPL-2.0"}
   ],
   "embedded_notice_only": [
     {"name":"stb","license":"MIT OR Unlicense","evidence":"src/stb/stb_image.h"},

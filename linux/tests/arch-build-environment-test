@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+manifest="${repo_root}/linux/release/arch-build-environment-v1.json"
+wrapper="${repo_root}/linux/scripts/build-arch-in-container"
+
+fail() {
+    echo "arch-build-environment-test: error: $*" >&2
+    exit 1
+}
+
+jq -e '
+  .schema_version == 1 and .status == "RATIFIED" and .tracking_issue == 142 and
+  .image == "archlinux@sha256:84cd9ef000b3cff245ec028e87965b84724f4bf1cc63fc2741ba927b88515ed6" and
+  .image_created == "2026-08-31T19:09:21.076076071Z" and
+  .archive_date == "2026/08/31" and .architecture == "x86_64" and
+  (.packages == (.packages | sort | unique)) and
+  (["blueprint-compiler","cmake","gtk4","libadwaita","meson","ninja",
+    "patchelf","rustup"] - .packages | length == 0)
+' "${manifest}" >/dev/null || fail "pinned Arch build environment is malformed"
+
+grep -Fq 'archive.archlinux.org/repos/' "${wrapper}" ||
+    fail "wrapper does not use the pinned Arch package archive"
+grep -Fq 'cargo fetch --locked' "${wrapper}" || fail "Cargo inputs are not locked"
+grep -Fq 'ZENTTY_GHOSTTY_PREPARED=true' "${wrapper}" || fail "Ghostty is not pinned"
+if grep -Eq 'archlinux:(latest|base-devel)' "${wrapper}"; then
+    fail "wrapper contains an unpinned container image"
+fi
+
+echo "arch-build-environment-test: PASS"

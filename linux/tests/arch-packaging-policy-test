@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+subject="${repo_root}/linux/tests/arch-packaging-policy"
+temporary="$(mktemp -d)"
+trap 'rm -rf -- "${temporary}"' EXIT
+
+fail() {
+    echo "arch-packaging-policy-test: error: $*" >&2
+    exit 1
+}
+
+"${subject}" --validate-only >/dev/null
+
+jq '.required_runtime_packages += ["gtk4"]' \
+    "${repo_root}/linux/packaging/arch-policy-v1.json" >"${temporary}/duplicate.json"
+if ZENTTY_ARCH_POLICY="${temporary}/duplicate.json" "${subject}" --validate-only \
+    >"${temporary}/duplicate.log" 2>&1; then
+    fail "duplicate dependency unexpectedly passed"
+fi
+grep -Fq 'policy is malformed' "${temporary}/duplicate.log"
+
+jq '(.entries[] | select(.id == "private-gui")).destination = "/opt/zentty"' \
+    "${repo_root}/linux/packaging/install-manifest-v1.json" >"${temporary}/bad-manifest.json"
+if ZENTTY_INSTALL_MANIFEST="${temporary}/bad-manifest.json" \
+    "${subject}" --validate-only >"${temporary}/manifest.log" 2>&1; then
+    fail "nonstandard payload root unexpectedly passed"
+fi
+grep -Fq 'manifest is not Arch-safe' "${temporary}/manifest.log"
+
+echo "arch-packaging-policy-test: PASS"

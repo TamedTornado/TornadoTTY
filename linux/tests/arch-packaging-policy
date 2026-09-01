@@ -1,0 +1,54 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+policy="${ZENTTY_ARCH_POLICY:-${repo_root}/linux/packaging/arch-policy-v1.json}"
+manifest="${ZENTTY_INSTALL_MANIFEST:-${repo_root}/linux/packaging/install-manifest-v1.json}"
+
+fail() {
+    echo "arch-packaging-policy: error: $*" >&2
+    exit 1
+}
+
+[[ "${1:-}" == --validate-only && $# -eq 1 ]] ||
+    fail "usage: $0 --validate-only"
+[[ -f "${policy}" && -f "${manifest}" ]] || fail "packaging policy inputs are missing"
+
+jq -e '
+  .schema_version == 1 and .status == "RATIFIED" and .tracking_issue == 142 and
+  .package == "zentty" and .architecture == "x86_64" and
+  .supported_distribution == "Omarchy" and .supported_major >= 4 and
+  .build_environment.os_ids == ["arch", "omarchy"] and
+  .build_environment.package_manager == "pacman" and
+  .build_environment.package_builder == "makepkg" and
+  (.required_runtime_packages | length > 0) and
+  (.required_runtime_packages == (.required_runtime_packages | sort | unique)) and
+  all(.required_runtime_packages[]; test("^[a-z0-9@._+-]+$")) and
+  (.optional_runtime_packages | length > 0) and
+  ([.optional_runtime_packages[].package] ==
+    ([.optional_runtime_packages[].package] | sort | unique)) and
+  all(.optional_runtime_packages[];
+    (.package | test("^[a-z0-9@._+-]+$")) and (.reason | length >= 12)) and
+  .private_libraries == ["libghostty-gtk-embed.so", "libgtk4-layer-shell.so"]
+' "${policy}" >/dev/null || fail "Arch package policy is malformed"
+
+jq -e '
+  .schema_version == 1 and .closed_world == true and
+  ([.entries[].id] | length == (unique | length)) and
+  ([.entries[].destination] | length == (unique | length)) and
+  any(.entries[]; .id == "private-gui" and .destination == "/usr/lib/zentty/bin/zentty-linux") and
+  any(.entries[]; .id == "private-cli" and .destination == "/usr/lib/zentty/bin/zentty") and
+  any(.entries[]; .id == "desktop-entry") and
+  any(.entries[]; .id == "application-icon") and
+  any(.entries[]; .id == "third-party-notices") and
+  all(.entries[];
+    (.destination | startswith("/usr/")) and
+    (.destination | contains("..") | not))
+' "${manifest}" >/dev/null || fail "shared install manifest is not Arch-safe"
+
+if jq -e 'any(.components[]; has("system_source"))' \
+    "${repo_root}/linux/packaging/ghostty-notices-v1.json" >/dev/null; then
+    fail "notice inputs contain distro-specific system paths"
+fi
+
+echo "arch-packaging-policy: PASS"

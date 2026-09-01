@@ -91,7 +91,7 @@ done < <(jq -r '.packages[] | select(.source != null) |
 rm -- "${cargo_metadata}"
 install -m 0644 "${repo_root}/linux/packaging/notices/embedded-code-NOTICE" \
     "${output}/ghostty/embedded-code-NOTICE"
-install -m 0644 /usr/share/common-licenses/Apache-2.0 \
+install -m 0644 "${repo_root}/linux/packaging/notices/Apache-2.0" \
     "${output}/ghostty/Apache-2.0"
 
 zentty_revision="$(git -C "${repo_root}" rev-parse HEAD)"

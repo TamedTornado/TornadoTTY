@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "status": "RATIFIED",
+  "tracking_issue": 142,
+  "tag_prefix": "linux-v",
+  "release_title_prefix": "Zentty for Linux ",
+  "application_package": "zentty-linux",
+  "artifacts": [
+    {
+      "id": "ubuntu-debian-amd64",
+      "family": "debian",
+      "architecture": "amd64",
+      "format": "deb",
+      "qualified_baseline": "Ubuntu 24.04 LTS (Noble)"
+    },
+    {
+      "id": "omarchy-arch-x86_64",
+      "family": "arch",
+      "architecture": "x86_64",
+      "format": "pkg.tar.zst",
+      "qualified_baseline": "Omarchy 4 on x86_64"
+    }
+  ],
+  "publication": {
+    "explicit_tag_only": true,
+    "github_actions_is_qualification_authority": false,
+    "initial_release_is_prerelease": true,
+    "checksums": "SHA256SUMS",
+    "provenance_required": true,
+    "expanded_manifest_required": true
+  }
+}

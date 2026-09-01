@@ -58,7 +58,7 @@ jobs:
             alsa-utils appstream bubblewrap build-essential cage cmake curl dbus-x11
             desktop-file-utils dpkg-dev extra-cmake-modules fcitx5
             fcitx5-frontend-gtk4 fcitx5-table-cangjie5 fish fontconfig fuse3
-            gir1.2-gtk-4.0 git ibus ibus-gtk4 jq libadwaita-1-dev libcairo2-dev
+            gir1.2-gtk-4.0 git ibus ibus-gtk4 jq libadwaita-1-dev libarchive-tools libcairo2-dev
             libfontconfig-dev libglib2.0-dev libgtk-4-dev libnotify-bin libwayland-dev
             libx11-dev libxkbcommon-dev libxml2-utils mesa-utils meson ninja-build
             openssh-client patchelf pkg-config procps python3 python3-gi
