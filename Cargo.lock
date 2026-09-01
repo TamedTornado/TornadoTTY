@@ -899,7 +899,7 @@ dependencies = [
 
 [[package]]
 name = "zentty-agent-ipc"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -910,7 +910,7 @@ dependencies = [
 
 [[package]]
 name = "zentty-api"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -918,7 +918,7 @@ dependencies = [
 
 [[package]]
 name = "zentty-core"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -929,7 +929,7 @@ dependencies = [
 
 [[package]]
 name = "zentty-ghostty"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "gtk4",
  "zentty-ghostty-sys",
@@ -937,11 +937,11 @@ dependencies = [
 
 [[package]]
 name = "zentty-ghostty-sys"
-version = "0.1.0"
+version = "0.1.1"
 
 [[package]]
 name = "zentty-linux"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "gtk4",
  "libc",
@@ -957,7 +957,7 @@ dependencies = [
 
 [[package]]
 name = "zentty-test-support"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "gtk4",
  "serde_json",
@@ -970,7 +970,7 @@ dependencies = [
 
 [[package]]
 name = "zentty-tmux-compat"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "serde",
  "serde_json",

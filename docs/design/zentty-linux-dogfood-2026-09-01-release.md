@@ -157,3 +157,15 @@ family artifact, and each package is then exercised on its native family.
 - Publication and a real tagged release artifact are still outstanding. A
   missing or environmentally blocked journey remains explicit and will not be
   converted into a pass.
+
+## Release-version ordering repair
+
+- The first tagged `0.1.0` artifacts built and passed their payload audits, but
+  were withheld before publication. Both dpkg and pacman order the existing
+  `0.1.0+git<revision>` dogfood versions after clean `0.1.0`, so upgrading a
+  dogfood installation would be presented as a downgrade.
+- The first public prerelease is therefore `0.1.1`. Both native package
+  comparators order clean `0.1.1` after every retained `0.1.0+git...` package.
+  The unpublished `linux-v0.1.0` tag is retired; a real upgrade from the
+  retained Omarchy dogfood artifact to tagged `0.1.1` must pass before
+  publication.
