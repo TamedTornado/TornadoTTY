@@ -169,3 +169,9 @@ family artifact, and each package is then exercised on its native family.
   The unpublished `linux-v0.1.0` tag is retired; a real upgrade from the
   retained Omarchy dogfood artifact to tagged `0.1.1` must pass before
   publication.
+- Review of the upgrade harness found that it required distinct versions but
+  did not require the candidate to sort newer; pacman can explicitly perform a
+  downgrade. The harness now uses pacman's own `vercmp` and rejects a candidate
+  unless it is strictly newer than the installed fixture. Receipts expose that
+  ordering assertion rather than inferring upgrade direction from a command
+  name.

@@ -16,7 +16,7 @@ previous_package="${4:-}"
 [[ -z "${previous_package}" ]] || previous_package="$(readlink -f -- "${previous_package}")"
 
 for dependency in awk bsdtar cp find grep head jq mktemp pacman readlink sed \
-    sha256sum sort unshare xargs; do
+    sha256sum sort unshare vercmp xargs; do
     command -v "${dependency}" >/dev/null || fail "${dependency} is required"
 done
 for input in "${package}" "${manifest}" "${provenance}"; do
@@ -81,10 +81,12 @@ pacman_root() {
 
 host_database_before="$(database_fingerprint)"
 previous_version=null
+current_archive_version="$(package_version "${package}")"
 if [[ -n "${previous_package}" ]]; then
     previous_version="$(package_version "${previous_package}")"
-    [[ "${previous_version}" != "$(package_version "${package}")" ]] ||
-        fail "upgrade fixture and current package have the same version"
+    version_order="$(vercmp "${current_archive_version}" "${previous_version}")"
+    (( version_order > 0 )) ||
+        fail "current package does not sort newer than upgrade fixture"
     pacman_root --noconfirm -U "${previous_package}" >>"${log}" 2>&1
     [[ "$(pacman_root -Q zentty | awk '{print $2}')" == "${previous_version}" ]] ||
         fail "previous package did not install at its declared version"
@@ -130,6 +132,7 @@ jq -n \
         os_id:$os_id,os_version:$os_version},
       package:{file:$package,sha256:$package_sha256,version:$current_version},
       previous_version:(if $previous_version == "null" then null else $previous_version end),
+      upgrade_direction_verified:($previous_version != "null"),
       transitions:(if $previous_version == "null"
         then ["install","installed-help","uninstall"]
         else ["install-previous","upgrade","installed-help","uninstall"] end),
