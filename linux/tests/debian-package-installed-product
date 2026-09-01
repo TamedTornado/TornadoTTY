@@ -137,6 +137,7 @@ dpkg --root="${install_root}" --log="${install_root}/var/log/dpkg.log" \
     >"${run_root}/prepare.log"
 
 for required in \
+    /usr/bin/tornadotty /usr/bin/tornadotty-cli \
     /usr/bin/zentty /usr/bin/zentty-linux \
     /usr/lib/zentty/lib/libghostty-gtk-embed.so \
     /usr/lib/zentty/libexec/zentty/tmux-shim/tmux \
@@ -144,20 +145,20 @@ for required in \
     /usr/lib/zentty/share/zentty/shell-integration/zentty-bash-integration.bash \
     /usr/share/ghostty/shell-integration/bash/ghostty.bash \
     /usr/share/terminfo/x/xterm-ghostty \
-    /usr/share/applications/com.zentty.zentty.desktop \
-    /usr/share/metainfo/com.zentty.zentty.metainfo.xml \
-    /usr/share/icons/hicolor/256x256/apps/com.zentty.zentty.png; do
+    /usr/share/applications/com.tamedtornado.tornadotty.desktop \
+    /usr/share/metainfo/com.tamedtornado.tornadotty.metainfo.xml \
+    /usr/share/icons/hicolor/256x256/apps/com.tamedtornado.tornadotty.png; do
     [[ -e "${install_root}${required}" || -L "${install_root}${required}" ]] ||
         fail "installed resource is missing: ${required}"
 done
-desktop_entry="${install_root}/usr/share/applications/com.zentty.zentty.desktop"
-appstream="${install_root}/usr/share/metainfo/com.zentty.zentty.metainfo.xml"
-grep -Fxq 'Exec=zentty-linux' "${desktop_entry}" || fail "desktop executable identity differs"
-grep -Fxq 'Icon=com.zentty.zentty' "${desktop_entry}" || fail "desktop icon identity differs"
-grep -Fxq 'StartupWMClass=com.zentty.zentty' "${desktop_entry}" ||
+desktop_entry="${install_root}/usr/share/applications/com.tamedtornado.tornadotty.desktop"
+appstream="${install_root}/usr/share/metainfo/com.tamedtornado.tornadotty.metainfo.xml"
+grep -Fxq 'Exec=tornadotty' "${desktop_entry}" || fail "desktop executable identity differs"
+grep -Fxq 'Icon=com.tamedtornado.tornadotty' "${desktop_entry}" || fail "desktop icon identity differs"
+grep -Fxq 'StartupWMClass=com.tamedtornado.tornadotty' "${desktop_entry}" ||
     fail "desktop window identity differs"
-grep -Fq '<id>com.zentty.zentty</id>' "${appstream}" || fail "AppStream application ID differs"
-grep -Fq '<launchable type="desktop-id">com.zentty.zentty.desktop</launchable>' "${appstream}" ||
+grep -Fq '<id>com.tamedtornado.tornadotty</id>' "${appstream}" || fail "AppStream application ID differs"
+grep -Fq '<launchable type="desktop-id">com.tamedtornado.tornadotty.desktop</launchable>' "${appstream}" ||
     fail "AppStream desktop identity differs"
 
 mkdir -p "${receipts}/bin" "${XDG_CONFIG_HOME}/zentty"
@@ -459,7 +460,7 @@ grep -Fxq 'argc=1' "${receipts}/open-with.receipt" ||
     fail "installed Open With launcher did not receive one target"
 grep -Fxq "arg1=${HOME}" "${receipts}/open-with.receipt" ||
     fail "installed Open With launcher received the wrong working directory"
-installed_catalog="${install_root}/usr/share/doc/zentty/third-party/catalog-v1.json"
+installed_catalog="${install_root}/usr/share/doc/tornadotty/third-party/catalog-v1.json"
 [[ -s "${installed_catalog}" ]] || fail "installed About catalog is absent"
 installed_entries="$(jq -er '.entries | length | select(. > 0)' "${installed_catalog}")"
 installed_ghostty_revision="$(jq -er '.generated_from.ghostty.revision' "${installed_catalog}")"
@@ -533,7 +534,7 @@ DESKTOP_SHELL
 cat >"${receipts}/desktop-supervisor" <<'DESKTOP_SUPERVISOR'
 #!/usr/bin/env bash
 set -euo pipefail
-gtk-launch com.zentty.zentty >"${ZENTTY_INSTALLED_RECEIPTS}/desktop-product.log" 2>&1 &
+gtk-launch com.tamedtornado.tornadotty >"${ZENTTY_INSTALLED_RECEIPTS}/desktop-product.log" 2>&1 &
 launcher=$!
 for _ in {1..600}; do
     [[ -s "${ZENTTY_INSTALLED_RECEIPTS}/desktop-ready" ]] && break

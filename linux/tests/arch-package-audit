@@ -23,7 +23,7 @@ done
 bsdtar -xf "${artifact}" -C "${temporary}"
 [[ -f "${temporary}/.PKGINFO" ]] || fail ".PKGINFO is missing"
 pkginfo="${temporary}/.PKGINFO"
-[[ "$(sed -n 's/^pkgname = //p' "${pkginfo}")" == zentty ]] || fail "wrong package name"
+[[ "$(sed -n 's/^pkgname = //p' "${pkginfo}")" == tornadotty ]] || fail "wrong package name"
 [[ "$(sed -n 's/^arch = //p' "${pkginfo}")" == x86_64 ]] || fail "wrong architecture"
 package_version="$(sed -n 's/^pkgver = //p' "${pkginfo}")"
 package_version="${package_version%-1}"
@@ -36,7 +36,7 @@ mapfile -t expected_dependencies < <(jq -r '.required_runtime_packages[]' "${pol
     fail "package dependencies do not match reviewed policy"
 
 jq -e --arg version "${package_version}" '
-  .schema_version == 1 and .package == "zentty" and
+  .schema_version == 1 and .package == "tornadotty" and
   .package_family == "arch" and .architecture == "x86_64" and
   .version == $version and (.zentty_revision | test("^[0-9a-f]{40}$")) and
   (.files | length > 0) and ([.files[].path] | length == (unique | length)) and
@@ -68,7 +68,7 @@ find "${temporary}/usr" \( -type f -o -type l \) -printf '/usr/%P\n' | LC_ALL=C 
 jq -r '.files[].path' "${manifest}" | LC_ALL=C sort >"${temporary}/manifest-paths"
 cmp -s "${temporary}/archive-paths" "${temporary}/manifest-paths" ||
     fail "archive contains missing or undeclared payload files"
-[[ ! -e "${temporary}/usr/share/doc/zentty/changelog.Debian.gz" ]] ||
+[[ ! -e "${temporary}/usr/share/doc/tornadotty/changelog.Debian.gz" ]] ||
     fail "Debian changelog leaked into Arch package"
 
 while IFS= read -r path; do
@@ -96,7 +96,7 @@ jq -e \
     --arg artifact_sha "$(sha256sum "${artifact}" | awk '{print $1}')" \
     --arg manifest "$(basename "${manifest}")" \
     --arg manifest_sha "$(sha256sum "${manifest}" | awk '{print $1}')" '
-  .schema_version == 1 and .package == "zentty" and
+  .schema_version == 1 and .package == "tornadotty" and
   .package_version == $version and .architecture == "x86_64" and
   .baseline == "omarchy-4-x86_64" and
   .artifact == {file:$artifact,sha256:$artifact_sha} and

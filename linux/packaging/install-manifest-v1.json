@@ -4,8 +4,10 @@
   "closed_world": true,
   "policy": "linux/packaging/policy-v1.json",
   "entries": [
-    {"id": "public-cli", "kind": "symlink", "owner_component": "entry-points", "destination": "/usr/bin/zentty", "target": "../lib/zentty/bin/zentty"},
-    {"id": "public-gui", "kind": "symlink", "owner_component": "entry-points", "destination": "/usr/bin/zentty-linux", "target": "../lib/zentty/bin/zentty-linux"},
+    {"id": "public-cli", "kind": "symlink", "owner_component": "entry-points", "destination": "/usr/bin/tornadotty-cli", "target": "../lib/zentty/bin/zentty"},
+    {"id": "public-gui", "kind": "symlink", "owner_component": "entry-points", "destination": "/usr/bin/tornadotty", "target": "../lib/zentty/bin/zentty-linux"},
+    {"id": "legacy-public-cli", "kind": "symlink", "owner_component": "entry-points", "destination": "/usr/bin/zentty", "target": "../lib/zentty/bin/zentty"},
+    {"id": "legacy-public-gui", "kind": "symlink", "owner_component": "entry-points", "destination": "/usr/bin/zentty-linux", "target": "../lib/zentty/bin/zentty-linux"},
     {"id": "private-cli", "kind": "file", "owner_component": "zentty-cli", "source": "build/linux/bin/zentty", "destination": "/usr/lib/zentty/bin/zentty", "mode": "0755"},
     {"id": "private-gui", "kind": "file", "owner_component": "zentty-linux", "source": "build/linux/bin/zentty-linux", "destination": "/usr/lib/zentty/bin/zentty-linux", "mode": "0755"},
     {"id": "ghostty-embedding", "kind": "file", "owner_component": "ghostty-embedding", "source": "build/linux/lib/libghostty-gtk-embed.so", "destination": "/usr/lib/zentty/lib/libghostty-gtk-embed.so", "mode": "0644"},
@@ -16,13 +18,13 @@
     {"id": "themes", "kind": "tree", "owner_component": "ghostty-resources", "source": "build/linux/share/zentty/ghostty/themes", "destination": "/usr/lib/zentty/share/zentty/ghostty/themes", "mode_policy": "regular-0644"},
     {"id": "ghostty-runtime-resources", "kind": "tree", "owner_component": "ghostty-resources", "source": "build/linux/share/ghostty", "destination": "/usr/share/ghostty", "mode_policy": "regular-0644"},
     {"id": "agent-integrations", "kind": "tree", "owner_component": "agent-integrations", "source": "build/linux/share/zentty", "destination": "/usr/lib/zentty/share/zentty", "exclude": ["ghostty/themes", "shell-integration", "package-notices"], "mode_policy": "regular-0644"},
-    {"id": "third-party-notices", "kind": "tree", "owner_component": "license-notices", "source": "build/linux/share/zentty/package-notices", "destination": "/usr/share/doc/zentty/third-party", "mode_policy": "regular-0644"},
+    {"id": "third-party-notices", "kind": "tree", "owner_component": "license-notices", "source": "build/linux/share/zentty/package-notices", "destination": "/usr/share/doc/tornadotty/third-party", "mode_policy": "regular-0644"},
     {"id": "terminfo-ghostty", "kind": "generated-symlink", "owner_component": "ghostty-resources", "destination": "/usr/share/terminfo/g/ghostty", "target": "../x/xterm-ghostty"},
     {"id": "terminfo-xterm-ghostty", "kind": "generated-file", "owner_component": "ghostty-resources", "generator": "pinned-ghostty-build-data", "destination": "/usr/share/terminfo/x/xterm-ghostty", "mode": "0644"},
-    {"id": "desktop-entry", "kind": "file", "owner_component": "desktop-integration", "source": "linux/packaging/com.zentty.zentty.desktop", "destination": "/usr/share/applications/com.zentty.zentty.desktop", "mode": "0644"},
-    {"id": "appstream-metadata", "kind": "file", "owner_component": "desktop-integration", "source": "linux/packaging/com.zentty.zentty.metainfo.xml", "destination": "/usr/share/metainfo/com.zentty.zentty.metainfo.xml", "mode": "0644"},
-    {"id": "application-icon", "kind": "file", "owner_component": "desktop-integration", "source": "assets/icon.png", "destination": "/usr/share/icons/hicolor/256x256/apps/com.zentty.zentty.png", "mode": "0644"},
-    {"id": "copyright", "kind": "file", "owner_component": "license-notices", "source": "linux/packaging/copyright", "destination": "/usr/share/doc/zentty/copyright", "mode": "0644"},
-    {"id": "changelog", "kind": "generated-file", "owner_component": "release-metadata", "generator": "deterministic-debian-changelog", "destination": "/usr/share/doc/zentty/changelog.Debian.gz", "mode": "0644"}
+    {"id": "desktop-entry", "kind": "file", "owner_component": "desktop-integration", "source": "linux/packaging/com.tamedtornado.tornadotty.desktop", "destination": "/usr/share/applications/com.tamedtornado.tornadotty.desktop", "mode": "0644"},
+    {"id": "appstream-metadata", "kind": "file", "owner_component": "desktop-integration", "source": "linux/packaging/com.tamedtornado.tornadotty.metainfo.xml", "destination": "/usr/share/metainfo/com.tamedtornado.tornadotty.metainfo.xml", "mode": "0644"},
+    {"id": "application-icon", "kind": "file", "owner_component": "desktop-integration", "source": "assets/tornadotty-icon.png", "destination": "/usr/share/icons/hicolor/256x256/apps/com.tamedtornado.tornadotty.png", "mode": "0644"},
+    {"id": "copyright", "kind": "file", "owner_component": "license-notices", "source": "linux/packaging/copyright", "destination": "/usr/share/doc/tornadotty/copyright", "mode": "0644"},
+    {"id": "changelog", "kind": "generated-file", "owner_component": "release-metadata", "generator": "deterministic-debian-changelog", "destination": "/usr/share/doc/tornadotty/changelog.Debian.gz", "mode": "0644"}
   ]
 }

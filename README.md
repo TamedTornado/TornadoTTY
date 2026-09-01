@@ -1,17 +1,17 @@
 <h1 align="center">
-  <img src="assets/icon.png" alt="Zentty" width="128"><br>
-  Zentty for Linux
+  <img src="assets/tornadotty-icon.png" alt="Tornado TTY" width="128"><br>
+  Tornado TTY
 </h1>
 
 <p align="center">
-  <strong>An unofficial Linux port of Zentty, built with Rust, GTK 4, and Ghostty.</strong><br>
+  <strong>A native Linux terminal workspace for coding agents, built with Rust, GTK 4, and Ghostty.</strong><br>
   Worklanes, real terminal panes, workspace restoration, and coding-agent awareness
   in a native Linux application—without Electron or a web view.
 </p>
 
 <p align="center">
   <a href="#install-on-ubuntu-2404">Install</a> ·
-  <a href="https://github.com/TamedTornado/zentty/releases">Releases</a> ·
+  <a href="https://github.com/TamedTornado/tornadotty/releases">Releases</a> ·
   <a href="#build-and-run-for-development">Build</a> ·
   <a href="#project-status">Status</a> ·
   <a href="docs/cli.md">CLI</a> ·
@@ -19,19 +19,18 @@
 </p>
 
 > [!IMPORTANT]
-> This is a community Linux port maintained in Jason Maskell's public fork.
-> The original Zentty project is created and maintained by
-> [dedene](https://github.com/dedene/zentty) for macOS. This fork is not an
-> official Linux release from the upstream project.
+> TornadoTTY is an unofficial fork of Zentty. It is not affiliated with or
+> endorsed by Zenjoy BV. The original Zentty project is created and maintained
+> by [dedene](https://github.com/dedene/zentty) for macOS.
 
 > [!NOTE]
 > The Linux build uses [Tamed Tornado's Ghostty fork](https://github.com/TamedTornado/ghostty),
 > which carries the narrow GTK host-embedding API needed to own real Ghostty
 > surfaces from the Rust application. The exact reviewed revision is pinned in
 > [`linux/ghostty.lock`](linux/ghostty.lock); terminal-product policy remains
-> in Zentty.
+> in TornadoTTY.
 
-![Zentty for Linux running Codex with worklanes and agent status](assets/zentty-linux-workspace.png)
+![Tornado TTY running Codex with worklanes and agent status](assets/zentty-linux-workspace.png)
 
 ## What works
 
@@ -55,7 +54,7 @@
 - **Terminal workflows.** Ghostty themes, light and dark appearance, clean/raw
   and Markdown copy, URL activation, local and SSH file transfer, scrolling,
   selection, IME input, and Wayland/X11 support.
-- **Scriptable automation.** The packaged `zentty` CLI uses the same
+- **Scriptable automation.** The packaged `tornadotty-cli` uses the same
   authenticated command API as the GUI. See [`docs/cli.md`](docs/cli.md).
 
 The source-backed feature inventory is
@@ -82,31 +81,31 @@ but it has not yet published a signed stable Linux release.
   qualification.
 
 Open work is tracked in the fork's
-[GitHub issues](https://github.com/TamedTornado/zentty/issues). The machine-readable
+[GitHub issues](https://github.com/TamedTornado/tornadotty/issues). The machine-readable
 qualification authority is
 [`linux/qualification-matrix.json`](linux/qualification-matrix.json).
 
 ## Install on Ubuntu 24.04
 
 Download the latest Linux prerelease `.deb` and `SHA256SUMS` from the
-[GitHub Releases page](https://github.com/TamedTornado/zentty/releases), verify
+[GitHub Releases page](https://github.com/TamedTornado/tornadotty/releases), verify
 it, and install it with APT:
 
 ```bash
 sha256sum --check --ignore-missing SHA256SUMS
-sudo apt install ./zentty_*_amd64.deb
+sudo apt install ./tornadotty_*_amd64.deb
 ```
 
-Launch Zentty from the desktop application menu or run `zentty-linux`.
+Launch Tornado TTY from the desktop application menu or run `tornadotty`.
 
 ## Install on Omarchy 4
 
 Download the latest `.pkg.tar.zst` and `SHA256SUMS` from the
-[GitHub Releases page](https://github.com/TamedTornado/zentty/releases), then:
+[GitHub Releases page](https://github.com/TamedTornado/tornadotty/releases), then:
 
 ```bash
 sha256sum --check --ignore-missing SHA256SUMS
-sudo pacman -U ./zentty-*-x86_64.pkg.tar.zst
+sudo pacman -U ./tornadotty-*-x86_64.pkg.tar.zst
 ```
 
 The Omarchy artifact is built natively for the Arch package family. Release
@@ -150,21 +149,21 @@ Verify and install the resulting artifact:
 ```bash
 cd build/linux-package
 sha256sum --check --strict SHA256SUMS
-dpkg-deb --info ./zentty_*_amd64.deb
+dpkg-deb --info ./tornadotty_*_amd64.deb
 cd ../..
-sudo apt install ./build/linux-package/zentty_*_amd64.deb
+sudo apt install ./build/linux-package/tornadotty_*_amd64.deb
 ```
 
-Launch Zentty from the desktop application menu or run:
+Launch Tornado TTY from the desktop application menu or run:
 
 ```bash
-zentty-linux
+tornadotty
 ```
 
 The command API is available as:
 
 ```bash
-zentty --help
+tornadotty-cli --help
 ```
 
 The complete package ownership, upgrade, removal, and retained-user-data
@@ -201,7 +200,8 @@ build/linux/bin/zentty-linux --help
 build/linux/bin/zentty-linux --version
 ```
 
-Linux configuration lives at `$XDG_CONFIG_HOME/zentty/config.toml`, falling
+For compatibility with existing workspaces and hooks, Linux configuration
+continues to live at `$XDG_CONFIG_HOME/zentty/config.toml`, falling
 back to `~/.config/zentty/config.toml`. See
 [`docs/configuration.md`](docs/configuration.md).
 
@@ -213,7 +213,7 @@ The Linux application is not a re-skinned web terminal:
 - the native shell uses `gtk4-rs`;
 - terminal rendering and PTY behavior come from a narrow embedding API in the
   [maintained Tamed Tornado Ghostty GTK fork](https://github.com/TamedTornado/ghostty);
-- Zentty-specific worklane, agent, settings, and persistence policy stays out
+- TornadoTTY worklane, agent, settings, and persistence policy stays out
   of Ghostty; and
 - the macOS Swift implementation and tests remain the behavioral source for
   port parity.
@@ -254,7 +254,7 @@ Contributions are welcome. Start with [`CONTRIBUTING.md`](CONTRIBUTING.md).
 Before a non-trivial contribution can be merged, contributors must agree to
 [`CLA.md`](CLA.md).
 
-Please keep Linux product policy in Zentty unless Ghostty itself owns the
+Please keep product policy in TornadoTTY unless Ghostty itself owns the
 behavior. Changes to the maintained Ghostty fork should remain minimal,
 independently tested, and suitable for upstream review.
 

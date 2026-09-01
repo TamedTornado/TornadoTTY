@@ -18,7 +18,7 @@ trap 'rm -rf -- "${work}"' EXIT
 package_root="${work}/package"
 install_root="${work}/installed"
 uninstalled_root="${work}/uninstalled"
-package="${work}/zentty.deb"
+package="${work}/tornadotty.deb"
 manifest="${work}/manifest.json"
 mkdir -p \
     "${package_root}/DEBIAN" \
@@ -31,7 +31,7 @@ mkdir -p \
 : >"${uninstalled_root}/var/lib/dpkg/status"
 
 cat >"${package_root}/DEBIAN/control" <<'EOF'
-Package: zentty
+Package: tornadotty
 Version: 0.1.0+git0123456789ab
 Architecture: amd64
 Maintainer: Test <test@example.invalid>
@@ -48,7 +48,7 @@ fixture_sha="$(sha256sum "${package_root}/usr/lib/zentty/bin/zentty" | awk '{pri
 jq -n --arg sha "${fixture_sha}" '
   {
     schema_version:1,
-    package:"zentty",
+    package:"tornadotty",
     version:"0.1.0+git0123456789ab",
     architecture:"amd64",
     zentty_revision:"0123456789abcdef0123456789abcdef01234567",

@@ -12,7 +12,7 @@ zentty_exact_package_artifact() {
     [[ "${ZENTTY_PACKAGE_REVISION}" =~ ^[0-9a-f]{40}$ ]] || return 1
     short_revision="${ZENTTY_PACKAGE_REVISION:0:12}"
     ZENTTY_PACKAGE_ARTIFACT="$(find "${output_root}" -maxdepth 1 -type f \
-        -name "zentty_*+git${short_revision}_amd64.deb" -print -quit)"
+        -name "tornadotty_*+git${short_revision}_amd64.deb" -print -quit)"
     [[ -n "${ZENTTY_PACKAGE_ARTIFACT}" ]] || return 1
     ZENTTY_PACKAGE_ARTIFACT="$(readlink -f -- "${ZENTTY_PACKAGE_ARTIFACT}")"
     ZENTTY_PACKAGE_MANIFEST="${ZENTTY_PACKAGE_ARTIFACT%.deb}.manifest.json"

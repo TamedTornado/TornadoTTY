@@ -12,7 +12,7 @@ fail() {
 }
 
 [[ -d "${root}/DEBIAN" && -f "${root}/DEBIAN/control" ]] || fail "package control is missing"
-jq -e '.schema_version == 1 and .package == "zentty" and .architecture == "amd64" and
+jq -e '.schema_version == 1 and .package == "tornadotty" and .architecture == "amd64" and
     (.files | type == "array" and length > 0) and
     ([.files[].path] | length == (unique | length))' "${expanded_manifest}" >/dev/null ||
     fail "expanded manifest is invalid"
@@ -88,7 +88,7 @@ for elf in \
 done
 
 control="${root}/DEBIAN/control"
-[[ "$(sed -n 's/^Package: //p' "${control}")" == zentty ]] || fail "wrong package name"
+[[ "$(sed -n 's/^Package: //p' "${control}")" == tornadotty ]] || fail "wrong package name"
 [[ "$(sed -n 's/^Architecture: //p' "${control}")" == amd64 ]] || fail "wrong package architecture"
 dependencies="$(sed -n 's/^Depends: //p' "${control}")"
 dependency_floor_pattern='\(>=[[:space:]]+([^)]+)\)'
@@ -102,11 +102,11 @@ while IFS=$'\t' read -r package minimum; do
         fail "ratified dependency floor is too low: ${package} ${BASH_REMATCH[1]} < ${minimum}"
 done < <(jq -r '.dependencies.baseline_packages[] | [.name,.minimum] | @tsv' "${policy}")
 
-desktop-file-validate "${root}/usr/share/applications/com.zentty.zentty.desktop"
+desktop-file-validate "${root}/usr/share/applications/com.tamedtornado.tornadotty.desktop"
 appstreamcli validate --no-net --pedantic \
-    "${root}/usr/share/metainfo/com.zentty.zentty.metainfo.xml" >/dev/null
-[[ -s "${root}/usr/share/doc/zentty/copyright" ]] || fail "copyright is absent"
-notices="${root}/usr/share/doc/zentty/third-party"
+    "${root}/usr/share/metainfo/com.tamedtornado.tornadotty.metainfo.xml" >/dev/null
+[[ -s "${root}/usr/share/doc/tornadotty/copyright" ]] || fail "copyright is absent"
+notices="${root}/usr/share/doc/tornadotty/third-party"
 ghostty_notices="${notices}/ghostty-components.json"
 cargo_notices="${notices}/cargo-packages.json"
 catalog="${notices}/catalog-v1.json"

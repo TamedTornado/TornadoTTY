@@ -54,8 +54,8 @@ Verify an artifact set before installation:
 ```sh
 cd build/linux-package
 sha256sum --check --strict SHA256SUMS
-dpkg-deb --info ./zentty_*_amd64.deb
-dpkg-deb --contents ./zentty_*_amd64.deb
+dpkg-deb --info ./tornadotty_*_amd64.deb
+dpkg-deb --contents ./tornadotty_*_amd64.deb
 ```
 
 ## Install, verify, upgrade, and remove
@@ -63,9 +63,9 @@ dpkg-deb --contents ./zentty_*_amd64.deb
 Install or perform a same-version reinstall with the system package manager:
 
 ```sh
-sudo apt install ./build/linux-package/zentty_*_amd64.deb
+sudo apt install ./build/linux-package/tornadotty_*_amd64.deb
 zentty --help
-zentty-linux
+tornadotty
 ```
 
 `apt install ./newer-zentty.deb` is the supported upgrade route. The automated

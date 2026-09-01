@@ -65,3 +65,43 @@
   `zentty`.
 - Focused Rust coverage verifies the public constants, attribution, pane
   notification identity, version output, and staged/installed icon discovery.
+
+## Repository and package identity
+
+- Jason renamed the downstream repository to
+  `https://github.com/TamedTornado/tornadotty`. The local `origin`, active
+  source links, package metadata, release publisher, and operator instructions
+  now target that repository; `upstream` remains `dedene/zentty`.
+- Debian and Arch package policy now advertise `tornadotty`. Their primary
+  entry points are `/usr/bin/tornadotty` and `/usr/bin/tornadotty-cli`; the old
+  `/usr/bin/zentty-linux` and `/usr/bin/zentty` names remain compatibility
+  aliases to the same private binaries.
+- Desktop, AppStream, icon, and launcher identity is
+  `com.tamedtornado.tornadotty`. Package documentation moved to
+  `/usr/share/doc/tornadotty`; internal binaries, libraries, resources, and
+  runtime contracts remain under their established `zentty` paths.
+- New releases use `tornadotty-v<version>` tags and TornadoTTY artifact names.
+  The release workflow remains explicitly dispatched and does not qualify or
+  publish ordinary commits.
+
+## Focused verification receipts
+
+- PASS: identity policy and all negative policy fixtures, including attempted
+  internal state-namespace migration.
+- PASS: all `zentty-core` unit/integration tests, including the new public
+  identity and attribution contract.
+- PASS: focused Linux identity tests for help/version/error output, About
+  resource discovery, pane-notification identity, and tray presentation.
+- PASS: Debian and Arch packaging-policy validators and their negative tests;
+  Debian builder negative contracts; Arch artifact-auditor fixtures; isolated
+  installed-product-root fixture; desktop-file and AppStream validators;
+  release-version and release-workflow contracts.
+- A fast, non-display `zentty-linux` crate run reached **350 PASS, 3 FAIL,
+  3 ignored**. The failures were not accepted as rebrand passes: one GTK test
+  lacked a display, one real `/proc` listener test was denied by the command
+  sandbox, and the pre-existing exact-maximum config rewrite test exceeded its
+  output bound even in isolation. The focused rebrand tests passed; these
+  unrelated cells remain explicit and do not establish release qualification.
+- Native TornadoTTY packages have not yet been built from the committed clean
+  tree. Package publication remains blocked until those artifacts and their
+  real installed-product journeys pass.

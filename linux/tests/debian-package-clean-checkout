@@ -96,8 +96,8 @@ bwrap \
 
 artifact="$(find "${isolated}/build/isolated-package" -maxdepth 1 -name '*.deb' -type f -print -quit)"
 version="$(dpkg-deb -f "${artifact}" Version)"
-manifest="${isolated}/build/isolated-package/zentty_${version}_amd64.manifest.json"
-provenance="${isolated}/build/isolated-package/zentty_${version}_amd64.provenance.json"
+manifest="${isolated}/build/isolated-package/tornadotty_${version}_amd64.manifest.json"
+provenance="${isolated}/build/isolated-package/tornadotty_${version}_amd64.provenance.json"
 checksums="${isolated}/build/isolated-package/SHA256SUMS"
 
 # The primary and isolated builders intentionally run in parallel. Wait only

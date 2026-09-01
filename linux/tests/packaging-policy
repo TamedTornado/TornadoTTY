@@ -26,7 +26,7 @@ jq -e '
   ] and
   .schema_version == 1 and .status == "RATIFIED" and
   .artifact == {
-    "format":"deb","package":"zentty","distribution":"ubuntu",
+    "format":"deb","package":"tornadotty","distribution":"ubuntu",
     "release":"24.04","codename":"noble","architecture":"amd64",
     "deferred_formats":["appimage","flatpak","rpm"]
   } and
@@ -35,9 +35,9 @@ jq -e '
     "display_backends":["wayland","x11"]
   } and
   .layout.private_root == "/usr/lib/zentty" and
-  .layout.public_cli == "/usr/bin/zentty" and
+  .layout.public_cli == "/usr/bin/tornadotty-cli" and
   .layout.public_cli_target == "../lib/zentty/bin/zentty" and
-  .layout.public_gui == "/usr/bin/zentty-linux" and
+  .layout.public_gui == "/usr/bin/tornadotty" and
   .layout.public_gui_target == "../lib/zentty/bin/zentty-linux" and
   .layout.ghostty_resources == "/usr/share/ghostty" and
   .layout.terminfo_roots == [
@@ -114,7 +114,7 @@ jq -e '
   (keys | sort) == ["closed_world","entries","policy","schema_version","status"] and
   .schema_version == 1 and .status == "RATIFIED" and .closed_world == true and
   .policy == "linux/packaging/policy-v1.json" and
-  (.entries | type == "array" and length == 20) and
+  (.entries | type == "array" and length == 22) and
   all(.entries[];
     (.id | type == "string" and test("^[a-z][a-z0-9-]*$")) and
     (.kind | IN("file","tree","symlink","generated-file","generated-symlink")) and
@@ -174,7 +174,7 @@ dpkg --validate-version "$(jq -r '.version' "${fixture}")" ||
 dpkg --compare-versions "$(jq -r '.version' "${fixture}")" lt '0.1.0+git000000000000' ||
     fail "upgrade fixture does not sort before candidate versions"
 
-expected_ids=$'public-cli\npublic-gui\nprivate-cli\nprivate-gui\nghostty-embedding\nlayer-shell\nagent-wrappers\ntmux-shim\nshell-integration\nthemes\nghostty-runtime-resources\nagent-integrations\nthird-party-notices\nterminfo-ghostty\nterminfo-xterm-ghostty\ndesktop-entry\nappstream-metadata\napplication-icon\ncopyright\nchangelog'
+expected_ids=$'public-cli\npublic-gui\nlegacy-public-cli\nlegacy-public-gui\nprivate-cli\nprivate-gui\nghostty-embedding\nlayer-shell\nagent-wrappers\ntmux-shim\nshell-integration\nthemes\nghostty-runtime-resources\nagent-integrations\nthird-party-notices\nterminfo-ghostty\nterminfo-xterm-ghostty\ndesktop-entry\nappstream-metadata\napplication-icon\ncopyright\nchangelog'
 actual_ids="$(jq -r '.entries[].id' "${manifest}")"
 [[ "${actual_ids}" == "${expected_ids}" ]] || fail "required install entries are missing, reordered, or undeclared"
 [[ "$(jq -r '[.entries[].id] | length == (unique | length)' "${manifest}")" == true ]] ||
@@ -185,20 +185,22 @@ actual_ids="$(jq -r '.entries[].id' "${manifest}")"
 jq -e '
   def entry($id): first(.entries[] | select(.id == $id));
   entry("public-cli") == {
-    "id":"public-cli","kind":"symlink","destination":"/usr/bin/zentty",
+    "id":"public-cli","kind":"symlink","destination":"/usr/bin/tornadotty-cli",
     "owner_component":"entry-points","target":"../lib/zentty/bin/zentty"
   } and
   entry("public-gui") == {
-    "id":"public-gui","kind":"symlink","destination":"/usr/bin/zentty-linux",
+    "id":"public-gui","kind":"symlink","destination":"/usr/bin/tornadotty",
     "owner_component":"entry-points","target":"../lib/zentty/bin/zentty-linux"
   } and
+  entry("legacy-public-cli").destination == "/usr/bin/zentty" and
+  entry("legacy-public-gui").destination == "/usr/bin/zentty-linux" and
   entry("agent-integrations").exclude == ["ghostty/themes","shell-integration","package-notices"] and
   entry("ghostty-runtime-resources") == {
     "id":"ghostty-runtime-resources","kind":"tree",
     "owner_component":"ghostty-resources","source":"build/linux/share/ghostty",
     "destination":"/usr/share/ghostty","mode_policy":"regular-0644"
   } and
-  entry("third-party-notices").destination == "/usr/share/doc/zentty/third-party" and
+  entry("third-party-notices").destination == "/usr/share/doc/tornadotty/third-party" and
   entry("terminfo-ghostty").target == "../x/xterm-ghostty" and
   ([.entries[] | select(.destination | startswith("/usr/lib/zentty/") | not) |
       select(.destination | startswith("/usr/bin/") | not) |
@@ -207,7 +209,7 @@ jq -e '
       select(.destination | startswith("/usr/share/icons/hicolor/") | not) |
       select(.destination | startswith("/usr/share/ghostty") | not) |
       select(.destination | startswith("/usr/share/terminfo/") | not) |
-      select(.destination | startswith("/usr/share/doc/zentty/") | not)] | length == 0)
+      select(.destination | startswith("/usr/share/doc/tornadotty/") | not)] | length == 0)
 ' "${manifest}" >/dev/null || fail "manifest destinations or required entry details drifted"
 
 while IFS= read -r source; do
@@ -234,4 +236,4 @@ for bundled in libghostty-gtk-embed.so libgtk4-layer-shell.so; do
         fail "build-local does not construct reviewed bundled library: ${bundled}"
 done
 
-echo "packaging-policy: PASS format=deb target=ubuntu-24.04-amd64 entries=20 bundled-libraries=2"
+echo "packaging-policy: PASS format=deb target=ubuntu-24.04-amd64 entries=22 bundled-libraries=2"

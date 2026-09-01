@@ -37,7 +37,7 @@ make_fixture() {
     ln -s ../lib/zentty/lib/libghostty-gtk-embed.so "${root}/usr/bin/zentty-linux"
     [[ "${mode}" != extra ]] || printf 'undeclared\n' >"${root}/usr/extra"
     {
-        printf 'pkgname = zentty\n'
+        printf 'pkgname = tornadotty\n'
         printf 'pkgver = 0.1.0-1\n'
         printf 'arch = x86_64\n'
         jq -r '.required_runtime_packages[] | "depend = " + .' "${policy}"
@@ -51,7 +51,7 @@ make_fixture() {
     )
     jq -n \
         --arg file_sha "$(sha256sum "${root}/usr/lib/zentty/lib/libghostty-gtk-embed.so" | awk '{print $1}')" '
-      {schema_version:1,package:"zentty",version:"0.1.0",architecture:"x86_64",
+      {schema_version:1,package:"tornadotty",version:"0.1.0",architecture:"x86_64",
        package_family:"arch",zentty_revision:("a" * 40),files:[
         {path:"/usr/bin/zentty-linux",type:"symlink",mode:"0777",
          owner_component:"entry-points",target:"../lib/zentty/lib/libghostty-gtk-embed.so"},
@@ -64,7 +64,7 @@ make_fixture() {
         --arg manifest "$(basename "${manifest}")" \
         --arg manifest_sha "$(sha256sum "${manifest}" | awk '{print $1}')" \
         --argjson dependencies "$(jq '.required_runtime_packages' "${policy}")" '
-      {schema_version:1,package:"zentty",package_version:"0.1.0",
+      {schema_version:1,package:"tornadotty",package_version:"0.1.0",
        architecture:"x86_64",baseline:"omarchy-4-x86_64",
        zentty_revision:("a" * 40),ghostty_revision:("b" * 40),source_date_epoch:1,
        artifact:{file:$artifact,sha256:$artifact_sha},

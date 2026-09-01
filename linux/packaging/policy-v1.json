@@ -4,7 +4,7 @@
   "authority": "docs/design/zentty-linux-dogfood-2026-08-17-packaging.md",
   "artifact": {
     "format": "deb",
-    "package": "zentty",
+    "package": "tornadotty",
     "distribution": "ubuntu",
     "release": "24.04",
     "codename": "noble",
@@ -19,13 +19,13 @@
   },
   "layout": {
     "private_root": "/usr/lib/zentty",
-    "public_cli": "/usr/bin/zentty",
+    "public_cli": "/usr/bin/tornadotty-cli",
     "public_cli_target": "../lib/zentty/bin/zentty",
-    "public_gui": "/usr/bin/zentty-linux",
+    "public_gui": "/usr/bin/tornadotty",
     "public_gui_target": "../lib/zentty/bin/zentty-linux",
-    "desktop_entry": "/usr/share/applications/com.zentty.zentty.desktop",
-    "appstream_metadata": "/usr/share/metainfo/com.zentty.zentty.metainfo.xml",
-    "icon": "/usr/share/icons/hicolor/256x256/apps/com.zentty.zentty.png",
+    "desktop_entry": "/usr/share/applications/com.tamedtornado.tornadotty.desktop",
+    "appstream_metadata": "/usr/share/metainfo/com.tamedtornado.tornadotty.metainfo.xml",
+    "icon": "/usr/share/icons/hicolor/256x256/apps/com.tamedtornado.tornadotty.png",
     "ghostty_resources": "/usr/share/ghostty",
     "terminfo_roots": [
       "/usr/share/terminfo/g/ghostty",

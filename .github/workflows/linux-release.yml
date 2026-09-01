@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: Existing linux-v<version> tag to package
+        description: Existing tornadotty-v<version> tag to package
         required: true
         type: string
       publish:
@@ -75,20 +75,20 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          version="${ZENTTY_RELEASE_TAG#linux-v}"
+          version="${ZENTTY_RELEASE_TAG#tornadotty-v}"
           linux/scripts/prepare-release-bundle "${ZENTTY_RELEASE_TAG}" \
-            "build/linux-package/zentty_${version}_amd64.deb" \
-            "build/linux-package/zentty_${version}_amd64.manifest.json" \
-            "build/linux-package/zentty_${version}_amd64.provenance.json" \
-            "build/linux-arch-package/zentty-${version}-1-x86_64.pkg.tar.zst" \
-            "build/linux-arch-package/zentty-${version}-1-x86_64.manifest.json" \
-            "build/linux-arch-package/zentty-${version}-1-x86_64.provenance.json" \
+            "build/linux-package/tornadotty_${version}_amd64.deb" \
+            "build/linux-package/tornadotty_${version}_amd64.manifest.json" \
+            "build/linux-package/tornadotty_${version}_amd64.provenance.json" \
+            "build/linux-arch-package/tornadotty-${version}-1-x86_64.pkg.tar.zst" \
+            "build/linux-arch-package/tornadotty-${version}-1-x86_64.manifest.json" \
+            "build/linux-arch-package/tornadotty-${version}-1-x86_64.provenance.json" \
             build/linux-release-bundle
 
       - name: Upload validated release bundle
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: zentty-${{ inputs.tag }}-release-bundle
+          name: tornadotty-${{ inputs.tag }}-release-bundle
           path: build/linux-release-bundle
           if-no-files-found: error
           retention-days: 14
@@ -113,7 +113,7 @@ jobs:
       - name: Download validated release bundle
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          name: zentty-${{ inputs.tag }}-release-bundle
+          name: tornadotty-${{ inputs.tag }}-release-bundle
           path: build/linux-release-bundle
 
       - name: Publish prerelease

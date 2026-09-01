@@ -170,7 +170,7 @@ pub(crate) fn default_notice_roots(executable: &Path) -> Result<Vec<PathBuf>, St
     })?;
     Ok(vec![
         prefix.join("share/zentty/package-notices"),
-        PathBuf::from("/usr/share/doc/zentty/third-party"),
+        PathBuf::from("/usr/share/doc/tornadotty/third-party"),
     ])
 }
 
@@ -441,7 +441,7 @@ mod tests {
 
     fn catalog(entry: &str) -> String {
         format!(
-            r#"{{"schema_version":1,"generated_from":{{"zentty":{{"repository":"https://github.com/TamedTornado/zentty","revision":"{revision}"}},"ghostty":{{"repository":"https://github.com/TamedTornado/ghostty","revision":"{revision}"}}}},"entries":[{entry}]}}"#,
+            r#"{{"schema_version":1,"generated_from":{{"zentty":{{"repository":"https://github.com/TamedTornado/tornadotty","revision":"{revision}"}},"ghostty":{{"repository":"https://github.com/TamedTornado/ghostty","revision":"{revision}"}}}},"entries":[{entry}]}}"#,
             revision = "a".repeat(40)
         )
     }
@@ -547,7 +547,7 @@ mod tests {
             default_notice_roots(Path::new("/opt/zentty/bin/zentty-linux")).unwrap(),
             vec![
                 PathBuf::from("/opt/zentty/share/zentty/package-notices"),
-                PathBuf::from("/usr/share/doc/zentty/third-party"),
+                PathBuf::from("/usr/share/doc/tornadotty/third-party"),
             ]
         );
         assert_eq!(
@@ -619,7 +619,7 @@ mod tests {
         let valid = catalog(valid_entry());
         for invalid in [
             valid.replacen(
-                "https://github.com/TamedTornado/zentty",
+                "https://github.com/TamedTornado/tornadotty",
                 "http://example.invalid/zentty",
                 1,
             ),

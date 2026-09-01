@@ -32,9 +32,9 @@ identity="$("${repo_root}/linux/scripts/release-version" "${tag}")"
 version="$(jq -r '.version' <<<"${identity}")"
 revision="$(git -C "${repo_root}" rev-parse HEAD)"
 ghostty_revision="$(sed -n 's/^revision=//p' "${repo_root}/linux/ghostty.lock")"
-[[ "$(basename "${deb}")" == "zentty_${version}_amd64.deb" ]] ||
+[[ "$(basename "${deb}")" == "tornadotty_${version}_amd64.deb" ]] ||
     fail "Debian artifact does not carry release version ${version}"
-[[ "$(basename "${arch}")" == "zentty-${version}-1-x86_64.pkg.tar.zst" ]] ||
+[[ "$(basename "${arch}")" == "tornadotty-${version}-1-x86_64.pkg.tar.zst" ]] ||
     fail "Arch artifact does not carry release version ${version}"
 
 jq -e --arg version "${version}" --arg revision "${revision}" '

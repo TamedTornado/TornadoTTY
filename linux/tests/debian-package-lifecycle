@@ -548,11 +548,11 @@ done
 jq empty "${fixture_contract}" "${policy}" "${expanded_manifest}" "${candidate_provenance}" ||
     fail "package lifecycle input JSON is invalid"
 jq -e --arg package_sha "$(sha256sum "${candidate_package}" | awk '{print $1}')" '
-    .schema_version == 1 and .package == "zentty" and
+    .schema_version == 1 and .package == "tornadotty" and
     .artifact.sha256 == $package_sha
 ' "${candidate_provenance}" >/dev/null || fail "candidate provenance does not match package"
 jq -e --arg version "$(dpkg-deb -f "${candidate_package}" Version)" '
-    .schema_version == 1 and .package == "zentty" and .architecture == "amd64" and
+    .schema_version == 1 and .package == "tornadotty" and .architecture == "amd64" and
     .version == $version and (.files | length) > 0
 ' "${expanded_manifest}" >/dev/null || fail "expanded manifest does not match package identity"
 jq -e \

@@ -10,7 +10,7 @@ fail() {
 tag="$1"
 bundle="$(readlink -f -- "$2")"
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-repository=TamedTornado/zentty
+repository=TamedTornado/tornadotty
 for dependency in gh git jq readlink sha256sum; do
     command -v "${dependency}" >/dev/null || fail "${dependency} is required"
 done
@@ -32,10 +32,13 @@ notes="$(mktemp)"
 trap 'rm -f -- "${notes}"' EXIT
 version="$(jq -r '.version' <<<"${identity}")"
 cat >"${notes}" <<EOF
-First public prerelease of Zentty for Linux.
+First public prerelease of TornadoTTY.
 
-- Ubuntu/Debian: \`zentty_${version}_amd64.deb\`
-- Omarchy/Arch: \`zentty-${version}-1-x86_64.pkg.tar.zst\`
+- Ubuntu/Debian: \`tornadotty_${version}_amd64.deb\`
+- Omarchy/Arch: \`tornadotty-${version}-1-x86_64.pkg.tar.zst\`
+
+TornadoTTY is an unofficial fork of Zentty. It is not affiliated with or
+endorsed by Zenjoy BV.
 
 Both artifacts are native builds. The Omarchy package passed real pacman
 install, upgrade, installed-product help, and uninstall journeys on Omarchy 4.

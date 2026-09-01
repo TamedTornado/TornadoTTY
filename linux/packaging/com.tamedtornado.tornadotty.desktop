@@ -1,11 +1,11 @@
 [Desktop Entry]
 Type=Application
-Name=Zentty
+Name=Tornado TTY
 Comment=Terminal workspace for coding agents
-Exec=zentty-linux
-Icon=com.zentty.zentty
+Exec=tornadotty
+Icon=com.tamedtornado.tornadotty
 Terminal=false
 Categories=System;TerminalEmulator;
 Keywords=terminal;shell;workspace;agent;
 StartupNotify=true
-StartupWMClass=com.zentty.zentty
+StartupWMClass=com.tamedtornado.tornadotty

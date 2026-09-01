@@ -16,7 +16,7 @@ fail() {
 
 jq -e '
   .schema_version == 1 and .status == "RATIFIED" and .tracking_issue == 142 and
-  .package == "zentty" and .architecture == "x86_64" and
+  .package == "tornadotty" and .architecture == "x86_64" and
   .supported_distribution == "Omarchy" and .supported_major >= 4 and
   .build_environment.os_ids == ["arch", "omarchy"] and
   .build_environment.package_manager == "pacman" and

@@ -38,7 +38,7 @@ validate_package_identity() {
     [[ -f "${package}" && ! -L "${package}" ]] || fail "package is missing or unsafe"
     [[ -f "${manifest}" && ! -L "${manifest}" ]] || fail "manifest is missing or unsafe"
     jq -e '
-      .schema_version == 1 and .package == "zentty" and
+      .schema_version == 1 and .package == "tornadotty" and
       .architecture == "amd64" and
       (.version | type == "string" and length > 0) and
       (.zentty_revision | type == "string" and test("^[0-9a-f]{40}$")) and
@@ -56,7 +56,7 @@ validate_package_identity() {
         fail "package version does not identify the manifest revision"
 
     status="$(dpkg-query --admindir="${root}/var/lib/dpkg" \
-        -W -f='${db:Status-Abbrev}|${Version}|${Architecture}' zentty 2>/dev/null || true)"
+        -W -f='${db:Status-Abbrev}|${Version}|${Architecture}' tornadotty 2>/dev/null || true)"
     [[ "${status}" == "ii |${package_version}|amd64" ]] ||
         fail "root does not contain the configured package identity"
 

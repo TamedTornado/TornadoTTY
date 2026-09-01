@@ -75,11 +75,11 @@ expect_failure dirty-checkout "Zentty checkout must be clean" \
     "${temporary}/dirty/linux/scripts/build-deb"
 
 git clone --quiet --no-local --no-hardlinks "${source_fixture}" "${temporary}/missing-resource"
-git -C "${temporary}/missing-resource" rm --quiet assets/icon.png
+git -C "${temporary}/missing-resource" rm --quiet assets/tornadotty-icon.png
 git -C "${temporary}/missing-resource" \
     -c user.name='Zentty Test' -c user.email='test@invalid' \
     commit --quiet -m 'remove required package resource'
-expect_failure missing-resource "manifest source file is missing: assets/icon.png" \
+expect_failure missing-resource "manifest source file is missing: assets/tornadotty-icon.png" \
     env ZENTTY_PACKAGE_OUTPUT_DIR="${temporary}/missing-output" \
     "${temporary}/missing-resource/linux/scripts/build-deb"
 

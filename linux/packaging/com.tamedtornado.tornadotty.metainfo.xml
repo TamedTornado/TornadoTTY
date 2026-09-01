@@ -1,24 +1,24 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <component type="desktop-application">
-  <id>com.zentty.zentty</id>
-  <name>Zentty</name>
+  <id>com.tamedtornado.tornadotty</id>
+  <name>Tornado TTY</name>
   <summary>Terminal workspace for coding agents</summary>
   <metadata_license>CC0-1.0</metadata_license>
   <project_license>GPL-3.0-only</project_license>
   <description>
     <p>
-      Zentty organizes real terminal sessions into worklanes and panes, with
+      Tornado TTY organizes real terminal sessions into worklanes and panes, with
       integrated coding-agent status, session restoration, and task tooling.
     </p>
   </description>
-  <developer id="com.zentty">
-    <name>Zentty contributors</name>
+  <developer id="com.tamedtornado">
+    <name>TornadoTTY contributors</name>
   </developer>
-  <launchable type="desktop-id">com.zentty.zentty.desktop</launchable>
+  <launchable type="desktop-id">com.tamedtornado.tornadotty.desktop</launchable>
   <provides>
-    <binary>zentty-linux</binary>
+    <binary>tornadotty</binary>
   </provides>
-  <url type="homepage">https://github.com/TamedTornado/zentty</url>
+  <url type="homepage">https://github.com/TamedTornado/tornadotty</url>
   <releases>
     <release version="0.1.0" date="2026-08-17"/>
   </releases>

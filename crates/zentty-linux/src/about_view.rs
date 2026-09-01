@@ -4,8 +4,8 @@ use crate::about_catalog::{
 use gtk::prelude::*;
 use std::rc::Rc;
 
-const DOCS_URL: &str = "https://github.com/TamedTornado/zentty#readme";
-const SOURCE_URL: &str = "https://github.com/TamedTornado/zentty";
+const DOCS_URL: &str = "https://github.com/TamedTornado/tornadotty#readme";
+const SOURCE_URL: &str = "https://github.com/TamedTornado/tornadotty";
 
 pub(crate) fn show(parent: &gtk::Window) -> gtk::Window {
     install_styles();
@@ -456,7 +456,7 @@ mod tests {
     fn fixed_external_destinations_are_reviewed_https() {
         assert!(DOCS_URL.starts_with("https://"));
         assert!(SOURCE_URL.starts_with("https://"));
-        assert_eq!(SOURCE_URL, "https://github.com/TamedTornado/zentty");
+        assert_eq!(SOURCE_URL, "https://github.com/TamedTornado/tornadotty");
     }
 
     #[test]

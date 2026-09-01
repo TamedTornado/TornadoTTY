@@ -9,7 +9,7 @@ work_root="${ZENTTY_PACKAGE_WORK_DIR:-${repo_root}/build/linux-package-work}"
 ghostty_source="${GHOSTTY_SOURCE_DIR:-${repo_root}/build/linux-deps/ghostty}"
 ghostty_install="${work_root}/ghostty-install"
 stage="${work_root}/stage"
-package_root="${work_root}/debian/zentty"
+package_root="${work_root}/debian/tornadotty"
 receipt_rows="${work_root}/expanded-manifest.ndjson"
 
 fail() {
@@ -58,10 +58,10 @@ cargo_home="${CARGO_HOME:-${HOME}/.cargo}"
 [[ "${cargo_home}" == /* ]] || fail "Cargo home must be absolute for reproducible path remapping"
 
 "${repo_root}/linux/tests/packaging-policy" >/dev/null
-desktop-file-validate "${repo_root}/linux/packaging/com.zentty.zentty.desktop"
+desktop-file-validate "${repo_root}/linux/packaging/com.tamedtornado.tornadotty.desktop"
 appstreamcli validate --no-net --pedantic \
-    "${repo_root}/linux/packaging/com.zentty.zentty.metainfo.xml" >/dev/null
-[[ "$(file -b "${repo_root}/assets/icon.png")" == \
+    "${repo_root}/linux/packaging/com.tamedtornado.tornadotty.metainfo.xml" >/dev/null
+[[ "$(file -b "${repo_root}/assets/tornadotty-icon.png")" == \
     'PNG image data, 256 x 256, 8-bit/color RGBA, non-interlaced' ]] ||
     fail "application icon is not the reviewed 256x256 RGBA PNG"
 
@@ -161,12 +161,12 @@ mkdir -p -- "${package_root}/usr/share/terminfo/x" "${package_root}/usr/share/te
 install -m 0644 "${terminfo_source}" "${package_root}/usr/share/terminfo/x/xterm-ghostty"
 ln -s ../x/xterm-ghostty "${package_root}/usr/share/terminfo/g/ghostty"
 
-mkdir -p -- "${package_root}/usr/share/doc/zentty"
+mkdir -p -- "${package_root}/usr/share/doc/tornadotty"
 changelog_date="$(date -u -d "@${SOURCE_DATE_EPOCH}" --rfc-email)"
-printf 'zentty (%s) noble; urgency=medium\n\n  * Build from immutable source revision %s.\n\n -- Zentty Project <noreply@zentty.dev>  %s\n' \
+printf 'tornadotty (%s) noble; urgency=medium\n\n  * Build from immutable source revision %s.\n\n -- TornadoTTY Project <noreply@tamedtornado.com>  %s\n' \
     "${package_version}" "${zentty_revision}" "${changelog_date}" |
-    gzip -n -9 >"${package_root}/usr/share/doc/zentty/changelog.Debian.gz"
-chmod 0644 "${package_root}/usr/share/doc/zentty/changelog.Debian.gz"
+    gzip -n -9 >"${package_root}/usr/share/doc/tornadotty/changelog.Debian.gz"
+chmod 0644 "${package_root}/usr/share/doc/tornadotty/changelog.Debian.gz"
 
 # The loader token must remain literal for the dynamic linker.
 # shellcheck disable=SC2016
@@ -191,13 +191,13 @@ find "${package_root}" -exec touch -h -d "@${SOURCE_DATE_EPOCH}" {} +
 
 mkdir -p -- "${work_root}/debian" "${package_root}/DEBIAN"
 cat >"${work_root}/debian/control" <<'EOF'
-Source: zentty
+Source: tornadotty
 Section: utils
 Priority: optional
-Maintainer: Zentty Project <noreply@zentty.dev>
+Maintainer: TornadoTTY Project <noreply@tamedtornado.com>
 Standards-Version: 4.7.0
 
-Package: zentty
+Package: tornadotty
 Architecture: amd64
 Description: terminal workspace for coding agents
 EOF
@@ -247,15 +247,15 @@ done < <(printf '%s\n' "${!dependency_versions[@]}" | LC_ALL=C sort)
 runtime_dependencies="$(printf '%s\n' "${runtime_dependency_lines[@]}" | paste -sd, -)"
 
 cat >"${package_root}/DEBIAN/control" <<EOF
-Package: zentty
+Package: tornadotty
 Version: ${package_version}
 Architecture: amd64
-Maintainer: Zentty Project <noreply@zentty.dev>
+Maintainer: TornadoTTY Project <noreply@tamedtornado.com>
 Section: utils
 Priority: optional
 Depends: ${runtime_dependencies}
 Description: terminal workspace for coding agents
- Zentty organizes real Ghostty terminal sessions into worklanes and panes.
+ Tornado TTY organizes real Ghostty terminal sessions into worklanes and panes.
 EOF
 (
     cd "${package_root}"
@@ -291,9 +291,9 @@ while IFS= read -r payload_path; do
 done < <(find "${package_root}" -mindepth 1 \( -type f -o -type l \) \
     ! -path "${package_root}/DEBIAN/*" -printf '/%P\n' | LC_ALL=C sort)
 
-expanded_manifest="${output_root}/zentty_${package_version}_amd64.manifest.json"
+expanded_manifest="${output_root}/tornadotty_${package_version}_amd64.manifest.json"
 jq -s --arg version "${package_version}" --arg revision "${zentty_revision}" \
-    '{schema_version:1,package:"zentty",version:$version,architecture:"amd64",
+    '{schema_version:1,package:"tornadotty",version:$version,architecture:"amd64",
       zentty_revision:$revision,files:.}' "${receipt_rows}" >"${expanded_manifest}"
 
 while IFS= read -r packaged_path; do
@@ -303,14 +303,14 @@ done < <(find "${package_root}" -print | LC_ALL=C sort)
 
 "${repo_root}/linux/tests/debian-package-audit" "${package_root}" "${expanded_manifest}"
 
-artifact="${output_root}/zentty_${package_version}_amd64.deb"
+artifact="${output_root}/tornadotty_${package_version}_amd64.deb"
 rm -f -- "${artifact}"
 dpkg-deb --root-owner-group -Zxz --build "${package_root}" "${artifact}" >/dev/null
 if dpkg-deb --contents "${artifact}" | awk '$2 != "root/root" { found=1 } END { exit !found }'; then
     fail "Debian archive contains a non-root owner or group"
 fi
 
-provenance="${output_root}/zentty_${package_version}_amd64.provenance.json"
+provenance="${output_root}/tornadotty_${package_version}_amd64.provenance.json"
 jq -n \
     --arg package_version "${package_version}" \
     --arg zentty_revision "${zentty_revision}" \
@@ -321,10 +321,10 @@ jq -n \
     --arg manifest "$(basename "${expanded_manifest}")" \
     --arg manifest_sha256 "$(sha256sum "${expanded_manifest}" | awk '{print $1}')" \
     --arg runtime_dependencies "${runtime_dependencies}" \
-    --arg cargo_packages_sha256 "$(sha256sum "${package_root}/usr/share/doc/zentty/third-party/cargo-packages.json" | awk '{print $1}')" \
-    --argjson cargo_packages_count "$(jq 'length' "${package_root}/usr/share/doc/zentty/third-party/cargo-packages.json")" \
-    --arg ghostty_components_sha256 "$(sha256sum "${package_root}/usr/share/doc/zentty/third-party/ghostty-components.json" | awk '{print $1}')" \
-    --argjson ghostty_components_count "$(jq '.components | length' "${package_root}/usr/share/doc/zentty/third-party/ghostty-components.json")" \
+    --arg cargo_packages_sha256 "$(sha256sum "${package_root}/usr/share/doc/tornadotty/third-party/cargo-packages.json" | awk '{print $1}')" \
+    --argjson cargo_packages_count "$(jq 'length' "${package_root}/usr/share/doc/tornadotty/third-party/cargo-packages.json")" \
+    --arg ghostty_components_sha256 "$(sha256sum "${package_root}/usr/share/doc/tornadotty/third-party/ghostty-components.json" | awk '{print $1}')" \
+    --argjson ghostty_components_count "$(jq '.components | length' "${package_root}/usr/share/doc/tornadotty/third-party/ghostty-components.json")" \
     --arg cargo_lock_sha256 "$(sha256sum "${repo_root}/Cargo.lock" | awk '{print $1}')" \
     --arg ghostty_zon_sha256 "$(sha256sum "${ghostty_source}/build.zig.zon" | awk '{print $1}')" \
     --arg policy_sha256 "$(sha256sum "${policy}" | awk '{print $1}')" \
@@ -333,7 +333,7 @@ jq -n \
     --arg zig "$("${ZIG:-${repo_root}/../.tools/zig-x86_64-linux-0.16.0/zig}" version)" \
     --arg dpkg_deb "$(dpkg-deb --version | head -1)" \
     --arg patchelf "$(patchelf --version)" \
-    '{schema_version:1,package:"zentty",package_version:$package_version,
+    '{schema_version:1,package:"tornadotty",package_version:$package_version,
       architecture:"amd64",baseline:"ubuntu-24.04-noble",
       zentty_revision:$zentty_revision,ghostty_revision:$ghostty_revision,
       source_date_epoch:$source_date_epoch,artifact:{file:$artifact,sha256:$artifact_sha256},

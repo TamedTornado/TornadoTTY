@@ -1,9 +1,9 @@
 {
   "schema_version": 1,
   "status": "RATIFIED",
-  "tracking_issue": 142,
-  "tag_prefix": "linux-v",
-  "release_title_prefix": "Zentty for Linux ",
+  "tracking_issue": 144,
+  "tag_prefix": "tornadotty-v",
+  "release_title_prefix": "Tornado TTY ",
   "application_package": "zentty-linux",
   "artifacts": [
     {

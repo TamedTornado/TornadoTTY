@@ -59,9 +59,9 @@ if [[ "${ZENTTY_GHOSTTY_PREPARED:-false}" == true ]]; then
 fi
 
 "${repo_root}/linux/tests/arch-packaging-policy" --validate-only
-desktop-file-validate "${repo_root}/linux/packaging/com.zentty.zentty.desktop"
+desktop-file-validate "${repo_root}/linux/packaging/com.tamedtornado.tornadotty.desktop"
 appstreamcli validate --no-net --pedantic \
-    "${repo_root}/linux/packaging/com.zentty.zentty.metainfo.xml" >/dev/null
+    "${repo_root}/linux/packaging/com.tamedtornado.tornadotty.metainfo.xml" >/dev/null
 
 rm -rf -- "${work_root}"
 mkdir -p -- "${output_root}" "${stage}" "${ghostty_install}" "${package_root}"
@@ -199,7 +199,7 @@ mapfile -t derived_dependencies < <(LC_ALL=C sort -u "${derived_rows}")
 mkdir -p -- "${work_root}/makepkg"
 cp -a -- "${package_root}" "${work_root}/makepkg/payload"
 {
-    printf 'pkgname=zentty\n'
+    printf 'pkgname=tornadotty\n'
     printf 'pkgver=%q\n' "${package_version}"
     printf 'pkgrel=1\n'
     printf 'pkgdesc=%q\n' "$(jq -r '.package_description' "${policy}")"
@@ -217,7 +217,7 @@ cp -a -- "${package_root}" "${work_root}/makepkg/payload"
     cd "${work_root}/makepkg"
     PKGDEST="${output_root}" makepkg --force --nodeps --noconfirm
 )
-artifact="${output_root}/zentty-${package_version}-1-x86_64.pkg.tar.zst"
+artifact="${output_root}/tornadotty-${package_version}-1-x86_64.pkg.tar.zst"
 [[ -f "${artifact}" ]] || fail "makepkg did not produce the expected artifact"
 
 : >"${receipt_rows}"
@@ -243,14 +243,14 @@ while IFS= read -r payload_path; do
 done < <(find "${package_root}" -mindepth 1 \( -type f -o -type l \) \
     -printf '/%P\n' | LC_ALL=C sort)
 
-expanded_manifest="${output_root}/zentty-${package_version}-1-x86_64.manifest.json"
+expanded_manifest="${output_root}/tornadotty-${package_version}-1-x86_64.manifest.json"
 jq -s --arg version "${package_version}" --arg revision "${zentty_revision}" \
-    '{schema_version:1,package:"zentty",version:$version,architecture:"x86_64",
+    '{schema_version:1,package:"tornadotty",version:$version,architecture:"x86_64",
       package_family:"arch",zentty_revision:$revision,files:.}' \
     "${receipt_rows}" >"${expanded_manifest}"
 
 build_packages_sha256="$(pacman -Q | LC_ALL=C sort | sha256sum | awk '{print $1}')"
-provenance="${output_root}/zentty-${package_version}-1-x86_64.provenance.json"
+provenance="${output_root}/tornadotty-${package_version}-1-x86_64.provenance.json"
 jq -n \
     --arg package_version "${package_version}" --arg zentty_revision "${zentty_revision}" \
     --arg ghostty_revision "${ghostty_revision}" --argjson source_date_epoch "${source_date_epoch}" \
@@ -264,7 +264,7 @@ jq -n \
     --argjson derived_dependencies "$(printf '%s\n' "${derived_dependencies[@]}" | jq -R . | jq -s .)" \
     --arg rustc "$(rustc --version)" --arg cargo "$(cargo --version)" \
     --arg zig "$("${ZIG:-zig}" version)" --arg makepkg "$(makepkg --version | head -1)" \
-    '{schema_version:1,package:"zentty",package_version:$package_version,
+    '{schema_version:1,package:"tornadotty",package_version:$package_version,
       architecture:"x86_64",baseline:"omarchy-4-x86_64",
       zentty_revision:$zentty_revision,ghostty_revision:$ghostty_revision,
       source_date_epoch:$source_date_epoch,

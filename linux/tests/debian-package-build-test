@@ -33,7 +33,7 @@ expect_rejected() {
     echo "debian-package-build-test: artifact and manifest are required" >&2
     exit 1
 }
-[[ "$(dpkg-deb -f "${artifact}" Package)" == zentty ]]
+[[ "$(dpkg-deb -f "${artifact}" Package)" == tornadotty ]]
 [[ "$(dpkg-deb -f "${artifact}" Architecture)" == amd64 ]]
 dpkg-deb --info "${artifact}" >/dev/null
 dpkg-deb --contents "${artifact}" >/dev/null
@@ -52,11 +52,11 @@ install -m 0644 /dev/null "${temporary}/undeclared/usr/lib/zentty/unexpected.a"
 expect_rejected undeclared "expanded manifest and payload differ"
 
 extract_package missing-license
-rm "${temporary}/missing-license/usr/share/doc/zentty/copyright"
+rm "${temporary}/missing-license/usr/share/doc/tornadotty/copyright"
 expect_rejected missing-license "expanded manifest and payload differ"
 
 extract_package missing-third-party-notice
-rm "${temporary}/missing-third-party-notice/usr/share/doc/zentty/third-party/ghostty/ghostty-LICENSE"
+rm "${temporary}/missing-third-party-notice/usr/share/doc/tornadotty/third-party/ghostty/ghostty-LICENSE"
 expect_rejected missing-third-party-notice "expanded manifest and payload differ"
 
 extract_package wrong-mode
@@ -65,10 +65,10 @@ expect_rejected wrong-mode "payload mode drift"
 
 extract_package path-leak
 printf '\n/home/builder/Projects/zentty/build/private\n' >> \
-    "${temporary}/path-leak/usr/share/applications/com.zentty.zentty.desktop"
+    "${temporary}/path-leak/usr/share/applications/com.tamedtornado.tornadotty.desktop"
 path_manifest="${temporary}/path-leak-manifest.json"
-path_sha="$(sha256sum "${temporary}/path-leak/usr/share/applications/com.zentty.zentty.desktop" | awk '{print $1}')"
-jq --arg sha "${path_sha}" '(.files[] | select(.path == "/usr/share/applications/com.zentty.zentty.desktop") | .sha256) = $sha' \
+path_sha="$(sha256sum "${temporary}/path-leak/usr/share/applications/com.tamedtornado.tornadotty.desktop" | awk '{print $1}')"
+jq --arg sha "${path_sha}" '(.files[] | select(.path == "/usr/share/applications/com.tamedtornado.tornadotty.desktop") | .sha256) = $sha' \
     "${manifest}" >"${path_manifest}"
 expect_rejected path-leak "source or build path leaked" "${path_manifest}"
 
@@ -83,10 +83,10 @@ expect_rejected bad-runpath "Ghostty RUNPATH is not install-relative" "${runpath
 
 extract_package credential
 printf '\napi_key=not-a-real-secret-fixture\n' >> \
-    "${temporary}/credential/usr/share/applications/com.zentty.zentty.desktop"
+    "${temporary}/credential/usr/share/applications/com.tamedtornado.tornadotty.desktop"
 credential_manifest="${temporary}/credential-manifest.json"
-credential_sha="$(sha256sum "${temporary}/credential/usr/share/applications/com.zentty.zentty.desktop" | awk '{print $1}')"
-jq --arg sha "${credential_sha}" '(.files[] | select(.path == "/usr/share/applications/com.zentty.zentty.desktop") | .sha256) = $sha' \
+credential_sha="$(sha256sum "${temporary}/credential/usr/share/applications/com.tamedtornado.tornadotty.desktop" | awk '{print $1}')"
+jq --arg sha "${credential_sha}" '(.files[] | select(.path == "/usr/share/applications/com.tamedtornado.tornadotty.desktop") | .sha256) = $sha' \
     "${manifest}" >"${credential_manifest}"
 expect_rejected credential "credential-shaped content in payload" "${credential_manifest}"
 
