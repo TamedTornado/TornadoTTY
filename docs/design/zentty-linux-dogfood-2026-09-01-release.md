@@ -131,6 +131,23 @@ family artifact, and each package is then exercised on its native family.
 
 ## Evidence
 
-Evidence will be appended as package construction, lifecycle, and publication
-work proceeds. A missing or environmentally blocked journey will remain
-explicit and will not be converted into a pass.
+- Ghostty `bab8c088f45e47a00ce3bfe2c142d6cb51ecd200` built natively on
+  Omarchy/GCC 16 after both host helpers selected LLVM. The product then built
+  with Rust `1.100.0-nightly` and Zig `0.16.0`; the Cargo age audit reported 91
+  packages, zero exceptions, and PASS.
+- Native package `zentty-0.1.0+git1cf3619028b3-1-x86_64.pkg.tar.zst` passed the
+  closed 1,297-file payload audit and a real pacman fresh-install, installed
+  `zentty-linux --help`, and uninstall cycle.
+- A second audited package from `be70cf5e77af` was installed over the first by
+  real pacman. Receipt `zentty-upgrade.lifecycle.json` records the distinct
+  versions, `install-previous`, `upgrade`, installed help, and uninstall, plus
+  an unchanged host-package-database fingerprint. This is native Omarchy
+  package evidence, not a container-only approximation.
+- The Debian builder previously always appended `+git<revision>`, even when
+  invoked for a validated release tag. It now shares the same `linux-v<version>`
+  validator as the Arch builder and emits the plain application version for a
+  tagged release. It also owns its locked Cargo fetch rather than assuming a
+  caller populated the sparse index.
+- Publication and a real tagged release artifact are still outstanding. A
+  missing or environmentally blocked journey remains explicit and will not be
+  converted into a pass.

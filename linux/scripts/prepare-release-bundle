@@ -1,0 +1,90 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+fail() {
+    echo "prepare-release-bundle: error: $*" >&2
+    exit 1
+}
+
+[[ "$#" -eq 8 ]] || fail "usage: $0 TAG DEB DEB_MANIFEST DEB_PROVENANCE ARCH ARCH_MANIFEST ARCH_PROVENANCE OUTPUT_DIR"
+tag="$1"
+deb="$(readlink -f -- "$2")"
+deb_manifest="$(readlink -f -- "$3")"
+deb_provenance="$(readlink -f -- "$4")"
+arch="$(readlink -f -- "$5")"
+arch_manifest="$(readlink -f -- "$6")"
+arch_provenance="$(readlink -f -- "$7")"
+output="$(readlink -m -- "$8")"
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+
+for dependency in appstreamcli bsdtar cmp desktop-file-validate dpkg-deb file \
+    git jq patchelf readelf readlink sha256sum sort stat strings; do
+    command -v "${dependency}" >/dev/null || fail "${dependency} is required"
+done
+for input in "${deb}" "${deb_manifest}" "${deb_provenance}" "${arch}" \
+    "${arch_manifest}" "${arch_provenance}"; do
+    [[ -f "${input}" ]] || fail "release input is missing: ${input}"
+done
+[[ -z "$(git -C "${repo_root}" status --porcelain=v1)" ]] ||
+    fail "Zentty checkout must be clean"
+
+identity="$("${repo_root}/linux/scripts/release-version" "${tag}")"
+version="$(jq -r '.version' <<<"${identity}")"
+revision="$(git -C "${repo_root}" rev-parse HEAD)"
+ghostty_revision="$(sed -n 's/^revision=//p' "${repo_root}/linux/ghostty.lock")"
+[[ "$(basename "${deb}")" == "zentty_${version}_amd64.deb" ]] ||
+    fail "Debian artifact does not carry release version ${version}"
+[[ "$(basename "${arch}")" == "zentty-${version}-1-x86_64.pkg.tar.zst" ]] ||
+    fail "Arch artifact does not carry release version ${version}"
+
+jq -e --arg version "${version}" --arg revision "${revision}" '
+  .version == $version and .zentty_revision == $revision and
+  .architecture == "amd64"' "${deb_manifest}" >/dev/null ||
+    fail "Debian manifest release identity is stale"
+jq -e --arg version "${version}" --arg revision "${revision}" '
+  .version == $version and .zentty_revision == $revision and
+  .package_family == "arch" and .architecture == "x86_64"' \
+    "${arch_manifest}" >/dev/null || fail "Arch manifest release identity is stale"
+for evidence in "${deb_provenance}" "${arch_provenance}"; do
+    jq -e --arg version "${version}" --arg revision "${revision}" \
+        --arg ghostty "${ghostty_revision}" '
+      .package_version == $version and .zentty_revision == $revision and
+      .ghostty_revision == $ghostty' "${evidence}" >/dev/null ||
+        fail "package provenance release identity is stale: ${evidence}"
+done
+
+temporary="$(mktemp -d)"
+trap 'rm -rf -- "${temporary}"' EXIT
+dpkg-deb --extract "${deb}" "${temporary}/deb-root"
+dpkg-deb --control "${deb}" "${temporary}/deb-root/DEBIAN"
+"${repo_root}/linux/tests/debian-package-audit" \
+    "${temporary}/deb-root" "${deb_manifest}" >/dev/null
+"${repo_root}/linux/tests/arch-package-audit" \
+    "${arch}" "${arch_manifest}" "${arch_provenance}" >/dev/null
+
+rm -rf -- "${output}"
+mkdir -p -- "${output}"
+for input in "${deb}" "${deb_manifest}" "${deb_provenance}" "${arch}" \
+    "${arch_manifest}" "${arch_provenance}"; do
+    cp -- "${input}" "${output}/"
+done
+(
+    cd "${output}"
+    sha256sum ./* >SHA256SUMS
+)
+jq -n --argjson identity "${identity}" --arg revision "${revision}" \
+    --arg ghostty_revision "${ghostty_revision}" \
+    --arg deb "$(basename "${deb}")" --arg arch "$(basename "${arch}")" \
+    '{schema_version:1,identity:$identity,zentty_revision:$revision,
+      ghostty_revision:$ghostty_revision,prerelease:true,
+      artifacts:[
+        {family:"debian",baseline:"Ubuntu 24.04 LTS",file:$deb},
+        {family:"arch",baseline:"Omarchy 4 x86_64",file:$arch}
+      ]}' >"${output}/release-metadata.json"
+(
+    cd "${output}"
+    sha256sum release-metadata.json >>SHA256SUMS
+    sha256sum --check --strict SHA256SUMS >/dev/null
+)
+
+echo "prepare-release-bundle: PASS tag=${tag} assets=$(find "${output}" -maxdepth 1 -type f | wc -l)"

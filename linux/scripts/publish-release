@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+fail() {
+    echo "publish-release: error: $*" >&2
+    exit 1
+}
+
+[[ "$#" -eq 2 ]] || fail "usage: $0 TAG RELEASE_BUNDLE"
+tag="$1"
+bundle="$(readlink -f -- "$2")"
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+repository=TamedTornado/zentty
+for dependency in gh git jq readlink sha256sum; do
+    command -v "${dependency}" >/dev/null || fail "${dependency} is required"
+done
+[[ -d "${bundle}" ]] || fail "release bundle is missing: ${bundle}"
+identity="$("${repo_root}/linux/scripts/release-version" "${tag}")"
+jq -e --arg tag "${tag}" --arg revision "$(git -C "${repo_root}" rev-parse HEAD)" '
+  .schema_version == 1 and .identity.tag == $tag and
+  .zentty_revision == $revision and .prerelease == true and
+  [.artifacts[].family] == ["debian","arch"]' \
+    "${bundle}/release-metadata.json" >/dev/null || fail "release metadata is invalid"
+(
+    cd "${bundle}"
+    sha256sum --check --strict SHA256SUMS >/dev/null
+)
+if gh release view "${tag}" --repo "${repository}" >/dev/null 2>&1; then
+    fail "GitHub release already exists: ${tag}"
+fi
+notes="$(mktemp)"
+trap 'rm -f -- "${notes}"' EXIT
+version="$(jq -r '.version' <<<"${identity}")"
+cat >"${notes}" <<EOF
+First public prerelease of Zentty for Linux.
+
+- Ubuntu/Debian: \`zentty_${version}_amd64.deb\`
+- Omarchy/Arch: \`zentty-${version}-1-x86_64.pkg.tar.zst\`
+
+Both artifacts are native builds. The Omarchy package passed real pacman
+install, upgrade, installed-product help, and uninstall journeys on Omarchy 4.
+This prerelease does not claim full Linux qualification; consult the repository
+qualification matrix for explicit gaps.
+EOF
+mapfile -t assets < <(find "${bundle}" -maxdepth 1 -type f -printf '%p\n' | LC_ALL=C sort)
+gh release create "${tag}" --repo "${repository}" --verify-tag --prerelease \
+    --title "$(jq -r '.title' <<<"${identity}")" --notes-file "${notes}" \
+    "${assets[@]}"

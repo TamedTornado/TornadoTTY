@@ -44,8 +44,15 @@ if [[ "${ZENTTY_GHOSTTY_PREPARED:-false}" == true ]]; then
     [[ -z "$(git -C "${ghostty_source}" status --porcelain=v1)" ]] ||
         fail "prepared Ghostty checkout is dirty"
 fi
-package_version="$(cargo metadata --locked --no-deps --format-version 1 |
-    jq -er '.packages[] | select(.name == "zentty-linux") | .version')+git${zentty_short}"
+cargo_version="$(cargo metadata --locked --no-deps --format-version 1 |
+    jq -er '.packages[] | select(.name == "zentty-linux") | .version')"
+cargo fetch --locked
+if [[ -n "${ZENTTY_RELEASE_TAG:-}" ]]; then
+    release_receipt="$("${repo_root}/linux/scripts/release-version" "${ZENTTY_RELEASE_TAG}")"
+    package_version="$(jq -r '.version' <<<"${release_receipt}")"
+else
+    package_version="${cargo_version}+git${zentty_short}"
+fi
 dpkg --validate-version "${package_version}" || fail "invalid Debian version ${package_version}"
 cargo_home="${CARGO_HOME:-${HOME}/.cargo}"
 [[ "${cargo_home}" == /* ]] || fail "Cargo home must be absolute for reproducible path remapping"

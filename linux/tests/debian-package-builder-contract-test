@@ -33,6 +33,15 @@ grep -Fq 'ZENTTY_ZIG_GLOBAL_CACHE_DIR="${repo_root}/build/linux-deps/zig-global-
         echo "debian-package-builder-contract-test: lifecycle builder does not forward the prepared Zig package store" >&2
         exit 1
     }
+grep -Fq 'cargo fetch --locked' "${source_fixture}/linux/scripts/build-deb" || {
+    echo "debian-package-builder-contract-test: locked Cargo fetch missing" >&2
+    exit 1
+}
+grep -Fq 'release-version" "${ZENTTY_RELEASE_TAG}"' \
+    "${source_fixture}/linux/scripts/build-deb" || {
+    echo "debian-package-builder-contract-test: release tag validation missing" >&2
+    exit 1
+}
 
 # Both package builders must compile Ghostty at the same absolute source
 # identity. Otherwise Zig may make a different deterministic register-allocation
