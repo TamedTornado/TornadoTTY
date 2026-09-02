@@ -264,3 +264,14 @@ family artifact, and each package is then exercised on its native family.
   Normal development/qualification builds retain the workspace default. The
   repair removes test dependencies from production construction rather than
   installing more test libraries on release runners.
+- Corrected run `33601805822` passed the tagged Ubuntu package, native
+  Omarchy/Arch package, bundle validation, artifact upload, and isolated
+  publisher jobs. GitHub prerelease `tornadotty-v0.1.1` is public at
+  `https://github.com/TamedTornado/TornadoTTY/releases/tag/tornadotty-v0.1.1`.
+  Its tag resolves to TornadoTTY revision
+  `aa00a57149c4b03ba8f45faecb78a641311ed2be`; all eight expected assets report
+  uploaded state. This is an unsigned prerelease with published SHA-256
+  checksums and provenance, not a signed stable-release claim.
+- The README product-page link was withheld while its deployment returned 404.
+  It was committed only after `https://tamedtornado.com/products/tornado-tty`
+  returned HTTP 200 from the deployed SSR site.
