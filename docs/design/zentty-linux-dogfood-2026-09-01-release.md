@@ -228,3 +228,20 @@ family artifact, and each package is then exercised on its native family.
   release. `assets/tornadotty-icon-source.png` now preserves the brand source
   from `consulting/packages/portal-web/public/brand/badge.png`; the packaged
   256x256 RGBA icon is a proportional resize on a transparent square canvas.
+- The first local-install attempt exposed a package-rename defect before APT
+  was invoked: installed dogfood uses Debian package name `zentty`, while the
+  rebranded artifact is `tornadotty`, and both own compatibility paths under
+  `/usr/bin` and `/usr/lib/zentty`. Both Debian and Arch package generators now
+  declare that TornadoTTY provides, conflicts with, and replaces `zentty`.
+  Package audits require all three relations, with negative fixtures proving a
+  missing replacement declaration is rejected. The unused legacy
+  `assets/icon.png` was removed; application packaging has a single reviewed
+  TornadoTTY icon source.
+- The focused Debian builder-contract rerun initially failed because its dirty
+  checkout negative still expected the pre-rebrand `Zentty checkout must be
+  clean` diagnostic. The builder emitted the correct TornadoTTY diagnostic and
+  rejected the fixture; the stale assertion was updated rather than weakening
+  the rejection.
+- The Arch build-environment contract also requires the generator itself to
+  emit all three rename relations; the artifact audit alone would only prove
+  that a hand-built fixture contained them.

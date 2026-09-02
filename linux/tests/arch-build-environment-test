@@ -35,6 +35,10 @@ grep -Fq 'ZENTTY_GHOSTTY_PREPARED=true' "${wrapper}" || fail "Ghostty is not pin
 grep -Fq 'blueprint-compiler bsdtar cargo' \
     "${repo_root}/linux/scripts/build-arch-package" ||
     fail "native Arch builder does not preflight blueprint-compiler"
+for relation in "provides=('zentty')" "conflicts=('zentty')" "replaces=('zentty')"; do
+    grep -Fq "${relation}" "${repo_root}/linux/scripts/build-arch-package" ||
+        fail "native Arch builder lacks package rename relation: ${relation}"
+done
 if sed -n '/resolved="$(ldd/,/'"'"')"/p' \
     "${repo_root}/linux/scripts/build-arch-package" | grep -Fq 'exit'; then
     fail "dependency resolver can SIGPIPE ldd under pipefail"

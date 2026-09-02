@@ -90,6 +90,12 @@ done
 control="${root}/DEBIAN/control"
 [[ "$(sed -n 's/^Package: //p' "${control}")" == tornadotty ]] || fail "wrong package name"
 [[ "$(sed -n 's/^Architecture: //p' "${control}")" == amd64 ]] || fail "wrong package architecture"
+[[ "$(sed -n 's/^Provides: //p' "${control}")" == zentty ]] ||
+    fail "legacy package provision is missing"
+[[ "$(sed -n 's/^Conflicts: //p' "${control}")" == zentty ]] ||
+    fail "legacy package conflict is missing"
+[[ "$(sed -n 's/^Replaces: //p' "${control}")" == zentty ]] ||
+    fail "legacy package replacement is missing"
 dependencies="$(sed -n 's/^Depends: //p' "${control}")"
 dependency_floor_pattern='\(>=[[:space:]]+([^)]+)\)'
 while IFS=$'\t' read -r package minimum; do

@@ -25,6 +25,12 @@ bsdtar -xf "${artifact}" -C "${temporary}"
 pkginfo="${temporary}/.PKGINFO"
 [[ "$(sed -n 's/^pkgname = //p' "${pkginfo}")" == tornadotty ]] || fail "wrong package name"
 [[ "$(sed -n 's/^arch = //p' "${pkginfo}")" == x86_64 ]] || fail "wrong architecture"
+[[ "$(sed -n 's/^provides = //p' "${pkginfo}")" == zentty ]] ||
+    fail "legacy package provision is missing"
+[[ "$(sed -n 's/^conflict = //p' "${pkginfo}")" == zentty ]] ||
+    fail "legacy package conflict is missing"
+[[ "$(sed -n 's/^replaces = //p' "${pkginfo}")" == zentty ]] ||
+    fail "legacy package replacement is missing"
 package_version="$(sed -n 's/^pkgver = //p' "${pkginfo}")"
 package_version="${package_version%-1}"
 [[ -n "${package_version}" ]] || fail "package version is missing"

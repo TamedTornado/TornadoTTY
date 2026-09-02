@@ -40,10 +40,15 @@ make_fixture() {
         printf 'pkgname = tornadotty\n'
         printf 'pkgver = 0.1.0-1\n'
         printf 'arch = x86_64\n'
+        printf 'provides = zentty\n'
+        printf 'conflict = zentty\n'
+        printf 'replaces = zentty\n'
         jq -r '.required_runtime_packages[] | "depend = " + .' "${policy}"
     } >"${root}/.PKGINFO"
     if [[ "${mode}" == missing-dependency ]]; then
         sed -i '/depend = gtk4/d' "${root}/.PKGINFO"
+    elif [[ "${mode}" == missing-rename-metadata ]]; then
+        sed -i '/^replaces = zentty$/d' "${root}/.PKGINFO"
     fi
     (
         cd "${root}"
@@ -108,6 +113,8 @@ make_fixture extra extra
 expect_failure extra 'undeclared payload files'
 make_fixture missing-dependency missing-dependency
 expect_failure missing-dependency 'dependencies do not match'
+make_fixture missing-rename-metadata missing-rename-metadata
+expect_failure missing-rename-metadata 'legacy package replacement is missing'
 make_fixture stale
 jq '.artifact.sha256 = ("0" * 64)' \
     "${temporary}/stale/zentty-0.1.0-1-x86_64.provenance.json" \

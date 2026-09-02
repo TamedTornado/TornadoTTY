@@ -254,6 +254,9 @@ Maintainer: TornadoTTY Project <noreply@tamedtornado.com>
 Section: utils
 Priority: optional
 Depends: ${runtime_dependencies}
+Provides: zentty
+Conflicts: zentty
+Replaces: zentty
 Description: terminal workspace for coding agents
  Tornado TTY organizes real Ghostty terminal sessions into worklanes and panes.
 EOF

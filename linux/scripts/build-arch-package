@@ -208,6 +208,9 @@ cp -a -- "${package_root}" "${work_root}/makepkg/payload"
     printf 'license=(GPL-3.0-only)\n'
     printf 'depends=('; printf '%q ' "${required_dependencies[@]}"; printf ')\n'
     printf 'optdepends=('; printf '%q ' "${optional_dependencies[@]}"; printf ')\n'
+    printf "provides=('zentty')\n"
+    printf "conflicts=('zentty')\n"
+    printf "replaces=('zentty')\n"
     printf "options=('!strip' '!debug')\n"
     # makepkg expands these variables while evaluating package().
     # shellcheck disable=SC2016

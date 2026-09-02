@@ -47,6 +47,10 @@ ZENTTY_BUILD_DIR="${temporary}/positive/usr/lib/zentty" \
     md5sum --check --strict DEBIAN/md5sums >/dev/null
 )
 
+extract_package missing-rename-metadata
+sed -i '/^Replaces: zentty$/d' "${temporary}/missing-rename-metadata/DEBIAN/control"
+expect_rejected missing-rename-metadata "legacy package replacement is missing"
+
 extract_package undeclared
 install -m 0644 /dev/null "${temporary}/undeclared/usr/lib/zentty/unexpected.a"
 expect_rejected undeclared "expanded manifest and payload differ"

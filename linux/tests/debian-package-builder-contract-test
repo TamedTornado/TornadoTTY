@@ -42,6 +42,12 @@ grep -Fq 'release-version" "${ZENTTY_RELEASE_TAG}"' \
     echo "debian-package-builder-contract-test: release tag validation missing" >&2
     exit 1
 }
+for relation in 'Provides: zentty' 'Conflicts: zentty' 'Replaces: zentty'; do
+    grep -Fq "${relation}" "${source_fixture}/linux/scripts/build-deb" || {
+        echo "debian-package-builder-contract-test: package rename relation missing: ${relation}" >&2
+        exit 1
+    }
+done
 
 # Both package builders must compile Ghostty at the same absolute source
 # identity. Otherwise Zig may make a different deterministic register-allocation
@@ -70,7 +76,7 @@ expect_failure() {
 
 git clone --quiet --no-local --no-hardlinks "${source_fixture}" "${temporary}/dirty"
 printf '\ndirty package build\n' >>"${temporary}/dirty/README.md"
-expect_failure dirty-checkout "Zentty checkout must be clean" \
+expect_failure dirty-checkout "TornadoTTY checkout must be clean" \
     env ZENTTY_PACKAGE_OUTPUT_DIR="${temporary}/dirty-output" \
     "${temporary}/dirty/linux/scripts/build-deb"
 
