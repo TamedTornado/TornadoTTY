@@ -245,3 +245,11 @@ family artifact, and each package is then exercised on its native family.
 - The Arch build-environment contract also requires the generator itself to
   emit all three rename relations; the artifact audit alone would only prove
   that a hand-built fixture contained them.
+- Local Debian candidate `tornadotty_0.1.1+gite064dd1151e8_amd64.deb` passed
+  the closed 1,300-file package audit and the real-package structural/mutation
+  suite. APT then reported an explicit `zentty` removal and `tornadotty`
+  installation. Post-install dpkg state was `tornadotty: ii` and `zentty: un`;
+  TornadoTTY owned `/usr/bin/tornadotty`, the compatibility
+  `/usr/bin/zentty-linux`, and the desktop icon. The installed icon was
+  byte-identical to the reviewed asset, installed help ran, and the existing
+  user configuration and workspace-state directories remained present.
