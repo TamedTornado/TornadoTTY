@@ -278,7 +278,7 @@ family artifact, and each package is then exercised on its native family.
 
 ## Standard release-tag namespace migration (2026-09-02)
 
-- The renamed GitHub fork still exposed 47 inherited Zentty `v*` tags while
+- The renamed GitHub fork still exposed 46 inherited Zentty `v*` tags while
   TornadoTTY's first prerelease used the branded `tornadotty-v0.1.1` tag. That
   made the normal release namespace misleading and prevented TornadoTTY from
   publishing the conventional `v0.1.1` tag because upstream already owned a
