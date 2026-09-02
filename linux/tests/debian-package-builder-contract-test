@@ -48,6 +48,11 @@ for relation in 'Provides: zentty' 'Conflicts: zentty' 'Replaces: zentty'; do
         exit 1
     }
 done
+grep -Fq '"ZENTTY_BUILD_SCOPE=product"' \
+    "${source_fixture}/linux/scripts/build-deb" || {
+    echo "debian-package-builder-contract-test: package build is not product-scoped" >&2
+    exit 1
+}
 
 # Both package builders must compile Ghostty at the same absolute source
 # identity. Otherwise Zig may make a different deterministic register-allocation

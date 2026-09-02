@@ -32,6 +32,14 @@ if [[ "${ghostty_install_dir}" != /* ]]; then
     ghostty_install_dir="${repo_root}/${ghostty_install_dir}"
 fi
 optimize="${GHOSTTY_OPTIMIZE:-ReleaseSafe}"
+build_scope="${ZENTTY_BUILD_SCOPE:-workspace}"
+case "${build_scope}" in
+    workspace|product) ;;
+    *)
+        echo "error: ZENTTY_BUILD_SCOPE must be workspace or product" >&2
+        exit 64
+        ;;
+esac
 ghostty_system_integrations="${GHOSTTY_SYSTEM_INTEGRATIONS:-}"
 ghostty_system_integration_args=()
 if [[ -n "${ghostty_system_integrations}" ]]; then
@@ -70,12 +78,21 @@ if [[ "${optimize}" == "Debug" ]]; then
     c_probe_flags+=(-O0 -g3)
     cargo_profile="debug"
     probe_profile="debug"
-    cargo_arguments=(build --workspace --locked)
+    cargo_arguments=(build --locked)
 else
     c_probe_flags+=(-O2 -g -DNDEBUG -D_FORTIFY_SOURCE=3)
     cargo_profile="release-safe"
     probe_profile="release"
-    cargo_arguments=(build --workspace --locked --profile release-safe)
+    cargo_arguments=(build --locked --profile release-safe)
+fi
+if [[ "${build_scope}" == workspace ]]; then
+    cargo_arguments+=(--workspace)
+else
+    cargo_arguments+=(
+        --package zentty-linux --bin zentty-linux
+        --package zentty-agent-ipc --bin zentty
+        --package zentty-test-support --bin zentty-focus-steal-helper
+    )
 fi
 
 if [[ ! -x "${zig}" ]]; then

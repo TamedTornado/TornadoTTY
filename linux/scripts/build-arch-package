@@ -68,6 +68,7 @@ mkdir -p -- "${output_root}" "${stage}" "${ghostty_install}" "${package_root}"
 build_environment=(
     "ZENTTY_GHOSTTY_INSTALL_DIR=${ghostty_install}"
     "ZENTTY_BUILD_OUTPUT_DIR=${stage}"
+    "ZENTTY_BUILD_SCOPE=product"
     "GHOSTTY_OPTIMIZE=ReleaseSafe"
     "GHOSTTY_SYSTEM_INTEGRATIONS=fontconfig"
     "RUSTFLAGS=--remap-path-prefix=${repo_root}=/usr/src/zentty --remap-path-prefix=${CARGO_HOME:-${HOME}/.cargo}=/usr/src/cargo"

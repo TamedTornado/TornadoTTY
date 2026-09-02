@@ -39,6 +39,16 @@ for relation in "provides=('zentty')" "conflicts=('zentty')" "replaces=('zentty'
     grep -Fq "${relation}" "${repo_root}/linux/scripts/build-arch-package" ||
         fail "native Arch builder lacks package rename relation: ${relation}"
 done
+grep -Fq '"ZENTTY_BUILD_SCOPE=product"' \
+    "${repo_root}/linux/scripts/build-arch-package" ||
+    fail "native Arch package build is not product-scoped"
+for target in \
+    '--package zentty-linux --bin zentty-linux' \
+    '--package zentty-agent-ipc --bin zentty' \
+    '--package zentty-test-support --bin zentty-focus-steal-helper'; do
+    grep -Fq -- "${target}" "${repo_root}/linux/scripts/build-local" ||
+        fail "product build target is missing: ${target}"
+done
 if sed -n '/resolved="$(ldd/,/'"'"')"/p' \
     "${repo_root}/linux/scripts/build-arch-package" | grep -Fq 'exit'; then
     fail "dependency resolver can SIGPIPE ldd under pipefail"

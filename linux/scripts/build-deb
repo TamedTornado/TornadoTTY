@@ -75,6 +75,7 @@ mkdir -p -- "${output_root}" "${stage}" "${ghostty_install}" "${package_root}"
 build_environment=(
     "ZENTTY_GHOSTTY_INSTALL_DIR=${ghostty_install}"
     "ZENTTY_BUILD_OUTPUT_DIR=${stage}"
+    "ZENTTY_BUILD_SCOPE=product"
     # Package builds must not consume the developer checkout's incremental
     # Ghostty cache. The revision-scoped canonical path is identical inside the
     # detached builder's private /tmp, avoids source-path leakage, and prevents

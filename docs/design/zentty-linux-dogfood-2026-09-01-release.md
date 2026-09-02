@@ -253,3 +253,14 @@ family artifact, and each package is then exercised on its native family.
   `/usr/bin/zentty-linux`, and the desktop icon. The installed icon was
   byte-identical to the reviewed asset, installed help ran, and the existing
   user configuration and workspace-state directories remained present.
+- Public workflow run `33600226879` passed dependency preparation and compiled
+  the product crates, but failed while linking the test-only
+  `zentty-atspi-inspector`: the clean GitHub runner correctly lacked
+  `libatspi`, while the development host had masked the dependency. The package
+  builder had been invoking `cargo build --workspace`, compiling every journey
+  actor even though packages ship only three Rust executables. `build-local`
+  now has an explicit `product` scope selecting `zentty-linux`, the public CLI,
+  and the focus-steal helper; Debian and Arch builders require that scope.
+  Normal development/qualification builds retain the workspace default. The
+  repair removes test dependencies from production construction rather than
+  installing more test libraries on release runners.
