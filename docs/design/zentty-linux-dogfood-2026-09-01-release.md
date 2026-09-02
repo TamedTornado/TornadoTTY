@@ -266,7 +266,7 @@ family artifact, and each package is then exercised on its native family.
   installing more test libraries on release runners.
 - Corrected run `33601805822` passed the tagged Ubuntu package, native
   Omarchy/Arch package, bundle validation, artifact upload, and isolated
-  publisher jobs. GitHub prerelease `tornadotty-v0.1.1` is public at
+  publisher jobs. GitHub prerelease `tornadotty-v0.1.1` was published at
   `https://github.com/TamedTornado/TornadoTTY/releases/tag/tornadotty-v0.1.1`.
   Its tag resolves to TornadoTTY revision
   `aa00a57149c4b03ba8f45faecb78a641311ed2be`; all eight expected assets report
@@ -296,3 +296,27 @@ family artifact, and each package is then exercised on its native family.
   `release-metadata.json` records the original tag as evidence. A new bundle is
   therefore built and published from the standard tag before the old release
   and inherited tag namespace are removed.
+- Focused release-policy validation passed: `release-version-test`,
+  `release-workflow-contract`, and its negative mutation suite. Commit
+  `62f5771451a81d9eab296b7dc287bd4af02addd2` was tagged as `v0.1.1`; both the
+  local tag and the public remote ref resolved exactly to that commit before
+  publication.
+- Workflow run `33607616734` completed successfully. It built both native
+  package families, validated the bundle, uploaded it, and published the
+  write-isolated prerelease. The public release exposes all eight expected
+  uploaded assets. Downloaded `release-metadata.json` records tag `v0.1.1`,
+  version `0.1.1`, TornadoTTY revision `62f5771451a81d9eab296b7dc287bd4af02addd2`,
+  and pinned Ghostty revision `bab8c088f45e47a00ce3bfe2c142d6cb51ecd200`.
+- Only after that receipt passed was the obsolete `tornadotty-v0.1.1` release
+  and tag removed. The remaining 45 inherited remote `v*` tags were deleted in
+  one explicit ref update; the checkout's 47 pre-migration `v*` tags also
+  included upstream's local-only `v0.2.0` tag and were replaced with the
+  single TornadoTTY tag.
+- Final public state: TornadoTTY origin has exactly one tag, `v0.1.1`, and one
+  GitHub prerelease at
+  `https://github.com/TamedTornado/TornadoTTY/releases/tag/v0.1.1`. Upstream
+  remains untouched with 47 `v*` tags; its annotated `v0.1.1` still peels to
+  `95dee26cd95264b8684c19d792a02000889037c2`.
+- A real `git fetch upstream` advanced `upstream/main` without importing any
+  tag. `remote.upstream.tagOpt` remained `--no-tags`, and the local tag set was
+  byte-for-byte unchanged at the single TornadoTTY `v0.1.1` tag.
