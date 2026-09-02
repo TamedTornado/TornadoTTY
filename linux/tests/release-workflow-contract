@@ -32,6 +32,12 @@ grep -Fq 'contents: read' "${workflow}" || fail "default permission is not read-
     fail "checkout credentials are persisted"
 grep -Fq 'runs-on: ubuntu-24.04' "${workflow}" || fail "runner baseline is mutable"
 grep -Fq 'linux/scripts/build-deb' "${workflow}" || fail "Debian package is not built"
+grep -Fq 'ZIG_GLOBAL_CACHE_DIR="${GITHUB_WORKSPACE}/build/linux-deps/zig-global-cache"' \
+    "${workflow}" || fail "Zig package cache is not populated for the Debian builder"
+grep -Fq '"${ZIG}" build gtk-embed-lib --fetch=all' "${workflow}" ||
+    fail "pinned Ghostty dependencies are not fetched before package construction"
+grep -Fq 'test -d build/linux-deps/zig-global-cache/p' "${workflow}" ||
+    fail "prepared Zig package store is not verified"
 grep -Fq 'linux/scripts/build-arch-in-container' "${workflow}" || fail "Arch package is not built"
 grep -Fq 'linux/scripts/prepare-release-bundle' "${workflow}" || fail "bundle is not validated"
 grep -Fq 'linux/scripts/publish-release' "${workflow}" || fail "release publisher is absent"

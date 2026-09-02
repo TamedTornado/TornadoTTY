@@ -59,6 +59,19 @@ jobs:
           source build/linux-ci-tools/environment.sh
           cargo fetch --locked
           linux/scripts/prepare-ghostty-source
+          (
+            cd build/linux-deps/ghostty
+            PATH="${BLUEPRINT_COMPILER_DIR}:$(dirname "${ZIG}"):${PATH}" \
+              ZIG_GLOBAL_CACHE_DIR="${GITHUB_WORKSPACE}/build/linux-deps/zig-global-cache" \
+              ZIG_LOCAL_CACHE_DIR="${GITHUB_WORKSPACE}/build/linux-deps/ghostty/.zig-cache-release-fetch" \
+              "${ZIG}" build gtk-embed-lib --fetch=all \
+                -Doptimize=ReleaseSafe \
+                -Dcpu=baseline \
+                -Demit-terminfo=true \
+                -fsys=fontconfig \
+                -fno-sys=gtk4-layer-shell
+          )
+          test -d build/linux-deps/zig-global-cache/p
 
       - name: Build tagged Ubuntu package
         shell: bash

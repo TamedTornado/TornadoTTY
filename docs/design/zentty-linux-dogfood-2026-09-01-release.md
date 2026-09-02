@@ -200,3 +200,24 @@ family artifact, and each package is then exercised on its native family.
   `/home/` token and consumes the complete pipeline. Positive and negative ELF
   fixtures prove both that the application token is allowed and a real source
   path remains rejected even with substantial data after the match.
+
+## TornadoTTY republication repair (2026-09-02)
+
+- After the public rebrand, the prior Zentty release was deliberately removed.
+  The repository README linked to an empty Releases page until a new
+  `tornadotty-v0.1.1` publication was requested.
+- The first rebranded workflow run, `33597971738`, failed before artifact
+  construction with `build-deb: error: prepared Zig package cache is missing`.
+  This was not treated as a release or package pass. The workflow prepared the
+  exact Ghostty checkout but omitted the immutable Zig dependency-fetch phase
+  required by the reproducible Debian builder.
+- A focused Zig 0.16 probe against the pinned Ghostty checkout established that
+  `--fetch=needed` does not create the complete global `p` store, while
+  `--fetch=all` creates it without compiling the product. The release workflow
+  now fetches the exact Ghostty dependency tree into the declared repository
+  cache with the same ReleaseSafe/fontconfig/GTK-embed configuration and
+  explicitly requires the resulting `p` directory before package construction.
+- `release-workflow-contract` now makes cache population and verification part
+  of the release orchestration contract. Its negative suite removes the fetch
+  edge and proves the mutation is rejected. No redundant pre-package product
+  build or cache-bypass was added.
