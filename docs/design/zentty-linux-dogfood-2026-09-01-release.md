@@ -221,3 +221,10 @@ family artifact, and each package is then exercised on its native family.
   of the release orchestration contract. Its negative suite removes the fetch
   edge and proves the mutation is rejected. No redundant pre-package product
   build or cache-bypass was added.
+- Review before republication found that the rebranded package still carried a
+  separately generated orange-and-blue tornado icon rather than the existing
+  Tamed Tornado brand mark. Workflow run `33598557513` was cancelled during
+  package construction so that obsolete branding could not become the public
+  release. `assets/tornadotty-icon-source.png` now preserves the brand source
+  from `consulting/packages/portal-web/public/brand/badge.png`; the packaged
+  256x256 RGBA icon is a proportional resize on a transparent square canvas.
