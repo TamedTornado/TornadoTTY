@@ -10,6 +10,7 @@
 </p>
 
 <p align="center">
+  <a href="https://tamedtornado.com/products/tornado-tty">Product page</a> ·
   <a href="#install-on-ubuntu-2404">Install</a> ·
   <a href="https://github.com/TamedTornado/TornadoTTY/releases">Releases</a> ·
   <a href="#build-and-run-for-development">Build</a> ·
