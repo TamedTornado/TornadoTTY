@@ -80,7 +80,9 @@
   `com.tamedtornado.tornadotty`. Package documentation moved to
   `/usr/share/doc/tornadotty`; internal binaries, libraries, resources, and
   runtime contracts remain under their established `zentty` paths.
-- New releases use `tornadotty-v<version>` tags and TornadoTTY artifact names.
+- TornadoTTY owns the fork's conventional `v<version>` release namespace and
+  uses TornadoTTY artifact names. Upstream Zentty tags are not mirrored into
+  this fork; explicitly needed upstream tags must use a distinct local name.
   The release workflow remains explicitly dispatched and does not qualify or
   publish ordinary commits.
 

@@ -22,22 +22,22 @@ expect_failure() {
 
 receipt="$(
     ZENTTY_RELEASE_CARGO_VERSION=0.1.0 \
-    ZENTTY_RELEASE_HEAD_TAGS=$'unrelated\ntornadotty-v0.1.0' \
-        "${subject}" tornadotty-v0.1.0
+    ZENTTY_RELEASE_HEAD_TAGS=$'unrelated\nv0.1.0' \
+        "${subject}" v0.1.0
 )"
 jq -e '
-  .schema_version == 1 and .tag == "tornadotty-v0.1.0" and
+  .schema_version == 1 and .tag == "v0.1.0" and
   .version == "0.1.0" and .title == "Tornado TTY 0.1.0"
 ' <<<"${receipt}" >/dev/null || fail "valid release identity receipt is malformed"
 
-expect_failure wrong-prefix 'expected tornadotty-v0.1.0' \
+expect_failure wrong-prefix 'expected v0.1.0' \
     env ZENTTY_RELEASE_CARGO_VERSION=0.1.0 ZENTTY_RELEASE_HEAD_TAGS=tornadotty-v0.1.0 \
-    "${subject}" v0.1.0
-expect_failure version-mismatch 'expected tornadotty-v0.1.0' \
-    env ZENTTY_RELEASE_CARGO_VERSION=0.1.0 ZENTTY_RELEASE_HEAD_TAGS=tornadotty-v0.2.0 \
-    "${subject}" tornadotty-v0.2.0
+    "${subject}" tornadotty-v0.1.0
+expect_failure version-mismatch 'expected v0.1.0' \
+    env ZENTTY_RELEASE_CARGO_VERSION=0.1.0 ZENTTY_RELEASE_HEAD_TAGS=v0.2.0 \
+    "${subject}" v0.2.0
 expect_failure tag-not-at-head 'does not point at HEAD' \
     env ZENTTY_RELEASE_CARGO_VERSION=0.1.0 ZENTTY_RELEASE_HEAD_TAGS=unrelated \
-    "${subject}" tornadotty-v0.1.0
+    "${subject}" v0.1.0
 
 echo "release-version-test: PASS"

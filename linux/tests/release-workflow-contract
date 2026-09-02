@@ -25,6 +25,10 @@ if grep -Eq 'uses: [^#[:space:]]+@(v[0-9]+|main|master|latest)([[:space:]#]|$)' 
 fi
 grep -Fq 'workflow_dispatch:' "${workflow}" || fail "release is not operator-dispatched"
 grep -Fq 'publish:' "${workflow}" || fail "publish control is missing"
+grep -Fq 'description: Existing v<version> tag to package' "${workflow}" ||
+    fail "standard release tag contract is missing"
+grep -Fq 'version="${ZENTTY_RELEASE_TAG#v}"' "${workflow}" ||
+    fail "release version is not derived from the standard tag"
 grep -Fq 'contents: read' "${workflow}" || fail "default permission is not read-only"
 [[ "$(grep -Fc 'contents: write' "${workflow}")" -eq 1 ]] ||
     fail "write permission is not isolated to one job"

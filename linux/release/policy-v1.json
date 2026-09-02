@@ -2,7 +2,7 @@
   "schema_version": 1,
   "status": "RATIFIED",
   "tracking_issue": 144,
-  "tag_prefix": "tornadotty-v",
+  "tag_prefix": "v",
   "release_title_prefix": "Tornado TTY ",
   "application_package": "zentty-linux",
   "artifacts": [

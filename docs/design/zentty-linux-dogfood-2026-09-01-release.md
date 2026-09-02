@@ -275,3 +275,24 @@ family artifact, and each package is then exercised on its native family.
 - The README product-page link was withheld while its deployment returned 404.
   It was committed only after `https://tamedtornado.com/products/tornado-tty`
   returned HTTP 200 from the deployed SSR site.
+
+## Standard release-tag namespace migration (2026-09-02)
+
+- The renamed GitHub fork still exposed 47 inherited Zentty `v*` tags while
+  TornadoTTY's first prerelease used the branded `tornadotty-v0.1.1` tag. That
+  made the normal release namespace misleading and prevented TornadoTTY from
+  publishing the conventional `v0.1.1` tag because upstream already owned a
+  different object with that name.
+- Decision: TornadoTTY owns `v<version>` on its own GitHub repository. Upstream
+  release tags are intentionally not mirrored, and maintainers must not use
+  `git push --tags` when synchronizing the fork. The local `upstream` remote is
+  configured with `tagOpt=--no-tags`; any upstream tag needed for archaeology
+  must be fetched explicitly under a disambiguated name such as
+  `upstream-zentty-v0.1.1`.
+- The release policy, operator workflow, and negative contract tests now agree
+  on the standard prefix. The workflow contract rejects both a branded input
+  description and branded version extraction.
+- The existing GitHub release cannot merely be retagged: its published
+  `release-metadata.json` records the original tag as evidence. A new bundle is
+  therefore built and published from the standard tag before the old release
+  and inherited tag namespace are removed.

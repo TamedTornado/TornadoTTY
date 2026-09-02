@@ -28,5 +28,11 @@ expect_rejected broad-write 'contents: read' 'contents: write'
 expect_rejected missing-arch-build 'linux/scripts/build-arch-in-container' 'true # missing Arch build'
 expect_rejected missing-zig-package-fetch '"${ZIG}" build gtk-embed-lib --fetch=all' 'true # missing Zig package fetch'
 expect_rejected automatic-trigger 'workflow_dispatch:' 'push:'
+expect_rejected branded-tag-prefix \
+    'description: Existing v<version> tag to package' \
+    'description: Existing tornadotty-v<version> tag to package'
+expect_rejected branded-version-extraction \
+    'version="${ZENTTY_RELEASE_TAG#v}"' \
+    'version="${ZENTTY_RELEASE_TAG#tornadotty-v}"'
 
-echo "release-workflow-contract-test: PASS negatives=action+credentials+runner+permission+artifact-family+zig-package-fetch+trigger"
+echo "release-workflow-contract-test: PASS negatives=action+credentials+runner+permission+artifact-family+zig-package-fetch+trigger+tag-contract"

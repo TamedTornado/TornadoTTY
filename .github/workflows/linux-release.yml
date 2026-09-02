@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: Existing tornadotty-v<version> tag to package
+        description: Existing v<version> tag to package
         required: true
         type: string
       publish:
@@ -88,7 +88,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          version="${ZENTTY_RELEASE_TAG#tornadotty-v}"
+          version="${ZENTTY_RELEASE_TAG#v}"
           linux/scripts/prepare-release-bundle "${ZENTTY_RELEASE_TAG}" \
             "build/linux-package/tornadotty_${version}_amd64.deb" \
             "build/linux-package/tornadotty_${version}_amd64.manifest.json" \
