@@ -71,34 +71,24 @@ fn run_with_input(mut command: Command, input: &[u8]) -> std::process::Output {
 }
 
 #[test]
-fn real_cli_process_adapts_codex_and_server_uses_canonical_target() {
+fn real_cli_process_does_not_route_pre_policy_codex_permission_requests() {
     let harness = Harness::start();
     let mut command = harness.command();
     command.arg("ipc").arg("agent-event").arg("--adapter=codex");
     let output = run_with_input(
         command,
-        br#"{"hook_event_name":"PermissionRequest","session_id":"codex-real","message":"Run tests?"}"#,
+        br#"{"session_id":"codex-real","turn_id":"turn-real","transcript_path":null,"cwd":"/tmp","hook_event_name":"PermissionRequest","model":"gpt-5.6","permission_mode":"default","tool_name":"shell","tool_input":{"command":"cargo test"}}"#,
     );
     assert!(
         output.status.success(),
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
-    let received = harness
-        .receiver
-        .recv_timeout(Duration::from_secs(2))
-        .unwrap();
-    assert_eq!(
-        received.target,
-        AgentTarget::new("window-real", "lane-real", "pane-real")
-    );
-    let target = received.target.clone();
-    let mut statuses = AgentStatusStore::default();
-    statuses.apply(received, 1);
-    let status = statuses.status_for(&target).unwrap();
-    assert_eq!(status.agent_name, "Codex");
-    assert_eq!(status.text.as_deref(), Some("Run tests?"));
-    assert!(status.requires_attention());
+    assert!(output.stdout.is_empty());
+    assert!(matches!(
+        harness.receiver.try_recv(),
+        Err(mpsc::TryRecvError::Empty)
+    ));
 }
 
 #[test]

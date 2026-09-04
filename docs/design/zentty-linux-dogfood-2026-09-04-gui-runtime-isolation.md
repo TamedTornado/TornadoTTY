@@ -365,3 +365,110 @@ This closes an additional application-owned unbounded collection and queue;
 it does not claim the installed client is repaired. Installed field validation
 still waits for the user's coordinated restart. Broader PTY/IPC backpressure
 and process-group isolation remain GH-163 and GH-162 work respectively.
+
+## Codex pre-policy permission notification routing
+
+### Field failure and corrected source contract
+
+At approximately 17:20 CEST the installed client notified that Bro needed
+input even though Codex continued working. The authenticated event sequence
+showed a Codex `PermissionRequest`, one desktop delivery, correct click routing,
+and a later `agent.running` transition. Jason identified the missing semantic
+distinction: **Approve for me** consumes the permission request, whether its
+reviewer approves or denies it, so that request never becomes a human prompt.
+When automatic review is off and the request actually reaches the approval UI,
+notification is appropriate.
+
+Two early diagnoses were incorrect and were discarded. The hook payload does
+contain `permission_mode`; the missing fact is the later
+`approvals_reviewer`/routing outcome. A proposed terminal-title inference was
+also rejected as an unmaintainable text-parsing dependency. Neither mistake is
+part of the repair.
+
+Local Codex source establishes a cleaner boundary. Codex's TUI has a typed
+`approval-requested` notification kind and emits it from its approval handlers
+only after routing reaches a human. Managed TornadoTTY launches now configure:
+
+- `tui.notification_method=osc9`;
+- `tui.notifications=["approval-requested"]`;
+- `tui.notification_condition="always"`.
+
+Ghostty already owns OSC parsing and delivers a desktop-notification callback
+to TornadoTTY. TornadoTTY does not parse escape sequences, match notification
+text, inspect terminal titles, scrape transcripts, read Codex configuration,
+or use a timer. Because the managed producer channel is restricted at launch
+to one typed Codex notification kind, any nonempty parsed callback for an
+existing Codex session is projected as `NeedsInput`/`Approval`. TornadoTTY's
+existing pane/window visibility policy remains responsible for deciding
+whether that actionable state warrants a desktop notification.
+
+The original ZenTTY adapter has the same underlying defect: its Swift Codex
+adapter maps every `PermissionRequest` directly to `needsInput`. This repair is
+therefore a Linux-side correction to shared source behavior, not evidence that
+the upstream implementation had already solved automatic-review routing.
+
+### Tests-first repair and focused evidence
+
+Tests were changed before the product implementation. The red receipts proved
+three independently missing contracts: the Codex launcher lacked the typed
+notification filter, the status reducer ignored parsed Codex notifications,
+and the adapter/inbox route could not distinguish the pre-policy hook from the
+post-policy notification. Those failures are retained at:
+
+- `/tmp/gh172-launch-red.log`;
+- `/tmp/gh172-status-red.log`;
+- `/tmp/gh172-adapter-red.log`.
+
+The final focused evidence is green:
+
+- three Codex launcher tests passed;
+- seven Codex adapter tests passed;
+- the exact Codex reducer test and both Gemini notification regression tests
+  passed;
+- six Codex real-helper/Unix-socket tests passed outside the sandbox;
+- Rust formatting and ShellCheck passed for every changed Rust and journey
+  file;
+- a product-only ReleaseSafe build passed dependency-age and notice checks and
+  rebuilt `build/linux/bin/zentty-linux` from the final source;
+- the existing `rust-agent-ipc` harness, under private nested X11 session
+  `d252c30bd0089a4db4323e299e8cacf6d47373afa84cd3304e6e906f35ba7541`,
+  exercised the real wrapper, helper process, authenticated Unix socket, PTY,
+  Ghostty OSC parser, GTK shell, status store, and attention projection. It
+  proved `pre-policy-hook=non-attention` followed by
+  `parsed-osc9-approval=attention`.
+
+The controlled OSC payload says only `Run cargo test?`; it deliberately
+contains no `approval` or `action required` phrase. The passing journey
+therefore guards against reintroducing a regex or other wording classifier.
+The existing orchestration layer was extended with one selectable scenario;
+no second agent journey or sleep-as-success path was added.
+
+The first combined mutation run evaluated 29 mutants: 20 were caught, one was
+compiler-unviable, and eight survived. Six survivors exposed real weakness in
+the notification reducer assertions. Independent idempotence, single-field
+interaction, and Gemini idle-retention contracts were added rather than
+waiving them. The focused rerun caught all 19 notification-reducer mutants.
+After Clippy-driven function extraction, a final audit of the exact committed
+Codex hook and notification function boundaries evaluated 40 mutants: **37
+were caught, one was compiler-unviable, and no relevant mutant survived**.
+Cargo-mutants continued to include two unrelated `seed_restored_starting`
+mutants despite both its include filter and explicit exclude; those pre-existing
+survivors are recorded as filter leakage, not claimed as part of this repair.
+Every run used `linux/tests/mutate-rust`, four workers, the isolated 12 GiB
+cgroup, a 6 GiB per-process address-space limit, `gitignore = true`, and
+`copy_target = false`.
+
+### Remaining limits and deployment
+
+The controlled actor does not invoke Codex's LLM reviewer; it deterministically
+proves that the real pre-policy hook is neutral and that only the separately
+parsed semantic notification becomes attention. The OSC channel is not a
+security boundary: another child in the same managed Codex PTY could emit OSC
+9. It is appropriate for UI attention projection, never for granting or
+denying permission. A future Codex change to its documented notification kind
+or configuration keys would require the launcher contract to be updated.
+
+No installed client was replaced or restarted for this repair. GH-172 remains
+open until a coordinated installed build confirms both Approve-for-me silence
+and one real human-approval notification during dogfooding. No full Linux
+qualification run was performed for this issue-sized fix.

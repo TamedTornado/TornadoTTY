@@ -391,10 +391,51 @@ impl AgentStatusStore {
         Some(true)
     }
 
-    /// Reconciles the two Gemini desktop-notification phrases owned by the
-    /// source application. The terminal path is heuristic and deliberately
-    /// narrow: unrelated notifications, including the same completion copy
-    /// from a non-Gemini process, cannot create agent state.
+    fn apply_codex_terminal_notification(
+        &mut self,
+        pane_id: &str,
+        notification_text: &str,
+        now: u64,
+    ) -> Option<bool> {
+        let session_id = self.panes.get(pane_id).and_then(|sessions| {
+            sessions
+                .values()
+                .filter(|status| status.agent_name.eq_ignore_ascii_case("codex"))
+                .max_by_key(|status| (status_priority(status), status.updated_at))
+                .map(|status| status.session_id.clone())
+        })?;
+        if notification_text.is_empty() {
+            return Some(false);
+        }
+        let status = self
+            .panes
+            .get_mut(pane_id)
+            .and_then(|sessions| sessions.get_mut(&session_id))?;
+        let changed = status.phase != AgentPhase::NeedsInput
+            || status.interaction != AgentInteractionKind::Approval
+            || status.text.as_deref() != Some(notification_text);
+        if !changed {
+            return Some(false);
+        }
+        status.phase = AgentPhase::NeedsInput;
+        status.interaction = AgentInteractionKind::Approval;
+        status.text = Some(notification_text.to_owned());
+        status.updated_at = now;
+        let lifecycle = self
+            .session_bookkeeping
+            .entry(SessionKey::new(pane_id, &session_id))
+            .or_default();
+        lifecycle.codex_title_ownership = CodexTitleOwnership::Explicit;
+        lifecycle.completion_candidate_deadline = None;
+        lifecycle.idle_visible_until = None;
+        lifecycle.unresolved_stop_visible_until = None;
+        Some(true)
+    }
+
+    /// Reconciles parsed terminal notifications with an existing managed agent.
+    /// Codex launches restrict OSC 9 to its semantic `approval-requested`
+    /// notification kind, so no notification text parsing is required. Gemini
+    /// owns two legacy notification phrases which remain deliberately narrow.
     pub fn apply_terminal_notification(
         &mut self,
         pane_id: &str,
@@ -402,6 +443,19 @@ impl AgentStatusStore {
         body: Option<&str>,
         now: u64,
     ) -> bool {
+        let notification_text = [title, body]
+            .into_iter()
+            .flatten()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .collect::<Vec<_>>()
+            .join(": ");
+        if let Some(changed) =
+            self.apply_codex_terminal_notification(pane_id, &notification_text, now)
+        {
+            return changed;
+        }
+
         let existing = self.status_for_pane(pane_id);
         let recognized_gemini = existing.map_or_else(
             || title.is_some_and(|value| value.trim().eq_ignore_ascii_case("gemini")),
@@ -411,14 +465,7 @@ impl AgentStatusStore {
             return false;
         }
 
-        let combined = [title, body]
-            .into_iter()
-            .flatten()
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .collect::<Vec<_>>()
-            .join(": ")
-            .to_ascii_lowercase();
+        let combined = notification_text.to_ascii_lowercase();
         let phase = if combined.contains("session complete") {
             AgentPhase::Idle
         } else if combined.contains("action required") {

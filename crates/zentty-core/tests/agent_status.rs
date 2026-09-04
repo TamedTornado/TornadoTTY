@@ -463,6 +463,10 @@ fn gemini_terminal_notifications_reconcile_only_source_owned_attention_and_compl
     assert_eq!(status.phase, AgentPhase::Idle);
     assert_eq!(status.interaction, AgentInteractionKind::None);
     assert_eq!(status.text, None);
+    assert!(!store.sweep(121_000, |_| true));
+    assert!(store.status_for_pane("pane-a").is_some());
+    assert!(store.sweep(121_001, |_| true));
+    assert!(store.status_for_pane("pane-a").is_none());
 
     assert!(!store.apply_terminal_notification(
         "pane-shell",
@@ -471,6 +475,57 @@ fn gemini_terminal_notifications_reconcile_only_source_owned_attention_and_compl
         1_002,
     ));
     assert!(store.status_for_pane("pane-shell").is_none());
+}
+
+#[test]
+fn codex_terminal_approval_notification_requires_an_existing_codex_session() {
+    let mut store = AgentStatusStore::default();
+    assert!(!store.apply_terminal_notification("pane-shell", None, Some("Run cargo test?"), 999,));
+    assert!(store.status_for_pane("pane-shell").is_none());
+
+    store.apply(
+        event_for(
+            "pane-codex",
+            br#"{"version":1,"event":"agent.running","agent":{"name":"Codex"},"session":{"id":"codex-review"}}"#,
+        ),
+        1_000,
+    );
+    assert!(store.apply_terminal_notification("pane-codex", None, Some("Run cargo test?"), 1_001,));
+    let status = store.status_for_pane("pane-codex").unwrap();
+    assert_eq!(status.session_id, "codex-review");
+    assert_eq!(status.phase, AgentPhase::NeedsInput);
+    assert_eq!(status.interaction, AgentInteractionKind::Approval);
+    assert_eq!(status.text.as_deref(), Some("Run cargo test?"));
+    assert!(
+        !store.apply_terminal_notification("pane-codex", None, Some("Run cargo test?"), 1_002,)
+    );
+
+    let mut interaction_only = AgentStatusStore::default();
+    interaction_only.apply(
+        event_for(
+            "pane-interaction",
+            br#"{"version":1,"event":"agent.needs-input","agent":{"name":"Codex"},"session":{"id":"codex-interaction"},"state":{"text":"Run cargo test?","interaction":{"kind":"question","text":"Run cargo test?"}}}"#,
+        ),
+        1_003,
+    );
+    let status = interaction_only
+        .status_for_pane("pane-interaction")
+        .unwrap();
+    assert_eq!(status.phase, AgentPhase::NeedsInput);
+    assert_eq!(status.interaction, AgentInteractionKind::Question);
+    assert_eq!(status.text.as_deref(), Some("Run cargo test?"));
+    assert!(interaction_only.apply_terminal_notification(
+        "pane-interaction",
+        None,
+        Some("Run cargo test?"),
+        1_004,
+    ));
+    let status = interaction_only
+        .status_for_pane("pane-interaction")
+        .unwrap();
+    assert_eq!(status.phase, AgentPhase::NeedsInput);
+    assert_eq!(status.interaction, AgentInteractionKind::Approval);
+    assert_eq!(status.text.as_deref(), Some("Run cargo test?"));
 }
 
 #[test]

@@ -148,6 +148,14 @@ fn real_cli_execs_codex_with_ephemeral_hooks_and_original_arguments() {
     assert!(receipt.contains("features.hooks=true"), "{receipt}");
     assert!(receipt.contains("hooks.PermissionRequest="), "{receipt}");
     assert!(receipt.contains("hooks.state="), "{receipt}");
+    assert!(
+        receipt.contains(r#"tui.notifications=["approval-requested"]"#),
+        "{receipt}"
+    );
+    assert!(
+        receipt.contains(r#"tui.notification_condition="always""#),
+        "{receipt}"
+    );
     assert!(receipt.contains("--help"), "{receipt}");
     assert!(receipt.contains("AGENT=codex"), "{receipt}");
 }
@@ -414,7 +422,10 @@ fn fake_tool_boundary_rejects_hostile_managed_pane_environment() {
         "ZENTTY_WINDOW_ID",
         "ZENTTY_PANE_CREDENTIAL",
     ] {
-        assert_eq!(command_environment(&command, removed), EnvironmentChange::Remove);
+        assert_eq!(
+            command_environment(&command, removed),
+            EnvironmentChange::Remove
+        );
     }
     let output = command.arg("login").output().unwrap();
     assert!(

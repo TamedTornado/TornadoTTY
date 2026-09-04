@@ -658,6 +658,10 @@ fn codex_plan(
         "-c".to_owned(),
         "tui.notification_method=osc9".to_owned(),
         "-c".to_owned(),
+        r#"tui.notifications=["approval-requested"]"#.to_owned(),
+        "-c".to_owned(),
+        r#"tui.notification_condition="always""#.to_owned(),
+        "-c".to_owned(),
         r#"tui.terminal_title=["status","spinner","project","task-progress"]"#.to_owned(),
     ]);
     let mut planned = arguments.to_vec();

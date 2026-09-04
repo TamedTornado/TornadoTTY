@@ -149,9 +149,25 @@ case "${profile}" in
         codex_has_hook PermissionRequest "$@" || fail "Codex PermissionRequest hook is missing"
         codex_has_hook state "$@" || fail "Codex hook state is missing"
         printf '%s\n' "$@" | grep -Fq 'notify=[' || fail "Codex notify callback is missing"
+        printf '%s\n' "$@" | grep -Fq 'tui.notifications=["approval-requested"]' ||
+            fail "Codex semantic approval notification filter is missing"
+        printf '%s\n' "$@" | grep -Fq 'tui.notification_condition="always"' ||
+            fail "Codex semantic approval notification delivery is not focus-independent"
+        permission_gate="${ZENTTY_CONTROLLED_CODEX_PERMISSION_GATE:-}"
+        [[ "${permission_gate}" == /* && -p "${permission_gate}" ]] ||
+            fail "ZENTTY_CONTROLLED_CODEX_PERMISSION_GATE must be an existing absolute FIFO"
         printf '%s' \
-            '{"hook_event_name":"PermissionRequest","session_id":"codex-e2e","message":"Run integration tests?"}' |
+            '{"hook_event_name":"PreToolUse","session_id":"codex-e2e","tool_name":"shell"}' |
             "${helper}" ipc agent-event --adapter=codex
+        printf '%s' \
+            '{"session_id":"codex-e2e","turn_id":"turn-e2e","transcript_path":null,"cwd":"/tmp","hook_event_name":"PermissionRequest","model":"gpt-5.6","permission_mode":"default","tool_name":"shell","tool_input":{"command":"cargo test"}}' |
+            "${helper}" ipc agent-event --adapter=codex
+        printf 'permission-request-emitted\n' >>"${ZENTTY_CONTROLLED_AGENT_START_RECEIPT}"
+        IFS= read -r _ <"${permission_gate}"
+        # The runner selects the user-review outcome by releasing the exact
+        # semantic OSC 9 channel configured above. Ghostty, not this fixture or
+        # TornadoTTY, parses the terminal protocol.
+        printf '\033]9;Run cargo test?\007'
         ;;
     codex-notify)
         require_helper

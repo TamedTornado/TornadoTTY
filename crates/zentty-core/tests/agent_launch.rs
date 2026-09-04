@@ -490,6 +490,16 @@ fn codex_plan_injects_all_source_hook_events_and_trust_state() {
             .iter()
             .any(|value| value == r#"notify=["/stage/bin/zentty","codex-notify"]"#)
     );
+    assert!(
+        plan.arguments
+            .iter()
+            .any(|value| value == r#"tui.notifications=["approval-requested"]"#)
+    );
+    assert!(
+        plan.arguments
+            .iter()
+            .any(|value| value == r#"tui.notification_condition="always""#)
+    );
 }
 
 #[test]

@@ -142,6 +142,28 @@ pub fn adapt_small_harness_hook(
     adapt_codex_family_hook(bytes, pid, "Small Harness", true)
 }
 
+fn is_pre_policy_codex_permission_request(hook: &str, extended_lifecycle: bool) -> bool {
+    // Codex emits PermissionRequest before routing it to either the automatic
+    // reviewer or the user, and the payload does not identify that reviewer.
+    // Managed Codex launches instead restrict Codex's parsed OSC 9 channel to
+    // semantic approval-requested events. Small Harness owns different hook
+    // semantics and retains its PermissionRequest transition.
+    !extended_lifecycle && hook == "PermissionRequest"
+}
+
+fn codex_session_id(payload: &Value) -> Option<String> {
+    string_at(
+        payload,
+        &[
+            "session_id",
+            "sessionId",
+            "thread-id",
+            "thread_id",
+            "threadId",
+        ],
+    )
+}
+
 fn adapt_codex_family_hook(
     bytes: &[u8],
     pid: Option<i32>,
@@ -155,16 +177,7 @@ fn adapt_codex_family_hook(
     } else {
         codex_source_event_alias(raw_hook)
     };
-    let session = string_at(
-        &payload,
-        &[
-            "session_id",
-            "sessionId",
-            "thread-id",
-            "thread_id",
-            "threadId",
-        ],
-    );
+    let session = codex_session_id(&payload);
     let transcript_path = string_at(&payload, &["transcript_path", "transcriptPath"]);
     if extended_lifecycle
         && matches!(
@@ -179,6 +192,9 @@ fn adapt_codex_family_hook(
             session.as_deref(),
             transcript_path.as_deref(),
         );
+    }
+    if is_pre_policy_codex_permission_request(hook, extended_lifecycle) {
+        return Ok(Vec::new());
     }
     let event = match hook {
         "SessionStart" => canonical(

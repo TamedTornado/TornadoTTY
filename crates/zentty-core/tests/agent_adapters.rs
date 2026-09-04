@@ -1,8 +1,8 @@
 use zentty_core::{
-    AgentPhase, AgentStatusStore, AgentTarget, AuthenticatedAgentEvent, adapt_agy_hook,
-    adapt_claude_hook, adapt_codex_hook, adapt_codex_notify, adapt_copilot_hook, adapt_cursor_hook,
-    adapt_droid_hook, adapt_gemini_hook, adapt_grok_hook, adapt_hermes_hook, adapt_kimi_hook,
-    adapt_small_harness_hook, adapt_vibe_hook,
+    AgentPhase, AgentStatusStore, AgentTarget, AttentionInbox, AttentionState, AttentionTarget,
+    AuthenticatedAgentEvent, adapt_agy_hook, adapt_claude_hook, adapt_codex_hook,
+    adapt_codex_notify, adapt_copilot_hook, adapt_cursor_hook, adapt_droid_hook, adapt_gemini_hook,
+    adapt_grok_hook, adapt_hermes_hook, adapt_kimi_hook, adapt_small_harness_hook, adapt_vibe_hook,
 };
 
 fn reduce(events: Vec<zentty_core::AgentEvent>) -> zentty_core::PaneAgentStatus {
@@ -41,7 +41,7 @@ fn apply_small_harness_payload(
 }
 
 #[test]
-fn codex_hooks_map_source_lifecycle_and_approval_semantics() {
+fn codex_hooks_map_source_lifecycle_without_inventing_post_policy_approval() {
     const SOURCE: &str = include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/../../Zentty/AppState/Agent/EventAdapters/CodexEventAdapter.swift"
@@ -58,16 +58,15 @@ fn codex_hooks_map_source_lifecycle_and_approval_semantics() {
     assert_eq!(start.tracked_pid, Some(4242));
     assert_eq!(start.working_directory.as_deref(), Some("/tmp"));
 
-    let approval = reduce(
-        adapt_codex_hook(
-            br#"{"hook_event_name":"PermissionRequest","session_id":"codex-a","tool_name":"shell","message":"Run command?"}"#,
-            None,
-        )
-        .unwrap(),
+    let approval_request = adapt_codex_hook(
+        br#"{"session_id":"codex-a","turn_id":"turn-a","transcript_path":null,"cwd":"/tmp","hook_event_name":"PermissionRequest","model":"gpt-5.6","permission_mode":"default","tool_name":"shell","tool_input":{"command":"cargo test"}}"#,
+        None,
+    )
+    .unwrap();
+    assert!(
+        approval_request.is_empty(),
+        "the pre-policy hook does not identify whether review is automatic or human"
     );
-    assert_eq!(approval.phase, AgentPhase::NeedsInput);
-    assert!(approval.requires_attention());
-    assert_eq!(approval.text.as_deref(), Some("Run command?"));
 
     let question = reduce(
         adapt_codex_hook(
@@ -140,14 +139,14 @@ fn codex_compaction_hooks_preserve_canonical_transition_identity() {
 #[test]
 fn codex_positional_aliases_each_preserve_their_source_transition() {
     for (alias, expected) in [
-        ("session-start", "session.start"),
-        ("pre-tool-use", "agent.running"),
-        ("permission-request", "agent.needs-input"),
-        ("post-tool-use", "agent.running"),
-        ("prompt-submit", "agent.running"),
-        ("pre-compact", "agent.compacting"),
-        ("post-compact", "agent.compacted"),
-        ("stop", "agent.idle"),
+        ("session-start", Some("session.start")),
+        ("pre-tool-use", Some("agent.running")),
+        ("permission-request", None),
+        ("post-tool-use", Some("agent.running")),
+        ("prompt-submit", Some("agent.running")),
+        ("pre-compact", Some("agent.compacting")),
+        ("post-compact", Some("agent.compacted")),
+        ("stop", Some("agent.idle")),
     ] {
         let payload = serde_json::json!({
             "hook_event_name": alias,
@@ -156,13 +155,101 @@ fn codex_positional_aliases_each_preserve_their_source_transition() {
             "message": "Allow command?",
         });
         let events = adapt_codex_hook(payload.to_string().as_bytes(), None).unwrap();
-        assert_eq!(events.len(), 1, "{alias}");
-        assert_eq!(
-            serde_json::to_value(&events[0]).unwrap()["event"],
-            expected,
-            "{alias}"
-        );
+        match expected {
+            Some(expected) => {
+                assert_eq!(events.len(), 1, "{alias}");
+                assert_eq!(
+                    serde_json::to_value(&events[0]).unwrap()["event"],
+                    expected,
+                    "{alias}"
+                );
+            }
+            None => assert!(events.is_empty(), "{alias}"),
+        }
     }
+}
+
+#[test]
+fn codex_permission_request_notifies_only_after_a_semantic_terminal_notification() {
+    let target = AgentTarget::new("window", "lane", "pane");
+    let attention_target = AttentionTarget::new("window", "lane", "pane");
+    let mut store = AgentStatusStore::default();
+    let mut apply = |payload: &[u8], now| {
+        for event in adapt_codex_hook(payload, None).unwrap() {
+            store.apply(
+                AuthenticatedAgentEvent {
+                    target: target.clone(),
+                    pane_token: "token".to_owned(),
+                    event,
+                },
+                now,
+            );
+        }
+    };
+    apply(
+        br#"{"hook_event_name":"SessionStart","session_id":"codex-review-routing"}"#,
+        1,
+    );
+    apply(
+        br#"{"hook_event_name":"PreToolUse","session_id":"codex-review-routing","tool_name":"shell"}"#,
+        2,
+    );
+    apply(
+        br#"{"hook_event_name":"PermissionRequest","session_id":"codex-review-routing","permission_mode":"default","tool_name":"shell","tool_input":{"command":"cargo test"}}"#,
+        3,
+    );
+    drop(apply);
+
+    let status = store.status_for(&target).unwrap();
+    assert_eq!(status.phase, AgentPhase::Running);
+    assert!(!status.requires_attention());
+    let mut inbox = AttentionInbox::default();
+    assert!(!inbox.observe(attention_target.clone(), Some(status), 3));
+    assert!(!inbox.advance(30_000));
+    assert!(inbox.items().is_empty());
+    assert!(inbox.drain_deliveries().is_empty());
+
+    // TornadoTTY constrains Codex's OSC 9 channel to approval-requested events,
+    // so this parsed Ghostty callback exists only after review reaches a user.
+    assert!(store.apply_terminal_notification("pane", None, Some("Run cargo test?"), 30_001,));
+    let status = store.status_for(&target).unwrap();
+    assert_eq!(status.phase, AgentPhase::NeedsInput);
+    assert_eq!(
+        status.interaction,
+        zentty_core::AgentInteractionKind::Approval
+    );
+    assert_eq!(status.text.as_deref(), Some("Run cargo test?"));
+    assert!(status.requires_attention());
+    assert!(!inbox.observe(attention_target, Some(status), 30_001));
+    assert!(inbox.advance(33_001));
+    let deliveries = inbox.drain_deliveries();
+    assert_eq!(deliveries.len(), 1);
+    assert_eq!(deliveries[0].item.state, AttentionState::NeedsInput);
+}
+
+#[test]
+fn small_harness_permission_request_retains_its_explicit_approval_contract() {
+    let events = adapt_small_harness_hook(
+        br#"{"hook_event_name":"PermissionRequest","session_id":"small-review","tool_name":"shell","message":"Allow the Small Harness command?"}"#,
+        None,
+    )
+    .unwrap();
+    assert_eq!(events.len(), 1);
+    assert_eq!(
+        serde_json::to_value(&events[0]).unwrap()["event"],
+        "agent.needs-input"
+    );
+    let status = reduce(events);
+    assert_eq!(status.agent_name, "Small Harness");
+    assert_eq!(status.phase, AgentPhase::NeedsInput);
+    assert_eq!(
+        status.interaction,
+        zentty_core::AgentInteractionKind::Approval
+    );
+    assert_eq!(
+        status.text.as_deref(),
+        Some("Allow the Small Harness command?")
+    );
 }
 
 #[test]

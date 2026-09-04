@@ -91,8 +91,8 @@ cleanup() {
 trap cleanup EXIT
 
 case "${scenario}" in
-    full | installed-gemini | copilot-presentation | amp-plugin | cursor-hooks | droid-hooks | kimi-hooks | remaining-hooks | event-coalescing) ;;
-    *) fail "ZENTTY_AGENT_IPC_SCENARIO must be full, installed-gemini, copilot-presentation, amp-plugin, cursor-hooks, droid-hooks, kimi-hooks, remaining-hooks, or event-coalescing" ;;
+    full | installed-gemini | codex-review-routing | copilot-presentation | amp-plugin | cursor-hooks | droid-hooks | kimi-hooks | remaining-hooks | event-coalescing) ;;
+    *) fail "ZENTTY_AGENT_IPC_SCENARIO must be full, installed-gemini, codex-review-routing, copilot-presentation, amp-plugin, cursor-hooks, droid-hooks, kimi-hooks, remaining-hooks, or event-coalescing" ;;
 esac
 
 case "${backend}" in
@@ -187,6 +187,7 @@ run_adapter() {
     local finish_gate=""
     local kimi_question_gate=""
     local kimi_approval_gate=""
+    local codex_permission_gate=""
 
     log="$(mktemp)"
     start_receipt="$(mktemp)"
@@ -205,11 +206,16 @@ run_adapter() {
         kimi_approval_gate="${state_directory}/kimi-approval.fifo"
         mkfifo "${kimi_question_gate}" "${kimi_approval_gate}"
     fi
+    if [[ "${profile}" == codex-permission ]]; then
+        codex_permission_gate="${state_directory}/codex-permission.fifo"
+        mkfifo "${codex_permission_gate}"
+    fi
     PATH="${fake_bin}:${PATH}" GDK_SCALE=1 GDK_DPI_SCALE=1 \
         HOME="${private_home}" XDG_CONFIG_HOME="${private_home}/xdg-config" \
         ZENTTY_CLI_DEBUG=1 \
         ZENTTY_CONTROLLED_AGENT_START_RECEIPT="${start_receipt}" \
         ZENTTY_CONTROLLED_AGENT_FINISH_GATE="${finish_gate}" \
+        ZENTTY_CONTROLLED_CODEX_PERMISSION_GATE="${codex_permission_gate}" \
         ZENTTY_CONTROLLED_AGENT_STATE_DIRECTORY="${state_directory}" \
         ZENTTY_CONTROLLED_AGENT_PROFILE="${profile}" \
         "${product}" \
@@ -217,6 +223,24 @@ run_adapter() {
         --state-directory "${state_directory}" \
         --no-session-restore >"${log}" 2>&1 &
     product_pid=$!
+
+    if [[ "${profile}" == codex-permission ]]; then
+        for _ in {1..600}; do
+            grep -Fq 'permission-request-emitted' "${start_receipt}" 2>/dev/null && break
+            sleep 0.05
+        done
+        grep -Fq 'permission-request-emitted' "${start_receipt}" 2>/dev/null ||
+            fail "controlled Codex did not emit its pre-policy PermissionRequest"
+        zentty_product_wait_for_log "${log}" \
+            'sidebar-agent-status pane=pane-1 phase=Running interaction=None attention=false' \
+            "Codex did not remain running while its approval reviewer was unresolved" 600
+        if grep -Fq 'kind=agent.needs-input session=codex-e2e' "${log}" ||
+            grep -Fq 'sidebar-agent-status pane=pane-1 phase=NeedsInput' "${log}" ||
+            grep -Fq 'desktop-attention id=' "${log}"; then
+            fail "pre-policy Codex PermissionRequest incorrectly escaped as human attention"
+        fi
+        printf 'route-review-to-user\n' >"${codex_permission_gate}"
+    fi
 
     if [[ "${name}" == kimi ]]; then
         zentty_product_wait_for_log "${log}" \
@@ -510,6 +534,15 @@ run_codex_lifecycle() {
     rm -rf -- "${state_directory}"
     log=""
     state_directory=""
+}
+
+run_codex_review_routing() {
+    run_adapter \
+        codex \
+        'codex' \
+        codex-permission \
+        'zentty-linux: sidebar-agent-status pane=pane-1 phase=NeedsInput interaction=Approval attention=true' \
+        'interaction=GenericInput attention=true'
 }
 
 run_agent_status_lifecycle() {
@@ -1068,13 +1101,14 @@ if [[ "${scenario}" == event-coalescing ]]; then
     run_event_coalescing
 fi
 
+if [[ "${scenario}" == codex-review-routing ]]; then
+    run_codex_review_routing
+    echo "Rust Codex review routing passed: ${backend}, pre-policy-hook=non-attention, parsed-osc9-approval=attention, helper=real-process, transport=real-unix-socket, child=real-pty, gtk=real"
+    exit 0
+fi
+
 if [[ "${scenario}" == full ]]; then
-run_adapter \
-    codex \
-    'codex' \
-    codex-permission \
-    'zentty-linux: sidebar-agent-status pane=pane-1 phase=NeedsInput interaction=Approval attention=true' \
-    'Run integration tests?'
+run_codex_review_routing
 run_adapter \
     codex-notify \
     'codex' \
