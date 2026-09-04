@@ -79,6 +79,15 @@ pacman_root() {
         --cachedir "${cache}" "$@"
 }
 
+pacman_root_logged() {
+    local operation="$1"
+    shift
+    if ! pacman_root "$@" >>"${log}" 2>&1; then
+        cat "${log}" >&2
+        fail "${operation} failed"
+    fi
+}
+
 host_database_before="$(database_fingerprint)"
 previous_version=null
 current_archive_version="$(package_version "${package}")"
@@ -87,17 +96,26 @@ if [[ -n "${previous_package}" ]]; then
     version_order="$(vercmp "${current_archive_version}" "${previous_version}")"
     (( version_order > 0 )) ||
         fail "current package does not sort newer than upgrade fixture"
-    pacman_root --noconfirm -U "${previous_package}" >>"${log}" 2>&1
+    pacman_root_logged "previous package install" \
+        --noconfirm -U "${previous_package}"
     previous_name="$(bsdtar -xOf "${previous_package}" .PKGINFO | sed -n 's/^pkgname = //p' | head -1)"
     [[ "$(pacman_root -Q "${previous_name}" | awk '{print $2}')" == "${previous_version}" ]] ||
         fail "previous package did not install at its declared version"
 fi
 
-pacman_root --noconfirm -U "${package}" >>"${log}" 2>&1
+current_install_arguments=(--noconfirm -U "${package}")
+if [[ -n "${previous_package}" ]]; then
+    # Pacman's --noconfirm retains the safe default of "no" for removing a
+    # conflicting package. Question mask 4 explicitly answers only the package
+    # conflict prompt so the reviewed Conflicts/Replaces migration is exercised.
+    current_install_arguments=(--noconfirm --ask 4 -U "${package}")
+fi
+pacman_root_logged "current package install or upgrade" \
+    "${current_install_arguments[@]}"
 current_version="$(jq -r '.package_version + "-1"' "${provenance}")"
 [[ "$(pacman_root -Q tornadotty | awk '{print $2}')" == "${current_version}" ]] ||
     fail "current package did not install at its provenance version"
-pacman_root -Qkk tornadotty >>"${log}" 2>&1
+pacman_root_logged "installed payload verification" -Qkk tornadotty
 grep -Fq '0 altered files' "${log}" || fail "installed package payload differs"
 for legacy_path in /usr/bin/zentty /usr/bin/zentty-linux /usr/lib/zentty; do
     [[ ! -e "${root}${legacy_path}" && ! -L "${root}${legacy_path}" ]] ||
@@ -110,7 +128,7 @@ LD_LIBRARY_PATH="${root}/usr/lib/tornadotty/lib" \
 grep -Fxq 'Usage: tornadotty [OPTIONS]' "${help_output}" ||
     fail "installed application help contract failed"
 
-pacman_root --noconfirm -R tornadotty >>"${log}" 2>&1
+pacman_root_logged "current package uninstall" --noconfirm -R tornadotty
 if pacman_root -Q tornadotty >/dev/null 2>&1; then
     fail "package remains registered after uninstall"
 fi

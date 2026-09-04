@@ -295,3 +295,66 @@
   `No appropriate name servers or networks for name found`. No Arch or
   Omarchy pass is claimed from environmental absence, and GH-166 remains open
   until that prerequisite is available.
+
+### Real Omarchy closeout
+
+- When the Omarchy laptop returned, its `.local` mDNS name still did not
+  resolve from the development workstation. An active-neighbour candidate was
+  rejected after inspection showed Ubuntu 22.04 on host `Jason-Plex`, not
+  Omarchy; the original known-hosts file was restored before continuing. Local
+  DNS then resolved `omarchy-laptop.lan` to the actual host, whose existing
+  trusted SSH key matched and whose OS identified as Omarchy 4.0.2 on x86-64.
+- The existing clean laptop checkout at
+  `~/Projects/zentty-release` fast-forwarded from `c27e0b35` to exact source
+  revision `4a02c9f3397c7474a6549c29edc4fe4730d32a2d`. The isolated release-tool
+  prefix supplied Cargo 1.100.0-nightly, Rust 1.100.0-nightly, Zig 0.16.0,
+  Blueprint Compiler 0.22.2, and patchelf 0.19.1; no system package was
+  installed. The builder created a fresh managed Ghostty checkout at pinned
+  revision `bab8c088f45e47a00ce3bfe2c142d6cb51ecd200`.
+- PASS: the real native Omarchy package build completed with the Cargo publish
+  age audit at 91 packages and zero exceptions, the notice catalog at 79 Cargo
+  and 27 Ghostty inputs, and the structural Arch audit at 1,305 declared files.
+  The package is
+  `tornadotty-0.1.1+git4a02c9f3397c-1-x86_64.pkg.tar.zst`, SHA-256
+  `44904a70f7f58711195667abcafe2a51de4e1e296faddfbe0cd567d55c87171c`.
+  Its expanded manifest SHA-256 is
+  `b8e25d36e301c6618e382b83d1c60b2f0fc984d151201b34b21721b57171180a`;
+  its provenance SHA-256 is
+  `d0853f1c85d5f25a727584cb382aca14d9368d67c89bfa7af598fb8e102e8235`;
+  and the native build log SHA-256 is
+  `48de9f192860dae477dbc3611ba0c7a21c34fde346e9372001fc46d07ab05915`.
+- The first lifecycle invocation stopped at preflight because the separate SSH
+  command did not export the isolated `patchelf` prefix. Correcting that
+  operator environment exposed a real harness defect: the old `zentty` package
+  installed, but pacman's `--noconfirm` retained the safe default of "no" for
+  removing a conflicting package, so the replacement transaction failed. The
+  lifecycle also redirected pacman's diagnostic to a temporary log that its
+  failure trap deleted, initially producing an opaque exit status.
+- A disposable namespace reproduction proved that pacman question mask `4`
+  answers only the package-conflict removal question and successfully replaces
+  `zentty` with `tornadotty`. The lifecycle now uses that mask only when a prior
+  package is supplied, routes mutating pacman operations through one checked
+  logging helper, and prints the retained pacman log before an explicit
+  operation failure. The Arch policy test owns regression assertions for the
+  conflict answer and failure diagnostics.
+- PASS: the repaired real lifecycle installed retained package
+  `zentty-0.1.1-1`, upgraded to
+  `tornadotty-0.1.1+git4a02c9f3397c-1`, verified the installed payload and
+  public help contract, removed legacy paths, uninstalled TornadoTTY, and
+  proved the real host pacman database remained unchanged. Its receipt SHA-256
+  is `d12922620e6d6c4114f97888604ff7fb7b7fc673805d642baefcf653cb92911f`;
+  the captured lifecycle log SHA-256 is
+  `bae29880d2e1470635bf315818aa857d8abd529a4b52b759989b928c9910356c`.
+- The final focused package gate found one additional safety-ordering defect:
+  the Debian private lifecycle inspected the candidate archive before rejecting
+  a non-disposable root. That made the root-guard negative test fail on an
+  unrelated read-only temporary-directory error. Root validation now precedes
+  every package operation. PASS: rebrand identity policy and negative cases;
+  common packaging policy and negative cases; Arch policy and negative cases;
+  Arch artifact-auditor fixtures; Debian builder contracts; Debian lifecycle
+  negative/receipt fixtures; installed-product-root isolation; Bash syntax;
+  ShellCheck; and diff hygiene.
+- This is GH-166's issue-sized package qualification, not a full Linux or
+  release qualification run. The package payload remains bound to exact source
+  `4a02c9f3`; the subsequent changes are lifecycle-test diagnostics and safety
+  ordering only and do not change the built product.

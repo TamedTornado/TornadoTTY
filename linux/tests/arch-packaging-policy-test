@@ -3,6 +3,7 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 subject="${repo_root}/linux/tests/arch-packaging-policy"
+lifecycle="${repo_root}/linux/tests/arch-package-lifecycle"
 temporary="$(mktemp -d)"
 trap 'rm -rf -- "${temporary}"' EXIT
 
@@ -28,5 +29,13 @@ if ZENTTY_INSTALL_MANIFEST="${temporary}/bad-manifest.json" \
     fail "nonstandard payload root unexpectedly passed"
 fi
 grep -Fq 'manifest is not Arch-safe' "${temporary}/manifest.log"
+
+# These are literal lifecycle-script contracts, not variables in this test.
+# shellcheck disable=SC2016
+grep -Fq 'current_install_arguments=(--noconfirm --ask 4 -U "${package}")' \
+    "${lifecycle}" || fail "legacy package conflicts are not accepted during upgrade"
+# shellcheck disable=SC2016
+grep -Fq 'cat "${log}" >&2' "${lifecycle}" ||
+    fail "pacman diagnostics are discarded on lifecycle failure"
 
 echo "arch-packaging-policy-test: PASS"

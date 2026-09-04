@@ -346,13 +346,13 @@ inner_journey() {
     expanded_manifest="$3"
     candidate_provenance="$4"
     output_dir="$5"
-    package_name="$(dpkg-deb -f "${candidate_package}" Package)"
-    [[ "${package_name}" == tornadotty ]] ||
-        fail "candidate package name is not tornadotty: ${package_name}"
     [[ "${lifecycle_root}" == /tmp/zentty-dpkg-lifecycle.* && "${lifecycle_root}" != / ]] ||
         fail "refusing non-disposable dpkg root: ${lifecycle_root}"
     [[ -d "${lifecycle_root}/var/lib/dpkg" && -f "${lifecycle_root}/var/lib/dpkg/status" ]] ||
         fail "disposable dpkg database was not initialized"
+    package_name="$(dpkg-deb -f "${candidate_package}" Package)"
+    [[ "${package_name}" == tornadotty ]] ||
+        fail "candidate package name is not tornadotty: ${package_name}"
 
     work_dir="${lifecycle_root}/var/tmp/zentty-lifecycle"
     mkdir -p "${work_dir}" "${lifecycle_root}/var/log"
