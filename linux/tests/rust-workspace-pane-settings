@@ -6,10 +6,12 @@ product="${ZENTTY_LINUX_BINARY:-${repo_root}/build/linux/bin/zentty-linux}"
 backend="${GDK_BACKEND:-}"
 run_root="$(mktemp -d)"
 state_directory="${run_root}/state"
-log="${run_root}/product.log"
+log=""
 config="${XDG_CONFIG_HOME}/zentty/config.toml"
 product_pid=""
 event_receipt="${run_root}/product-events-1.ndjson"
+session_directory="${run_root}/session-1"
+display_resource=""
 
 # shellcheck disable=SC1091
 source "${repo_root}/linux/tests/lib/product-input"
@@ -17,6 +19,8 @@ source "${repo_root}/linux/tests/lib/product-input"
 source "${repo_root}/linux/tests/lib/product-bundle"
 # shellcheck source=linux/tests/lib/product-receipts
 source "${repo_root}/linux/tests/lib/product-receipts"
+# shellcheck source=linux/tests/lib/product-session
+source "${repo_root}/linux/tests/lib/product-session"
 
 fail() {
     [[ ! -f "${log}" ]] || cat "${log}" >&2
@@ -25,9 +29,8 @@ fail() {
 }
 
 cleanup() {
-    if [[ "${product_pid}" =~ ^[1-9][0-9]*$ ]]; then
-        kill -TERM "${product_pid}" 2>/dev/null || true
-        wait "${product_pid}" 2>/dev/null || true
+    if [[ "${TORNADOTTY_SESSION_SUPERVISOR_PID:-}" =~ ^[1-9][0-9]*$ ]]; then
+        tornadotty_product_session_stop "${session_directory}" 500 2>/dev/null || true
     fi
     rm -rf -- "${run_root}"
 }
@@ -37,13 +40,16 @@ case "${backend}" in
     x11)
         [[ "${ZENTTY_NESTED_X11_SESSION_ID:-}" =~ ^[0-9a-f]{64}$ ]] ||
             fail "X11 scenario must run through linux/tests/nested-x11"
+        display_resource="display=x11:${ZENTTY_NESTED_X11_SESSION_ID}"
         ;;
     wayland)
         [[ "${ZENTTY_NESTED_WAYLAND_INPUT_SESSION_ID:-}" =~ ^[0-9a-f]{64}$ ]] ||
             fail "Wayland scenario must run through linux/tests/nested-wayland-input"
+        display_resource="display=wayland:${ZENTTY_NESTED_WAYLAND_INPUT_SESSION_ID}"
         ;;
     *) fail "GDK_BACKEND must be x11 or wayland" ;;
 esac
+[[ -n "${DBUS_SESSION_BUS_ADDRESS:-}" ]] || fail "a private session bus is required"
 [[ -x "${product}" ]] || fail "staged product is missing: ${product}"
 zentty_product_bundle_resolve "${product}" || fail "staged product bundle is invalid"
 product="${ZENTTY_PRODUCT_BINARY}"
@@ -72,12 +78,14 @@ focus_follows_mouse = true
 focus_follows_mouse_delay = "immediate"
 EOF
 
-GDK_SCALE=1 \
-GDK_DPI_SCALE=1 \
-LD_LIBRARY_PATH="${bundle_lib}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" \
+tornadotty_product_session_start "${session_directory}" "${product}" \
+    --resource "${display_resource}" -- \
+    env GDK_SCALE=1 GDK_DPI_SCALE=1 \
+    LD_LIBRARY_PATH="${bundle_lib}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" \
     "${product}" --command 'sleep 180' --state-directory "${state_directory}" \
-    --no-session-restore >"${log}" 2>&1 &
-product_pid=$!
+    --no-session-restore || fail "Rust product supervisor did not start"
+product_pid="${TORNADOTTY_SESSION_PRODUCT_PID}"
+log="${TORNADOTTY_SESSION_PRODUCT_LOG}"
 zentty_product_prepare_input "${backend}" "${log}" || fail "physical product input was unavailable"
 
 # Configured top insertion is exercised by the real worklane action and
@@ -437,32 +445,39 @@ fi
 # loaded. The first process closes through the ordinary product shortcut only
 # after continuity checks, so restart cannot masquerade as a successful update.
 zentty_product_close_window "${backend}"
-set +e
-wait "${product_pid}"
-status=$?
-set -e
+if tornadotty_product_session_wait "${session_directory}" 10000; then
+    status=0
+else
+    status=$?
+fi
 product_pid=""
 [[ "${status}" -eq 0 ]] || fail "first product did not close cleanly"
 tornadotty_product_receipt_validate "${event_receipt}" --complete >/dev/null ||
     fail "first typed product lifecycle did not close cleanly"
-restart_log="${run_root}/restart.log"
+session_directory="${run_root}/session-2"
 event_receipt="${run_root}/product-events-2.ndjson"
 tornadotty_product_receipt_prepare "${product}" "${event_receipt}" ||
     fail "restart typed product receipt could not be prepared"
-GDK_SCALE=1 GDK_DPI_SCALE=1 \
-LD_LIBRARY_PATH="${bundle_lib}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" \
+tornadotty_product_session_start "${session_directory}" "${product}" \
+    --resource "${display_resource}" -- \
+    env GDK_SCALE=1 GDK_DPI_SCALE=1 \
+    LD_LIBRARY_PATH="${bundle_lib}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" \
     "${product}" --command 'sleep 30' --state-directory "${state_directory}" \
-    --no-session-restore >"${restart_log}" 2>&1 &
-product_pid=$!
+    --no-session-restore || fail "restart Rust product supervisor did not start"
+product_pid="${TORNADOTTY_SESSION_PRODUCT_PID}"
+restart_log="${TORNADOTTY_SESSION_PRODUCT_LOG}"
 tornadotty_product_receipt_wait "${event_receipt}" 10000 1 terminal-ready pane-1 >/dev/null ||
     fail "restarted staged product did not publish typed readiness"
 grep -Fq 'config-loaded path=' "${restart_log}" || fail "restart did not load authoritative config"
+zentty_product_prepare_input "${backend}" "${restart_log}" ||
+    fail "restarted product input was unavailable"
 
 zentty_product_close_window "${backend}"
-set +e
-wait "${product_pid}"
-status=$?
-set -e
+if tornadotty_product_session_wait "${session_directory}" 10000; then
+    status=0
+else
+    status=$?
+fi
 product_pid=""
 [[ "${status}" -eq 0 ]] || fail "restarted product did not close cleanly"
 tornadotty_product_receipt_validate "${event_receipt}" --complete >/dev/null ||

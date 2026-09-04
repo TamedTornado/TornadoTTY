@@ -92,6 +92,16 @@ fn main() -> ExitCode {
 
 fn run(arguments: &[String]) -> Result<(), String> {
     match arguments {
+        [command, session_arguments @ ..] if command == "session" => {
+            tornadotty_test_receipts::session::run(session_arguments)
+                .map_err(|error| error.to_string())
+        }
+        [command, input_arguments @ ..] if command == "input" => {
+            tornadotty_test_receipts::input::run(input_arguments).map_err(|error| error.to_string())
+        }
+        [command, scenario_arguments @ ..] if command == "scenario" => {
+            tornadotty_test_receipts::scenario::run(scenario_arguments)
+        }
         [command, path] if command == "validate" => {
             let stream = read_stream(Path::new(path)).map_err(|error| error.to_string())?;
             report_validation(path, &stream, false)
@@ -495,5 +505,5 @@ fn parse_positive_usize(value: &str, name: &str) -> Result<usize, String> {
 }
 
 fn usage() -> &'static str {
-    "usage:\n  tornadotty-journey-driver validate FILE [--complete]\n  tornadotty-journey-driver wait FILE TIMEOUT_MS MINIMUM SELECTOR [SELECTOR-ARGS]\nselectors: process-started | process-stopped | terminal-ready PANE | child-exited PANE | focus-pane PANE | focus-widget WIDGET | window-geometry WINDOW WIDTH HEIGHT | pane-layout WINDOW WORKLANE COLUMN=PANE[,PANE][;...] | action ACTION OUTCOME TARGET-OR-- | failure CODE TARGET-OR--"
+    "usage:\n  tornadotty-journey-driver validate FILE [--complete]\n  tornadotty-journey-driver wait FILE TIMEOUT_MS MINIMUM SELECTOR [SELECTOR-ARGS]\n  tornadotty-journey-driver session COMMAND ...\n  tornadotty-journey-driver input COMMAND ...\n  tornadotty-journey-driver scenario COMMAND ...\nselectors: process-started | process-stopped | terminal-ready PANE | child-exited PANE | focus-pane PANE | focus-widget WIDGET | window-geometry WINDOW WIDTH HEIGHT | pane-layout WINDOW WORKLANE COLUMN=PANE[,PANE][;...] | action ACTION OUTCOME TARGET-OR-- | failure CODE TARGET-OR--"
 }

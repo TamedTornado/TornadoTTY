@@ -16,6 +16,8 @@ log=""
 launch_count=0
 product_pid=""
 event_receipt=""
+session_directory=""
+display_resource=""
 daemon_pid=""
 monitor_pid=""
 wm_pid=""
@@ -26,10 +28,12 @@ source "${repo_root}/linux/tests/lib/product-input"
 source "${repo_root}/linux/tests/lib/product-bundle"
 # shellcheck source=linux/tests/lib/product-receipts
 source "${repo_root}/linux/tests/lib/product-receipts"
+# shellcheck source=linux/tests/lib/product-session
+source "${repo_root}/linux/tests/lib/product-session"
 
 fail() {
     [[ ! -f "${daemon_log}" ]] || cat "${daemon_log}" >&2
-    for product_log in "${run_root}"/product-*.log; do
+    for product_log in "${run_root}"/session-*/product.log; do
         [[ ! -f "${product_log}" ]] || cat "${product_log}" >&2
     done
     echo "rust-notifications-settings: error: $*" >&2
@@ -37,11 +41,12 @@ fail() {
 }
 
 cleanup() {
-    [[ ! "${product_pid}" =~ ^[1-9][0-9]*$ ]] || kill -TERM "${product_pid}" 2>/dev/null || true
+    if [[ "${TORNADOTTY_SESSION_SUPERVISOR_PID:-}" =~ ^[1-9][0-9]*$ ]]; then
+        tornadotty_product_session_stop "${session_directory}" 500 2>/dev/null || true
+    fi
     [[ ! "${monitor_pid}" =~ ^[1-9][0-9]*$ ]] || kill -TERM "${monitor_pid}" 2>/dev/null || true
     [[ ! "${daemon_pid}" =~ ^[1-9][0-9]*$ ]] || kill -TERM "${daemon_pid}" 2>/dev/null || true
     [[ ! "${wm_pid}" =~ ^[1-9][0-9]*$ ]] || kill -TERM "${wm_pid}" 2>/dev/null || true
-    [[ ! "${product_pid}" =~ ^[1-9][0-9]*$ ]] || wait "${product_pid}" 2>/dev/null || true
     [[ ! "${monitor_pid}" =~ ^[1-9][0-9]*$ ]] || wait "${monitor_pid}" 2>/dev/null || true
     [[ ! "${daemon_pid}" =~ ^[1-9][0-9]*$ ]] || wait "${daemon_pid}" 2>/dev/null || true
     [[ ! "${wm_pid}" =~ ^[1-9][0-9]*$ ]] || wait "${wm_pid}" 2>/dev/null || true
@@ -62,10 +67,12 @@ case "${backend}" in
         done
         xprop -root _NET_SUPPORTING_WM_CHECK 2>/dev/null | grep -Fq 'window id #' ||
             fail "controlled X11 window manager did not become ready"
+        display_resource="display=x11:${ZENTTY_NESTED_X11_SESSION_ID}"
         ;;
     wayland)
         [[ "${ZENTTY_NESTED_WAYLAND_INPUT_SESSION_ID:-}" =~ ^[0-9a-f]{64}$ ]] ||
             fail "Wayland scenario must run through linux/tests/nested-wayland-input"
+        display_resource="display=wayland:${ZENTTY_NESTED_WAYLAND_INPUT_SESSION_ID}"
         ;;
     *) fail "GDK_BACKEND must be x11 or wayland" ;;
 esac
@@ -137,20 +144,25 @@ sleep 0.05
 
 start_product() {
     launch_count=$((launch_count + 1))
-    log="${run_root}/product-${launch_count}.log"
+    session_directory="${run_root}/session-${launch_count}"
     event_receipt="${run_root}/product-events-${launch_count}.ndjson"
     tornadotty_product_receipt_prepare "${product}" "${event_receipt}" ||
         fail "typed product receipt could not be prepared for launch ${launch_count}"
     rm -f -- "${cli_receipt}"
-    GDK_SCALE=1 \
-    GDK_DPI_SCALE=1 \
-    ZENTTY_NOTIFICATION_CLI_RECEIPT="${cli_receipt}" \
-    LD_LIBRARY_PATH="${bundle_lib}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" \
+    tornadotty_product_session_start "${session_directory}" "${product}" \
+        --resource "${display_resource}" -- \
+        env GDK_SCALE=1 \
+        GDK_DPI_SCALE=1 \
+        ZENTTY_NOTIFICATION_CLI_RECEIPT="${cli_receipt}" \
+        LD_LIBRARY_PATH="${bundle_lib}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" \
         "${product}" \
         --command "${cli_child}" \
         --state-directory "${state_directory}" \
-        --no-session-restore >"${log}" 2>&1 &
-    product_pid=$!
+        --no-session-restore || fail "Rust product supervisor did not start"
+    # Read by the sourced product-input boundary.
+    # shellcheck disable=SC2034
+    product_pid="${TORNADOTTY_SESSION_PRODUCT_PID}"
+    log="${TORNADOTTY_SESSION_PRODUCT_LOG}"
     zentty_product_prepare_input "${backend}" "${log}" ||
         fail "physical product input was unavailable"
     for _ in {1..100}; do [[ -s "${cli_receipt}" ]] && break; sleep 0.02; done
@@ -158,51 +170,25 @@ start_product() {
 }
 
 stop_product() {
-    kill -TERM "${product_pid}" 2>/dev/null || true
-    wait "${product_pid}" 2>/dev/null || true
-    product_pid=""
+    tornadotty_product_session_stop "${session_directory}" 1000 ||
+        fail "Rust product supervisor did not stop cleanly"
 }
 
 main_key() {
-    if [[ "${backend}" == x11 ]]; then
-        xdotool windowfocus --sync "${ZENTTY_PRODUCT_WINDOW_ID}"
-        xdotool key "$1"
-    elif zentty_product_uses_xdotool "${backend}"; then
-        zentty_product_xdotool_key "$1"
-    else
-        case "$1" in
-            ctrl+shift+*) wtype -M ctrl -M shift -k "${1#ctrl+shift+}" -m shift -m ctrl ;;
-            ctrl+*) wtype -M ctrl -k "${1#ctrl+}" -m ctrl ;;
-            alt+*) wtype -M alt -k "${1#alt+}" -m alt ;;
-            shift+*) wtype -M shift -k "${1#shift+}" -m shift ;;
-            *) wtype -k "$1" ;;
-        esac
-    fi
+    tornadotty_product_session_input key "${backend}" "$1"
 }
 
 settings_key() {
     if [[ "${backend}" == x11 ]]; then
-        xdotool windowfocus --sync "${settings_window}"
-        xdotool key "$1"
+        "${TORNADOTTY_JOURNEY_DRIVER}" input key \
+            "${session_directory}" x11 "${settings_window}" "$1"
     else
-        case "$1" in
-            ctrl+shift+*) wtype -M ctrl -M shift -k "${1#ctrl+shift+}" -m shift -m ctrl ;;
-            ctrl+*) wtype -M ctrl -k "${1#ctrl+}" -m ctrl ;;
-            alt+*) wtype -M alt -k "${1#alt+}" -m alt ;;
-            *) wtype -k "$1" ;;
-        esac
+        tornadotty_product_session_input key "${backend}" "$1"
     fi
 }
 
 type_text() {
-    if [[ "${backend}" == x11 ]]; then
-        xdotool windowfocus --sync "${ZENTTY_PRODUCT_WINDOW_ID}"
-        xdotool type --delay 5 -- "$1"
-    elif zentty_product_uses_xdotool "${backend}"; then
-        xdotool type --delay 5 -- "$1"
-    else
-        wtype -d 5 -- "$1"
-    fi
+    tornadotty_product_session_input type "${backend}" "$1"
 }
 
 open_notification_settings() {

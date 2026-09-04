@@ -16,7 +16,7 @@ jq -e '
     .owner_issue == 148 and
     .authority.crate == "crates/tornadotty-test-receipts" and
     .authority.environment_variable == "TORNADOTTY_TEST_RECEIPT_FILE" and
-    (.authority.activation_sites | type == "array" and length == 2 and length == (unique | length)) and
+    (.authority.activation_sites | type == "array" and length == 3 and length == (unique | length)) and
     .bounds == {file_bytes:8388608,record_bytes:8192,records:8192,identifier_bytes:96} and
     (.event_families | sort == ["action_completion","failure","focus","geometry","lifecycle","topology"]) and
     ([.migrated_journeys[].path] | length == (unique | length)) and
@@ -45,7 +45,7 @@ jq -e '
         ["TORNADOTTY_TEST_RECEIPT_FILE"])
 ' "${policy}" >/dev/null || fail "policy invariants failed"
 
-for key in crate event_definition parser writer driver product_adapter; do
+for key in crate event_definition parser writer driver session_supervisor input_driver scenario_driver product_adapter; do
     path="$(jq -r --arg key "${key}" '.authority[$key]' "${policy}")"
     [[ -e "${repo_root}/${path}" ]] || fail "authority path is missing: ${path}"
 done
@@ -81,7 +81,7 @@ cmp -s "${temp_dir}/declared-channels" "${temp_dir}/actual-channels" || {
 
 while IFS= read -r path; do
     [[ -f "${repo_root}/${path}" ]] || fail "tracked journey is missing: ${path}"
-    grep -Fq 'product-receipts' "${repo_root}/${path}" ||
+    grep -Eq 'product-receipts|tornadotty-journey-driver' "${repo_root}/${path}" ||
         fail "migrated journey does not consume the typed driver: ${path}"
 done < <(jq -r '.migrated_journeys[].path' "${policy}")
 

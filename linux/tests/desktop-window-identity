@@ -1,39 +1,19 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Environment-only wrapper. The staged Rust driver owns the product process,
+# actions, assertions, deadlines, evidence, and cleanup for this scenario.
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 product="${ZENTTY_LINUX_BINARY:-${repo_root}/build/linux/bin/zentty-linux}"
+driver="${TORNADOTTY_JOURNEY_DRIVER:-${product%/*}/tornadotty-journey-driver}"
 backend="${GDK_BACKEND:-}"
 application_id="com.tamedtornado.tornadotty"
 desktop_entry="${repo_root}/linux/packaging/com.tamedtornado.tornadotty.desktop"
-state_directory=""
-log=""
-product_pid=""
-event_receipt=""
-exit_fifo=""
-
-# shellcheck source=linux/tests/lib/product-receipts
-source "${repo_root}/linux/tests/lib/product-receipts"
 
 fail() {
-    [[ -z "${log}" || ! -f "${log}" ]] || tail -n 120 "${log}" >&2
     echo "desktop-window-identity: error: $*" >&2
     exit 1
 }
-
-cleanup() {
-    if [[ "${product_pid}" =~ ^[1-9][0-9]*$ ]]; then
-        kill -TERM "${product_pid}" 2>/dev/null || true
-        wait "${product_pid}" 2>/dev/null || true
-    fi
-    [[ -z "${state_directory}" ]] || rm -rf -- "${state_directory}"
-    [[ -z "${log}" ]] || rm -f -- "${log}"
-}
-trap cleanup EXIT
-
-[[ -x "${product}" ]] || fail "product is not executable: ${product}"
-grep -Fxq "StartupWMClass=${application_id}" "${desktop_entry}" ||
-    fail "packaged StartupWMClass does not match ${application_id}"
 
 case "${backend}" in
     wayland)
@@ -43,59 +23,18 @@ case "${backend}" in
     x11)
         [[ "${ZENTTY_NESTED_X11_SESSION_ID:-}" =~ ^[0-9a-f]{64}$ ]] ||
             fail "X11 identity must run through linux/tests/nested-x11"
-        for dependency in xdotool xprop; do
-            command -v "${dependency}" >/dev/null || fail "${dependency} is required"
-        done
+        command -v xdotool >/dev/null || fail "xdotool is required"
+        command -v xprop >/dev/null || fail "xprop is required"
         ;;
     *) fail "GDK_BACKEND must be wayland or x11" ;;
 esac
-
-state_directory="$(mktemp -d)"
-log="$(mktemp)"
-event_receipt="${state_directory}/product-events.ndjson"
-exit_fifo="${state_directory}/exit.fifo"
-mkfifo "${exit_fifo}"
-tornadotty_product_receipt_prepare "${product}" "${event_receipt}" ||
-    fail "typed product receipt could not be prepared"
-env WAYLAND_DEBUG="$([[ "${backend}" == wayland ]] && printf client || printf 0)" \
-    "${product}" --state-directory "${state_directory}" \
-    --command "IFS= read -r _ < '${exit_fifo}'" \
-    --no-session-restore >"${log}" 2>&1 &
-product_pid=$!
-tornadotty_product_receipt_wait "${event_receipt}" 10000 1 process-started >/dev/null ||
-    fail "typed process-started receipt was not observed"
-tornadotty_product_receipt_wait "${event_receipt}" 10000 1 terminal-ready pane-1 >/dev/null ||
-    fail "typed terminal readiness receipt was not observed"
-
-if [[ "${backend}" == wayland ]]; then
-    expected="set_app_id(\"${application_id}\")"
-    for _ in {1..300}; do
-        grep -Fq "${expected}" "${log}" && break
-        kill -0 "${product_pid}" 2>/dev/null || fail "product exited before publishing app ID"
-        sleep 0.02
-    done
-    grep -Fq "${expected}" "${log}" || fail "Wayland app ID differs from ${application_id}"
-else
-    window_id=""
-    for _ in {1..300}; do
-        window_id="$(xdotool search --onlyvisible --pid "${product_pid}" 2>/dev/null | tail -n 1 || true)"
-        [[ "${window_id}" =~ ^[1-9][0-9]*$ ]] && break
-        kill -0 "${product_pid}" 2>/dev/null || fail "product exited before mapping its X11 window"
-        sleep 0.02
-    done
-    [[ "${window_id}" =~ ^[1-9][0-9]*$ ]] || fail "X11 window was not mapped"
-    wm_class="$(xprop -id "${window_id}" WM_CLASS)"
-    [[ "${wm_class}" == *"\"${application_id}\","* ]] ||
-        fail "X11 WM_CLASS instance differs: ${wm_class}"
+if [[ -z "${DBUS_SESSION_BUS_ADDRESS:-}" ]]; then
+    command -v dbus-run-session >/dev/null || fail "dbus-run-session is required"
+    exec dbus-run-session -- "$0" "$@"
 fi
+[[ -x "${product}" ]] || fail "product is not executable: ${product}"
+[[ -x "${driver}" ]] || fail "staged Rust journey driver is not executable: ${driver}"
 
-printf 'exit\n' >"${exit_fifo}"
-set +e
-wait "${product_pid}"
-status=$?
-set -e
-product_pid=""
-[[ "${status}" -eq 0 ]] || fail "product did not exit cleanly after its real PTY child"
-tornadotty_product_receipt_validate "${event_receipt}" --complete >/dev/null ||
-    fail "typed product lifecycle did not close cleanly"
-echo "desktop-window-identity: PASS backend=${backend} application-id=${application_id}"
+exec "${driver}" scenario window-identity \
+    "$(realpath -- "${product}")" "${backend}" "${application_id}" \
+    "$(realpath -- "${desktop_entry}")"

@@ -7,10 +7,14 @@
     "parser": "crates/tornadotty-test-receipts/src/parser.rs",
     "writer": "crates/tornadotty-test-receipts/src/writer.rs",
     "driver": "crates/tornadotty-test-receipts/src/bin/tornadotty-journey-driver.rs",
+    "session_supervisor": "crates/tornadotty-test-receipts/src/session.rs",
+    "input_driver": "crates/tornadotty-test-receipts/src/input.rs",
+    "scenario_driver": "crates/tornadotty-test-receipts/src/scenario.rs",
     "product_adapter": "crates/zentty-linux/src/test_receipts.rs",
     "environment_variable": "TORNADOTTY_TEST_RECEIPT_FILE",
     "activation_sites": [
       "crates/tornadotty-test-receipts/src/writer.rs",
+      "crates/tornadotty-test-receipts/src/scenario.rs",
       "linux/tests/lib/product-receipts"
     ]
   },

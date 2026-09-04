@@ -13,7 +13,7 @@ agent_receipt=""
 product_pid=""
 agent_start_delay=0
 agent_profile=codex-restore
-agent_sessions=session-codex,session-two
+agent_sessions='session-codex,session-two'
 agent_sleep_seconds=30
 agent_fail_once_marker=""
 agent_skip_auth=false
@@ -26,6 +26,9 @@ batch_remote_pattern=""
 product_args=()
 launch_count=0
 event_receipt=""
+session_root=""
+session_directory=""
+display_resource=""
 
 # shellcheck source=linux/tests/lib/product-input
 source "${repo_root}/linux/tests/lib/product-input"
@@ -37,6 +40,8 @@ source "${repo_root}/linux/tests/lib/disposable-sshd"
 source "${repo_root}/linux/tests/lib/visual-evidence"
 # shellcheck source=linux/tests/lib/product-receipts
 source "${repo_root}/linux/tests/lib/product-receipts"
+# shellcheck source=linux/tests/lib/product-session
+source "${repo_root}/linux/tests/lib/product-session"
 
 fail() {
     [[ -z "${log}" || ! -f "${log}" ]] || cat "${log}" >&2
@@ -47,9 +52,8 @@ fail() {
 }
 
 cleanup() {
-    if [[ "${product_pid}" =~ ^[1-9][0-9]*$ ]]; then
-        kill -TERM "${product_pid}" 2>/dev/null || true
-        wait "${product_pid}" 2>/dev/null || true
+    if [[ "${TORNADOTTY_SESSION_SUPERVISOR_PID:-}" =~ ^[1-9][0-9]*$ ]]; then
+        tornadotty_product_session_stop "${session_directory}" 500 2>/dev/null || true
     fi
     if [[ "${drag_source_pid}" =~ ^[1-9][0-9]*$ ]]; then
         kill -TERM "${drag_source_pid}" 2>/dev/null || true
@@ -57,6 +61,7 @@ cleanup() {
     fi
     zentty_disposable_sshd_stop
     [[ -z "${state_dir}" ]] || rm -rf -- "${state_dir}"
+    [[ -z "${session_root}" ]] || rm -rf -- "${session_root}"
     [[ -z "${fake_bin}" ]] || rm -rf -- "${fake_bin}"
     [[ -z "${log}" ]] || rm -f -- "${log}"
     [[ -z "${agent_receipt}" ]] || rm -f -- "${agent_receipt}"
@@ -74,13 +79,19 @@ case "${backend}" in
     x11)
         [[ "${ZENTTY_NESTED_X11_SESSION_ID:-}" =~ ^[0-9a-f]{64}$ ]] ||
             fail "X11 restore must run through linux/tests/nested-x11"
+        display_resource="display=x11:${ZENTTY_NESTED_X11_SESSION_ID}"
         ;;
     wayland)
         [[ "${ZENTTY_NESTED_WAYLAND_INPUT_SESSION_ID:-}" =~ ^[0-9a-f]{64}$ ]] ||
             fail "Wayland restore must run through linux/tests/nested-wayland-input"
+        display_resource="display=wayland:${ZENTTY_NESTED_WAYLAND_INPUT_SESSION_ID}"
         ;;
     *) fail "GDK_BACKEND must be x11 or wayland" ;;
 esac
+if [[ -z "${DBUS_SESSION_BUS_ADDRESS:-}" ]]; then
+    command -v dbus-run-session >/dev/null || fail "dbus-run-session is required"
+    exec dbus-run-session -- "$0" "$@"
+fi
 for dependency in jq readelf timeout mktemp grep sed pgrep cut tail sha256sum convert od import identify compare; do
     command -v "${dependency}" >/dev/null || fail "${dependency} is required"
 done
@@ -96,8 +107,9 @@ fi
 
 
 state_dir="$(mktemp -d)"
+session_root="$(mktemp -d)"
 fake_bin="$(mktemp -d)"
-log="$(mktemp)"
+log=""
 agent_receipt="$(mktemp)"
 zentty_product_disable_lifecycle_confirmations
 cat >>"${XDG_CONFIG_HOME}/zentty/config.toml" <<'EOF'
@@ -190,11 +202,13 @@ jq '
 
 start_product() {
     launch_count=$((launch_count + 1))
+    session_directory="${session_root}/launch-${launch_count}"
     event_receipt="${state_dir}/product-events-${launch_count}.ndjson"
     tornadotty_product_receipt_prepare "${product}" "${event_receipt}" ||
         fail "typed product receipt could not be prepared for launch ${launch_count}"
-    : >"${log}"
-    env \
+    tornadotty_product_session_start "${session_directory}" "${product}" \
+        --resource "${display_resource}" -- \
+        env \
         PATH="${fake_bin}:${PATH}" \
         ZENTTY_CONTROLLED_AGENT_PROFILE="${agent_profile}" \
         ZENTTY_CONTROLLED_AGENT_SESSIONS="${agent_sessions}" \
@@ -207,8 +221,10 @@ start_product() {
         ZENTTY_CONTROLLED_AGENT_SKIP_AUTH="${agent_skip_auth}" \
         GSK_RENDERER=cairo \
         LD_LIBRARY_PATH="${bundle_lib}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" \
-        "${product}" --state-directory "${state_dir}" "${product_args[@]}" >"${log}" 2>&1 &
-    product_pid=$!
+        "${product}" --state-directory "${state_dir}" "${product_args[@]}" ||
+        fail "Rust product supervisor did not start for launch ${launch_count}"
+    product_pid="${TORNADOTTY_SESSION_PRODUCT_PID}"
+    log="${TORNADOTTY_SESSION_PRODUCT_LOG}"
 }
 
 wait_for_agent_count() {
@@ -222,17 +238,12 @@ wait_for_agent_count() {
 }
 
 wait_for_product_exit() {
-    for _ in {1..240}; do
-        kill -0 "${product_pid}" 2>/dev/null || break
-        sleep 0.05
-    done
-    if kill -0 "${product_pid}" 2>/dev/null; then
-        fail "product did not exit after the real window close"
+    local status
+    if tornadotty_product_session_wait "${session_directory}" 12000; then
+        status=0
+    else
+        status=$?
     fi
-    set +e
-    wait "${product_pid}"
-    local status=$?
-    set -e
     product_pid=""
     ((status == 0)) || fail "product window close exited ${status}"
     tornadotty_product_receipt_validate "${event_receipt}" --complete >/dev/null ||
@@ -1168,12 +1179,16 @@ jq -e '.cleanExit == false' "${lifecycle}" >/dev/null ||
 crashed_pid="${product_pid}"
 mapfile -t crashed_children < <(pgrep -P "${crashed_pid}" || true)
 kill -KILL "${crashed_pid}"
-set +e
-wait "${crashed_pid}"
-crash_status=$?
-set -e
+if tornadotty_product_session_wait "${session_directory}" 10000; then
+    crash_status=0
+else
+    crash_status=$?
+fi
 product_pid=""
-((crash_status == 137)) || fail "SIGKILL crash exited with unexpected status ${crash_status}"
+((crash_status != 0)) || fail "SIGKILL crash was reported as a successful supervisor exit"
+"${TORNADOTTY_JOURNEY_DRIVER}" session inspect "${session_directory}" |
+    jq -e '.phase == "exited" and .exit.signal == 9 and .exit.code == null' >/dev/null ||
+    fail "SIGKILL crash did not retain its exact typed exit identity"
 for child in "${crashed_children[@]}"; do
     for _ in {1..100}; do
         kill -0 "${child}" 2>/dev/null || break
@@ -1184,7 +1199,6 @@ done
 jq -e '.cleanExit == false' "${lifecycle}" >/dev/null ||
     fail "abnormal termination incorrectly marked the lifecycle clean"
 
-: >"${log}"
 product_args=(--no-session-restore)
 start_product
 zentty_product_wait_for_log "${log}" \

@@ -677,3 +677,72 @@ the diagnostic mutation campaign.
   the existing orchestration contract, warning-level ShellCheck, Bash parsing,
   and `git diff --check` passed. No aggregate matrix, `qualify-local`, release
   qualification, or full-Linux qualification was run or claimed.
+
+## 2026-09-04 — single Rust GUI journey driver (GH-149, in progress)
+
+### Process, input, and evidence ownership
+
+- A single `tornadotty-journey-driver` now owns staged product process groups,
+  phase deadlines, exclusive display-resource leases, stop requests, TERM/KILL
+  escalation, descendant detection, input target verification, and durable
+  machine evidence. This extends the GH-148 receipt executable; it does not add
+  a second harness.
+- The first stop implementation let a short-lived controller signal the
+  product. Review rejected that as false ownership. The controller now writes
+  a bounded owner-only stop request and the original long-lived supervisor is
+  the only process that signals its product group and journals the action.
+- Session state binds every PID to `/proc` start ticks. A reused or edited PID
+  is rejected as stale. X11 input additionally proves the target window's PID;
+  native Wayland input requires the controlled compositor attestation, and
+  outer-X11 input proves the attested compositor owns the target.
+- Journal validation was initially write-only, which would have made JSON
+  strings in tests the de facto contract. A typed reader now rejects partial
+  records, unknown variants/fields, wrong versions, sequence gaps, duplicate
+  terminal lifecycle events, and invalid order. Every normal Bash-adapter
+  teardown invokes that validator.
+- The first validator accepted only a product-start/product-exit lifecycle, so
+  a correctly rejected resource conflict produced evidence it could not
+  validate. Pre-spawn resource and spawn failures now end with a typed
+  `session_completed` record and validate as coherent failed journeys without
+  being mistaken for successful product runs.
+
+### Real failures found during migration
+
+- The first converted X11 launch left a `dbus-launch` descendant in the product
+  group. The supervisor reported and reaped it instead of calling the run
+  clean. The journey now establishes a private D-Bus session explicitly; this
+  fixed the environment rather than suppressing the leak.
+- The workspace/settings restart path retained the first product's X11 window
+  ID. Reacquiring and verifying the restarted product window removed that stale
+  input target.
+- Native Wayland under a private D-Bus session can autoactivate noisy host XDG
+  portal backends. These messages are environmental diagnostics; they are not
+  relabeled as product failures or silently counted as product evidence.
+
+### First complete scenario conversion
+
+- `desktop-window-identity` is now an environment-only Bash wrapper. Its named
+  Rust scenario owns launch, typed readiness, real X11 `WM_CLASS` or Wayland
+  protocol app-ID observation, real PTY-controlled shutdown, receipt and
+  journal validation, diagnostics, and cleanup.
+- The converted scenario passed once in private Xvfb and once in private
+  headless Weston against the staged ReleaseSafe product. Both processes exited
+  zero and both evidence streams validated. This did not run or claim aggregate
+  qualification.
+- Driver tests currently pass **18/18**: eight typed receipt-contract tests,
+  three receipt-driver tests, and seven session/input/journal tests. The focused
+  session group itself completes in about **0.11 seconds**. Strict all-target
+  Clippy passes after correcting a `filter().next_back()` finding before the
+  real runs.
+
+### Remaining honest scope
+
+- Divider/layout, session restore, and notification/settings now use the Rust
+  supervisor, typed receipts, verified input, and resource declarations, and
+  focused real-system runs have passed during the migration. Their scenario
+  decisions and some human-log assertions still live in Bash, so the policy
+  keeps them `PARTIAL` and GH-149 remains open.
+- No assertion has been removed merely to make a port smaller. Each remaining
+  literal must either become a typed product expectation, remain native
+  boundary evidence, or be explicitly shown redundant before its Bash scenario
+  is retired.

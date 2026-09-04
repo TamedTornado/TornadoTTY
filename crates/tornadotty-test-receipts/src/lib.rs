@@ -1,7 +1,10 @@
 #![forbid(unsafe_code)]
 
 mod event;
+pub mod input;
 mod parser;
+pub mod scenario;
+pub mod session;
 mod writer;
 
 use std::fmt;

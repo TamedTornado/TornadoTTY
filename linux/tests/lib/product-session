@@ -1,0 +1,85 @@
+#!/usr/bin/env bash
+
+# Thin shell adapter for the authoritative Rust journey-driver. The caller
+# retains environment/prerequisite setup; Rust owns the product process group,
+# bounded phase state, durable evidence, resource leases, and cleanup.
+
+tornadotty_product_session_resource_root() {
+    local root
+    root="${TORNADOTTY_JOURNEY_RESOURCE_ROOT:-${XDG_RUNTIME_DIR:-/tmp}/tornadotty-journey-resources-$(id -u)}"
+    if [[ ! -e "${root}" ]] && ! mkdir -m 700 -- "${root}" 2>/dev/null; then
+        [[ -d "${root}" ]] || return 1
+    fi
+    [[ -d "${root}" && ! -L "${root}" && "$(stat -c %a -- "${root}")" == 700 ]] || {
+        echo "product-session: resource root is not an owner-only directory: ${root}" >&2
+        return 1
+    }
+    printf '%s\n' "${root}"
+}
+
+tornadotty_product_session_start() {
+    local session="$1" product="$2"; shift 2
+    local driver resource_root
+    driver="${TORNADOTTY_JOURNEY_DRIVER:-${product%/*}/tornadotty-journey-driver}"
+    [[ -x "${driver}" ]] || {
+        echo "product-session: staged journey driver is missing: ${driver}" >&2
+        return 1
+    }
+    [[ "${session}" == /* && ! -e "${session}" ]] || {
+        echo "product-session: session must be an absent absolute path: ${session}" >&2
+        return 1
+    }
+    mkdir -m 700 -- "${session}" || return 1
+    resource_root="$(tornadotty_product_session_resource_root)" || return 1
+    "${driver}" session supervise "${session}" "${resource_root}" "$@" \
+        >"${session}/supervisor.stdout" &
+    TORNADOTTY_SESSION_SUPERVISOR_PID=$!
+    export TORNADOTTY_SESSION_SUPERVISOR_PID
+    "${driver}" session wait "${session}" 10000 running >/dev/null || {
+        wait "${TORNADOTTY_SESSION_SUPERVISOR_PID}" 2>/dev/null || true
+        TORNADOTTY_SESSION_SUPERVISOR_PID=""
+        return 1
+    }
+    TORNADOTTY_SESSION_PRODUCT_PID="$(
+        "${driver}" session product-pid "${session}"
+    )" || return 1
+    TORNADOTTY_SESSION_PRODUCT_LOG="${session}/product.log"
+    TORNADOTTY_SESSION_DIRECTORY="${session}"
+    export TORNADOTTY_SESSION_PRODUCT_PID TORNADOTTY_SESSION_PRODUCT_LOG \
+        TORNADOTTY_SESSION_DIRECTORY
+}
+
+tornadotty_product_session_wait() {
+    local session="$1" timeout_ms="${2:-10000}" driver status
+    driver="${TORNADOTTY_JOURNEY_DRIVER:?product session driver is not prepared}"
+    "${driver}" session wait "${session}" "${timeout_ms}" exited >/dev/null || return 1
+    if wait "${TORNADOTTY_SESSION_SUPERVISOR_PID:?product supervisor is not running}"; then
+        status=0
+    else
+        status=$?
+    fi
+    if ! "${driver}" session validate-journal "${session}" >/dev/null; then
+        status=1
+    fi
+    TORNADOTTY_SESSION_SUPERVISOR_PID=""
+    TORNADOTTY_SESSION_PRODUCT_PID=""
+    return "${status}"
+}
+
+tornadotty_product_session_stop() {
+    local session="$1" timeout_ms="${2:-1000}" driver status
+    driver="${TORNADOTTY_JOURNEY_DRIVER:?product session driver is not prepared}"
+    [[ "${TORNADOTTY_SESSION_SUPERVISOR_PID:-}" =~ ^[1-9][0-9]*$ ]] || return 0
+    "${driver}" session stop "${session}" "${timeout_ms}" || return 1
+    if wait "${TORNADOTTY_SESSION_SUPERVISOR_PID}"; then
+        status=0
+    else
+        status=$?
+    fi
+    if ! "${driver}" session validate-journal "${session}" >/dev/null; then
+        status=1
+    fi
+    TORNADOTTY_SESSION_SUPERVISOR_PID=""
+    TORNADOTTY_SESSION_PRODUCT_PID=""
+    return "${status}"
+}
