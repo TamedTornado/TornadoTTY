@@ -1,0 +1,194 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+runner="${repo_root}/linux/tests/mutation-autonomy"
+source_policy="${repo_root}/linux/test-policy/mutation-autonomy-v1.json"
+# shellcheck source=linux/tests/lib/qualification-provenance
+source "${repo_root}/linux/tests/lib/qualification-provenance"
+fixture="$(mktemp -d)"
+trap 'rm -rf -- "${fixture}"' EXIT
+
+fail() {
+    printf 'mutation-autonomy-test: error: %s\n' "$*" >&2
+    exit 1
+}
+
+expect_receipt_rejected() {
+    local label="$1" filter="$2" expected="$3" candidate
+    candidate="${fixture}/${label}.json"
+    jq "${filter}" "${fixture}/passing.json" >"${candidate}"
+    if ZENTTY_MUTATION_POLICY="${fixture}/policy.json" \
+        "${runner}" verify "${candidate}" \
+        >"${fixture}/${label}.stdout" 2>"${fixture}/${label}.stderr"; then
+        fail "${label} receipt unexpectedly passed"
+    fi
+    grep -Fq -- "${expected}" "${fixture}/${label}.stderr" || {
+        cat "${fixture}/${label}.stderr" >&2
+        fail "${label} receipt failed for the wrong reason"
+    }
+}
+
+expect_policy_rejected() {
+    local label="$1" filter="$2" expected="$3" candidate
+    candidate="${fixture}/${label}-policy.json"
+    jq "${filter}" "${fixture}/policy.json" >"${candidate}"
+    if ZENTTY_MUTATION_POLICY="${candidate}" "${runner}" --validate-policy \
+        >"${fixture}/${label}.stdout" 2>"${fixture}/${label}.stderr"; then
+        fail "${label} policy unexpectedly passed"
+    fi
+    grep -Fq -- "${expected}" "${fixture}/${label}.stderr" || {
+        cat "${fixture}/${label}.stderr" >&2
+        fail "${label} policy failed for the wrong reason"
+    }
+}
+
+# Focused fixtures can validate a dirty development tree; the checked-in
+# release/autonomy policy still requires a clean tree.
+jq '.receipt.require_clean_tree = false | .receipt.max_age_seconds = 3600' \
+    "${source_policy}" >"${fixture}/policy.json"
+
+for evidence in raw-mutants raw-outcomes caught-log caught-diff \
+    axis-log axis-diff resize-log resize-diff; do
+    printf '%s evidence\n' "${evidence}" >"${fixture}/${evidence}"
+done
+
+source_identity="$(zentty_qualification_source_identity "${repo_root}")"
+policy_identity="$(zentty_qualification_file_identity \
+    "${repo_root}" "${fixture}/policy.json")"
+mutants_binary="$(readlink -f -- "$(command -v cargo-mutants)")"
+tool_identity="$(jq -cn \
+    --arg path "${mutants_binary}" \
+    --arg sha256 "$(sha256sum -- "${mutants_binary}" | awk '{print $1}')" \
+    --arg version "$(cargo mutants --version 2>/dev/null | head -n 1)" \
+    '{path:$path,sha256:$sha256,version:$version}')"
+raw_mutants="$(zentty_qualification_file_identity "${repo_root}" "${fixture}/raw-mutants")"
+raw_outcomes="$(zentty_qualification_file_identity "${repo_root}" "${fixture}/raw-outcomes")"
+caught_log="$(zentty_qualification_file_identity "${repo_root}" "${fixture}/caught-log")"
+caught_diff="$(zentty_qualification_file_identity "${repo_root}" "${fixture}/caught-diff")"
+axis_log="$(zentty_qualification_file_identity "${repo_root}" "${fixture}/axis-log")"
+axis_diff="$(zentty_qualification_file_identity "${repo_root}" "${fixture}/axis-diff")"
+resize_log="$(zentty_qualification_file_identity "${repo_root}" "${fixture}/resize-log")"
+resize_diff="$(zentty_qualification_file_identity "${repo_root}" "${fixture}/resize-diff")"
+
+jq -nS \
+    --argjson now "$(date +%s)" --argjson source "${source_identity}" \
+    --argjson policy_identity "${policy_identity}" --argjson tool "${tool_identity}" \
+    --slurpfile policy "${fixture}/policy.json" \
+    --argjson raw_mutants "${raw_mutants}" --argjson raw_outcomes "${raw_outcomes}" \
+    --argjson caught_log "${caught_log}" --argjson caught_diff "${caught_diff}" \
+    --argjson axis_log "${axis_log}" --argjson axis_diff "${axis_diff}" \
+    --argjson resize_log "${resize_log}" --argjson resize_diff "${resize_diff}" '
+  $policy[0].cohorts[0] as $cohort |
+  $cohort.unviable_dispositions[0] as $axis_disposition |
+  $cohort.unviable_dispositions[1] as $resize_disposition |
+  $cohort.unviable_dispositions[2] as $keyboard_disposition |
+  {
+    schema_version:1,
+    generated_at_epoch:$now,
+    source:$source,
+    policy:$policy_identity,
+    tool:$tool,
+    safety:$policy[0].safety,
+    cohorts:[{
+      id:$cohort.id,
+      source_files:$cohort.source_files,
+      owning_test_command:$cohort.owning_test_command,
+      included_genres:$cohort.included_genres,
+      excluded_mutants:[],
+      cargo_mutants_exit_code:0,
+      baseline:{summary:"SUCCESS",command:$cohort.owning_test_command},
+      counts:{caught:1,missed:0,timeout:0,unviable:3,excluded:0,total:4},
+      mutants:[
+        {
+          name:"crates/zentty-linux/src/pane_divider_model.rs:43:9: replace DividerResize::apply -> f64 with 0.0",
+          file:$cohort.source_files[0],function:"DividerResize::apply",genre:"FnValue",
+          outcome:"CAUGHT",owning_test_command:$cohort.owning_test_command,
+          log:$caught_log,diff:$caught_diff,disposition:null
+        },
+        {
+          name:$axis_disposition.mutant,
+          file:$cohort.source_files[0],function:"PaneDivider::axis",genre:"FnValue",
+          outcome:"UNVIABLE",owning_test_command:$cohort.owning_test_command,
+          log:$axis_log,diff:$axis_diff,disposition:$axis_disposition
+        },
+        {
+          name:$resize_disposition.mutant,
+          file:$cohort.source_files[0],function:"PaneDivider::resize_request",genre:"FnValue",
+          outcome:"UNVIABLE",owning_test_command:$cohort.owning_test_command,
+          log:$resize_log,diff:$resize_diff,disposition:$resize_disposition
+        },
+        {
+          name:$keyboard_disposition.mutant,
+          file:$cohort.source_files[0],function:"PaneDivider::keyboard_request",genre:"FnValue",
+          outcome:"UNVIABLE",owning_test_command:$cohort.owning_test_command,
+          log:$resize_log,diff:$resize_diff,disposition:$keyboard_disposition
+        }
+      ],
+      raw:{mutants:$raw_mutants,outcomes:$raw_outcomes}
+    }],
+    totals:{caught:1,missed:0,timeout:0,unviable:3,excluded:0,total:4},
+    claims:{autonomy_gate_passed:true}
+  }
+' >"${fixture}/passing.json"
+
+ZENTTY_MUTATION_POLICY="${fixture}/policy.json" \
+    "${runner}" verify "${fixture}/passing.json" >/dev/null
+
+expect_policy_rejected missing-scope '.cohorts = []' 'mutation policy is invalid'
+expect_policy_rejected unsafe-copy '.safety.copy_target = true' 'mutation policy is invalid'
+expect_policy_rejected unsafe-ignore '.safety.gitignore = false' 'mutation policy is invalid'
+expect_policy_rejected unsafe-workers '.safety.jobs = 9' 'mutation policy is invalid'
+
+expect_receipt_rejected zero-mutants '
+  .cohorts[0].mutants = [] |
+  .cohorts[0].counts = {caught:0,missed:0,timeout:0,unviable:0,excluded:0,total:0} |
+  .totals = .cohorts[0].counts | .claims.autonomy_gate_passed = false
+' 'receipt does not establish the autonomy gate'
+expect_receipt_rejected zero-viable-mutants '
+  .cohorts[0].mutants = .cohorts[0].mutants[1:] |
+  .cohorts[0].counts = {caught:0,missed:0,timeout:0,unviable:3,excluded:0,total:3} |
+  .totals = .cohorts[0].counts | .claims.autonomy_gate_passed = false
+' 'receipt does not establish the autonomy gate'
+expect_receipt_rejected missed-mutant '
+  .cohorts[0].mutants[0].outcome = "MISSED" |
+  .cohorts[0].counts.caught = 0 | .cohorts[0].counts.missed = 1 |
+  .totals.caught = 0 | .totals.missed = 1 |
+  .claims.autonomy_gate_passed = false
+' 'receipt does not establish the autonomy gate'
+expect_receipt_rejected timed-out-mutant '
+  .cohorts[0].mutants[0].outcome = "TIMEOUT" |
+  .cohorts[0].counts.caught = 0 | .cohorts[0].counts.timeout = 1 |
+  .totals.caught = 0 | .totals.timeout = 1 |
+  .claims.autonomy_gate_passed = false
+' 'receipt does not establish the autonomy gate'
+expect_receipt_rejected failed-baseline '
+  .cohorts[0].baseline.summary = "FAIL" | .claims.autonomy_gate_passed = false
+' 'receipt does not establish the autonomy gate'
+expect_receipt_rejected failed-tool-exit '
+  .cohorts[0].cargo_mutants_exit_code = 2 | .claims.autonomy_gate_passed = false
+' 'receipt does not establish the autonomy gate'
+expect_receipt_rejected stale-tree '
+  .source.tree_sha256 = ("f" * 64)
+' 'receipt source identity is stale'
+expect_receipt_rejected stale-receipt '
+  .generated_at_epoch -= 7200
+' 'receipt is stale'
+expect_receipt_rejected unreviewed-unviable '
+  .cohorts[0].mutants[1].disposition = null |
+  .claims.autonomy_gate_passed = false
+' 'receipt does not establish the autonomy gate'
+expect_receipt_rejected incomplete-totals '
+  del(.totals.excluded)
+' 'receipt structure, totals, or outcome policy is invalid'
+expect_receipt_rejected wrong-test-command '
+  .cohorts[0].owning_test_command[-1] = "wrong-test"
+' 'receipt structure, totals, or outcome policy is invalid'
+expect_receipt_rejected stale-policy '
+  .policy.sha256 = ("f" * 64)
+' 'receipt policy identity is stale'
+expect_receipt_rejected stale-tool '
+  .tool.sha256 = ("f" * 64)
+' 'receipt cargo-mutants identity is stale'
+
+echo "Mutation autonomy focused tests passed: policy, outcomes, provenance, and unsafe-copy negatives"

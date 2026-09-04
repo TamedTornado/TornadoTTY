@@ -445,3 +445,78 @@ and requires the original failure to remain in the result.
   compositors, PTYs, portals, and child processes are asynchronous. This audit
   classifies rather than deletes those waits. Any future intermittent failure
   must become a concrete defect; a blanket rerun is not an acceptable repair.
+
+## 2026-09-04 — current-source mutation autonomy gate (GH-146)
+
+### Existing state and policy boundary
+
+- The repository already had a safe `linux/tests/mutate-rust` wrapper and many
+  historical ad hoc `mutants.out` directories. Those receipts covered different
+  hand-selected source files and did not prove the current protected scope.
+- `.cargo/mutants.toml` already contained `gitignore = true` and
+  `copy_target = false`, but a caller could override either on the command line
+  or disable/replace the configuration. The wrapper now rejects `--no-config`,
+  every alternate `--config`, `--gitignore=false`, `--copy-target=true`, and
+  unsafe split-argument forms before entering a mutation scope. It also rejects
+  VCS copying, in-place mutation, and leaked scratch directories. Its existing
+  systemd/prlimit memory isolation remains the only execution wrapper.
+- One machine policy now owns the mutation contract. It names the protected
+  module, focused integration test, included mutation genres, explicit empty
+  exclusion list, minimum generated count, cargo-mutants 27.1.0, four-worker
+  and jobserver bounds, per-command deadline, receipt lifetime, and exact
+  compiler-unviable dispositions.
+- The first protected cohort is the display-independent pane-divider semantics
+  extracted under GH-147. Its owning command is the real Rust integration test
+  `cargo test -p zentty-linux --locked --test pane_divider_semantics`, which
+  exercises the same model called by the GTK divider adapter.
+
+### Gate and negative contracts
+
+- `linux/tests/mutation-autonomy run` lists and executes the policy-selected
+  inventory through the existing wrapper. Cargo-mutants' own unmutated baseline
+  must pass; zero generated or viable mutants, list/execution drift, undeclared genres,
+  nonzero tool exit, survivors, and timeouts all prevent PASS.
+- The receipt records caught, missed, timeout, compiler-unviable, excluded, and
+  total counts separately. Every mutant carries its name, file, function,
+  genre, outcome, focused owning command, and hashed raw log/diff. The receipt
+  also binds the complete raw inventory/outcome documents.
+- Verification recaptures the aggregate Git revision/tree identity, policy
+  identity, cargo-mutants executable/version, every raw evidence hash, and
+  freshness. The checked-in policy requires a clean tree and a receipt no more
+  than seven days old.
+- Focused negative fixtures reject missing policy scope, zero mutants, a missed
+  mutant, timeout, failed baseline, stale tree, stale receipt, stale policy,
+  stale tool, wrong owning command, unreviewed unviable, incomplete totals, and
+  unsafe copy/worker policy. The resource-isolation test separately proves the
+  wrapper rejects unsafe CLI overrides and retains its cgroup/prlimit ceiling.
+- `qualify-local` schedules policy/negative/isolation checks and the default
+  receipt verifier. It does not execute the mutation campaign. Thus a release
+  candidate or unattended protected change must deliberately generate a fresh
+  receipt, while ordinary focused bug fixes and advisory PR CI do not pay the
+  mutation cost.
+
+### First real campaign and discoveries
+
+- A diagnostic run against the exact dirty implementation tree independently
+  listed and tested 24 pane-divider mutants in about two minutes. Cargo-mutants'
+  baseline passed in 45 seconds. Results were **21 caught, zero missed, zero
+  timeout, and three compiler-unviable**.
+- The policy draft anticipated only two compiler-unviable replacements. The
+  real run exposed a third: `keyboard_request -> Some(Default::default())`.
+  Source review confirmed all three fail because `DividerAxis` or
+  `DividerResize` deliberately has no arbitrary `Default`; fabricating one
+  would erase the typed target/axis/delta invariant. Each exact generated
+  mutant now has its own GH-146 disposition. They are counted as UNVIABLE, not
+  as kills.
+- The same diagnostic run exposed a receipt-assembler defect after mutation
+  execution: the already captured cargo-mutants exit code was omitted from one
+  jq argument list. The gate failed closed and published no passing receipt.
+  The argument and the receipt field are now present, and a nonzero tool exit
+  independently prevents the PASS claim.
+
+The final current-source receipt is intentionally generated after this
+implementation is committed: committing a receipt or a post-run hash would
+change the very tree identity it attests. The ignored machine receipt and raw
+evidence remain local release artifacts; GH-146 records their final hash and
+counts after the clean-tree run. No full product qualification is claimed by
+the diagnostic mutation campaign.

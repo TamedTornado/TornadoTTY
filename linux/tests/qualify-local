@@ -43,6 +43,7 @@ support_tests=(
     linux/tests/controlled-agent-test
     linux/tests/lib/bounded-batch-test
     linux/tests/lib/inline-test-audit-test
+    linux/tests/lib/mutation-isolation-test
     linux/tests/lib/qualification-capacity-test
     linux/tests/lib/qualification-gap-test
     linux/tests/lib/qualification-outcome-test
@@ -50,6 +51,8 @@ support_tests=(
     linux/tests/lib/qualified-package-source-test
     linux/tests/lib/valgrind-evidence-lock-test
     linux/tests/lib/working-tree-fixture-test
+    linux/tests/mutation-autonomy
+    linux/tests/mutation-autonomy-test
     linux/tests/lib/controlled-environment-test
     linux/tests/lib/product-input-test
     linux/tests/lib/product-bundle-test

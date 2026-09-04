@@ -89,8 +89,14 @@ override that file.
 Run every presently executable cell with:
 
 ```sh
+linux/tests/mutation-autonomy run
 linux/tests/qualify-local
 ```
+
+The mutation command is required once on the clean release candidate. It
+records each protected Rust mutant and its focused owning test. The local
+aggregate verifies that current receipt; it does not rerun mutation testing,
+and ordinary focused bug fixes do not require the aggregate.
 
 The command writes `build/linux/qualification-summary.json` and a log per cell
 under `build/linux/matrix-logs/`. Its report deliberately distinguishes an

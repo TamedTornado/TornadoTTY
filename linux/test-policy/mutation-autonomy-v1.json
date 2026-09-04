@@ -1,0 +1,74 @@
+{
+  "schema_version": 1,
+  "cargo_mutants": {
+    "version": "27.1.0"
+  },
+  "safety": {
+    "config_path": ".cargo/mutants.toml",
+    "runner": "linux/tests/mutate-rust",
+    "gitignore": true,
+    "copy_target": false,
+    "jobs": 4,
+    "jobserver_tasks": 16,
+    "timeout_seconds": 120,
+    "minimum_test_timeout_seconds": 20
+  },
+  "receipt": {
+    "default_path": "build/linux/mutation-autonomy/receipt.json",
+    "max_age_seconds": 604800,
+    "require_clean_tree": true
+  },
+  "cohorts": [
+    {
+      "id": "pane-divider-semantics",
+      "package": "zentty-linux",
+      "source_files": [
+        "crates/zentty-linux/src/pane_divider_model.rs"
+      ],
+      "owning_test_command": [
+        "cargo",
+        "test",
+        "-p",
+        "zentty-linux",
+        "--locked",
+        "--test",
+        "pane_divider_semantics"
+      ],
+      "cargo_test_args": [
+        "--test",
+        "pane_divider_semantics"
+      ],
+      "included_genres": [
+        "BinaryOperator",
+        "FnValue",
+        "MatchArm",
+        "UnaryOperator"
+      ],
+      "excluded_mutants": [],
+      "minimum_generated_mutants": 1,
+      "unviable_dispositions": [
+        {
+          "mutant": "crates/zentty-linux/src/pane_divider_model.rs:50:9: replace PaneDivider::axis -> DividerAxis with Default::default()",
+          "source": "crates/zentty-linux/src/pane_divider_model.rs",
+          "finding": "compiler-unviable",
+          "tracking": "GH-146",
+          "justification": "DividerAxis intentionally has no arbitrary Default; the generated replacement cannot compile and does not represent executable divider behavior."
+        },
+        {
+          "mutant": "crates/zentty-linux/src/pane_divider_model.rs:66:9: replace PaneDivider::resize_request -> Option<DividerResize> with Some(Default::default())",
+          "source": "crates/zentty-linux/src/pane_divider_model.rs",
+          "finding": "compiler-unviable",
+          "tracking": "GH-146",
+          "justification": "DividerResize intentionally has no Default because a resize requires an explicit typed target, axis, and delta; the generated replacement cannot compile."
+        },
+        {
+          "mutant": "crates/zentty-linux/src/pane_divider_model.rs:78:9: replace PaneDivider::keyboard_request -> Option<DividerResize> with Some(Default::default())",
+          "source": "crates/zentty-linux/src/pane_divider_model.rs",
+          "finding": "compiler-unviable",
+          "tracking": "GH-146",
+          "justification": "A keyboard resize must preserve the explicit pane target, axis, and signed key delta; DividerResize therefore has no Default and this generated replacement cannot compile."
+        }
+      ]
+    }
+  ]
+}

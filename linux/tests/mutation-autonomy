@@ -1,0 +1,490 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+# shellcheck source=linux/tests/lib/qualification-provenance
+source "${repo_root}/linux/tests/lib/qualification-provenance"
+
+policy="${ZENTTY_MUTATION_POLICY:-${repo_root}/linux/test-policy/mutation-autonomy-v1.json}"
+receipt="${ZENTTY_MUTATION_RECEIPT:-${repo_root}/build/linux/mutation-autonomy/receipt.json}"
+mutate_runner="${repo_root}/linux/tests/mutate-rust"
+
+fail() {
+    printf 'mutation-autonomy: error: %s\n' "$*" >&2
+    exit 1
+}
+
+capture_mutants_tool_identity() {
+    local executable resolved version
+    executable="$(command -v cargo-mutants)" || return 1
+    [[ -x "${executable}" ]] || return 1
+    resolved="$(readlink -f -- "${executable}")"
+    version="$(cargo mutants --version 2>/dev/null | head -n 1)"
+    [[ -n "${version}" ]] || return 1
+    jq -cn \
+        --arg path "${resolved}" \
+        --arg sha256 "$(sha256sum -- "${resolved}" | awk '{print $1}')" \
+        --arg version "${version}" \
+        '{path:$path,sha256:$sha256,version:$version}'
+}
+
+validate_policy() {
+    [[ -f "${policy}" && ! -L "${policy}" ]] || fail "policy is missing or unsafe: ${policy}"
+    jq -e '
+      def nonblank: type == "string" and test("[^[:space:]]");
+      def string_array: type == "array" and all(.[]; nonblank);
+      (keys | sort) == ["cargo_mutants","cohorts","receipt","safety","schema_version"] and
+      .schema_version == 1 and
+      (.cargo_mutants | keys) == ["version"] and
+      (.cargo_mutants.version | test("^[0-9]+[.][0-9]+[.][0-9]+$")) and
+      (.safety | keys | sort) == [
+        "config_path","copy_target","gitignore","jobs","jobserver_tasks",
+        "minimum_test_timeout_seconds","runner","timeout_seconds"
+      ] and
+      .safety.config_path == ".cargo/mutants.toml" and
+      .safety.runner == "linux/tests/mutate-rust" and
+      .safety.gitignore == true and .safety.copy_target == false and
+      all([
+        .safety.jobs,.safety.jobserver_tasks,.safety.minimum_test_timeout_seconds,
+        .safety.timeout_seconds
+      ][]; type == "number" and floor == . and . > 0) and
+      .safety.jobs <= 8 and .safety.jobserver_tasks <= 32 and
+      (.receipt | keys | sort) == ["default_path","max_age_seconds","require_clean_tree"] and
+      (.receipt.default_path | startswith("build/linux/mutation-autonomy/") and nonblank) and
+      (.receipt.max_age_seconds | type == "number" and floor == . and . > 0) and
+      (.receipt.require_clean_tree | type == "boolean") and
+      (.cohorts | type == "array" and length > 0) and
+      ([.cohorts[].id] | length == (unique | length)) and
+      all(.cohorts[]; . as $cohort |
+        (keys | sort) == [
+          "cargo_test_args","excluded_mutants","id","included_genres",
+          "minimum_generated_mutants","owning_test_command","package",
+          "source_files","unviable_dispositions"
+        ] and
+        (.id | test("^[a-z0-9]+(-[a-z0-9]+)*$")) and
+        (.package | nonblank) and
+        (.source_files | string_array and length > 0 and length == (unique | length)) and
+        (.owning_test_command | string_array and length > 0) and
+        (.cargo_test_args | string_array and length > 0) and
+        (.included_genres | string_array and length > 0 and length == (unique | length)) and
+        all(.included_genres[]; IN("BinaryOperator","FnValue","MatchArm","UnaryOperator")) and
+        .excluded_mutants == [] and
+        (.minimum_generated_mutants | type == "number" and floor == . and . > 0) and
+        (.unviable_dispositions | type == "array") and
+        ([.unviable_dispositions[].mutant] | length == (unique | length)) and
+        all(.unviable_dispositions[];
+          (keys | sort) == ["finding","justification","mutant","source","tracking"] and
+          (.mutant | nonblank) and (.source | nonblank) and
+          .finding == "compiler-unviable" and
+          (.tracking | nonblank) and (.justification | nonblank) and
+          (.source as $source | any($cohort.source_files[]; . == $source)))
+      )
+    ' "${policy}" >/dev/null || fail "mutation policy is invalid"
+
+    local config_path expected_config actual_version expected_version source_file
+    config_path="${repo_root}/$(jq -r '.safety.config_path' "${policy}")"
+    expected_config=$'gitignore = true\ncopy_target = false'
+    [[ -f "${config_path}" && "$(cat "${config_path}")" == "${expected_config}" ]] ||
+        fail "safe cargo-mutants copy policy is missing from ${config_path}"
+    [[ "$(jq -r '.safety.runner' "${policy}")" == "${mutate_runner#"${repo_root}/"}" ]] ||
+        fail "policy does not name the governed mutation runner"
+    expected_version="$(jq -r '.cargo_mutants.version' "${policy}")"
+    actual_version="$(cargo mutants --version 2>/dev/null | awk '{print $2}')"
+    [[ "${actual_version}" == "${expected_version}" ]] ||
+        fail "cargo-mutants version mismatch: expected ${expected_version}, got ${actual_version:-missing}"
+    while IFS= read -r source_file; do
+        [[ -f "${repo_root}/${source_file}" && ! -L "${repo_root}/${source_file}" ]] ||
+            fail "protected source is missing or unsafe: ${source_file}"
+    done < <(jq -r '.cohorts[].source_files[]' "${policy}" | sort -u)
+}
+
+validate_receipt_structure() {
+    local candidate="$1"
+    [[ -f "${candidate}" && ! -L "${candidate}" ]] || return 1
+    jq -e --slurpfile policy "${policy}" '
+      def sha: type == "string" and test("^[0-9a-f]{64}$");
+      def nonblank: type == "string" and test("[^[:space:]]");
+      def file_identity:
+        (keys | sort) == ["path","sha256"] and (.path | nonblank) and (.sha256 | sha);
+      def tool_identity:
+        (keys | sort) == ["path","sha256","version"] and
+        (.path | nonblank) and (.sha256 | sha) and (.version | nonblank);
+      def source_identity:
+        (keys | sort) == [
+          "dirty","index_dirty","index_sha256","revision","tree_sha256",
+          "untracked_count","untracked_sha256","worktree_dirty","worktree_sha256"
+        ] and
+        (.revision | test("^[0-9a-f]{40}$")) and
+        (.dirty | type == "boolean") and (.index_dirty | type == "boolean") and
+        (.worktree_dirty | type == "boolean") and
+        (.untracked_count | type == "number" and floor == . and . >= 0) and
+        (.tree_sha256 | sha) and (.index_sha256 | sha) and
+        (.worktree_sha256 | sha) and (.untracked_sha256 | sha) and
+        (.dirty == (.index_dirty or .worktree_dirty or .untracked_count > 0));
+      def counts_match($r):
+        ($r.counts | keys | sort) == ["caught","excluded","missed","timeout","total","unviable"] and
+        all($r.counts[]; type == "number" and floor == . and . >= 0) and
+        ($r.counts.total == ($r.counts.caught + $r.counts.missed +
+          $r.counts.timeout + $r.counts.unviable + $r.counts.excluded)) and
+        ($r.counts.total == ($r.mutants | length)) and
+        ($r.counts.caught == ([$r.mutants[] | select(.outcome == "CAUGHT")] | length)) and
+        ($r.counts.missed == ([$r.mutants[] | select(.outcome == "MISSED")] | length)) and
+        ($r.counts.timeout == ([$r.mutants[] | select(.outcome == "TIMEOUT")] | length)) and
+        ($r.counts.unviable == ([$r.mutants[] | select(.outcome == "UNVIABLE")] | length)) and
+        ($r.counts.excluded == ([$r.mutants[] | select(.outcome == "EXCLUDED")] | length));
+      def cohort_matches($r; $c):
+        ($r | keys | sort) == [
+          "baseline","cargo_mutants_exit_code","counts","excluded_mutants","id",
+          "included_genres","mutants","owning_test_command","raw","source_files"
+        ] and
+        $r.id == $c.id and $r.source_files == $c.source_files and
+        $r.owning_test_command == $c.owning_test_command and
+        $r.included_genres == $c.included_genres and
+        $r.excluded_mutants == $c.excluded_mutants and
+        ($r.baseline | keys | sort) == ["command","summary"] and
+        $r.baseline.command == $c.owning_test_command and
+        ($r.baseline.summary | IN("SUCCESS","FAIL")) and
+        ($r.cargo_mutants_exit_code | type == "number" and floor == . and . >= 0) and
+        ($r.raw | keys | sort) == ["mutants","outcomes"] and
+        ($r.raw.mutants | file_identity) and ($r.raw.outcomes | file_identity) and
+        ([$r.mutants[].name] | length == (unique | length)) and
+        all($r.mutants[];
+          (keys | sort) == [
+            "diff","disposition","file","function","genre","log","name",
+            "outcome","owning_test_command"
+          ] and
+          (.name | nonblank) and (.file | nonblank) and (.function | nonblank) and
+          (.genre as $genre | any($c.included_genres[]; . == $genre)) and
+          (.file as $file | any($c.source_files[]; . == $file)) and
+          (.outcome | IN("CAUGHT","MISSED","TIMEOUT","UNVIABLE","EXCLUDED")) and
+          .owning_test_command == $c.owning_test_command and
+          (.log | file_identity) and (.diff | file_identity) and
+          if .outcome == "UNVIABLE" then
+            (.disposition == null or
+              (.name as $name | .disposition ==
+                ($c.unviable_dispositions[]? | select(.mutant == $name))))
+          else .disposition == null end
+        ) and counts_match($r);
+      ($policy[0]) as $p |
+      (keys | sort) == [
+        "claims","cohorts","generated_at_epoch","policy","safety","schema_version",
+        "source","tool","totals"
+      ] and
+      .schema_version == 1 and
+      (.generated_at_epoch | type == "number" and floor == . and . > 0) and
+      (.source | source_identity) and (.policy | file_identity) and
+      (.tool | tool_identity) and .safety == $p.safety and
+      ([.cohorts[].id] | sort) == ([$p.cohorts[].id] | sort) and
+      all(.cohorts[]; . as $r |
+        ($p.cohorts[] | select(.id == $r.id)) as $c | cohort_matches($r; $c)) and
+      (.totals | keys | sort) == ["caught","excluded","missed","timeout","total","unviable"] and
+      all(.totals[]; type == "number" and floor == . and . >= 0) and
+      .totals == (reduce .cohorts[].counts as $counts
+        ({caught:0,excluded:0,missed:0,timeout:0,total:0,unviable:0};
+          with_entries(.value += $counts[.key]))) and
+      (.claims | keys) == ["autonomy_gate_passed"] and
+      (.claims.autonomy_gate_passed | type == "boolean") and
+      .claims.autonomy_gate_passed == (
+        (if $p.receipt.require_clean_tree then (.source.dirty | not) else true end) and
+        all(.cohorts[]; . as $r |
+          ($p.cohorts[] | select(.id == $r.id)) as $c |
+          $r.baseline.summary == "SUCCESS" and $r.cargo_mutants_exit_code == 0 and
+          $r.counts.total >= $c.minimum_generated_mutants and
+          ($r.counts.caught + $r.counts.missed + $r.counts.timeout) > 0 and
+          $r.counts.missed == 0 and $r.counts.timeout == 0 and
+          $r.counts.excluded == ($c.excluded_mutants | length) and
+          ([$r.mutants[] | select(.outcome == "UNVIABLE") | .name] | sort) ==
+            ([$c.unviable_dispositions[].mutant] | sort) and
+          all($r.mutants[] | select(.outcome == "UNVIABLE"); .disposition != null)
+        )
+      )
+    ' "${candidate}" >/dev/null
+}
+
+verify_identity() {
+    zentty_qualification_verify_file_identity "${repo_root}" "$1"
+}
+
+verify_receipt() {
+    local candidate="$1" now max_age actual expected identity
+    validate_policy
+    validate_receipt_structure "${candidate}" || fail "receipt structure, totals, or outcome policy is invalid"
+    jq -e '.claims.autonomy_gate_passed == true' "${candidate}" >/dev/null ||
+        fail "receipt does not establish the autonomy gate"
+
+    expected="$(jq -c '.source' "${candidate}")"
+    actual="$(zentty_qualification_source_identity "${repo_root}")" ||
+        fail "could not capture current source identity"
+    [[ "$(jq -cS . <<<"${actual}")" == "$(jq -cS . <<<"${expected}")" ]] ||
+        fail "receipt source identity is stale"
+
+    expected="$(jq -c '.policy' "${candidate}")"
+    actual="$(zentty_qualification_file_identity "${repo_root}" "${policy}")" ||
+        fail "could not capture policy identity"
+    [[ "$(jq -cS . <<<"${actual}")" == "$(jq -cS . <<<"${expected}")" ]] ||
+        fail "receipt policy identity is stale"
+
+    expected="$(jq -c '.tool' "${candidate}")"
+    actual="$(capture_mutants_tool_identity)" ||
+        fail "could not capture cargo-mutants identity"
+    [[ "$(jq -cS . <<<"${actual}")" == "$(jq -cS . <<<"${expected}")" ]] ||
+        fail "receipt cargo-mutants identity is stale"
+
+    now="$(date +%s)"
+    max_age="$(jq -r '.receipt.max_age_seconds' "${policy}")"
+    (( $(jq -r '.generated_at_epoch' "${candidate}") <= now )) ||
+        fail "receipt timestamp is in the future"
+    (( now - $(jq -r '.generated_at_epoch' "${candidate}") <= max_age )) ||
+        fail "receipt is stale"
+
+    while IFS= read -r identity; do
+        verify_identity "${identity}" || fail "receipt evidence identity is stale or missing"
+    done < <(jq -c '.cohorts[].raw | .mutants, .outcomes' "${candidate}")
+    while IFS= read -r identity; do
+        verify_identity "${identity}" || fail "mutant evidence identity is stale or missing"
+    done < <(jq -c '.cohorts[].mutants[] | .log, .diff' "${candidate}")
+}
+
+print_report() {
+    local candidate="$1"
+    jq -r '
+      .cohorts[] |
+      "Mutation cohort \(.id): \(.counts.caught) caught, \(.counts.missed) missed, " +
+      "\(.counts.timeout) timeout, \(.counts.unviable) unviable, " +
+      "\(.counts.excluded) excluded, \(.counts.total) total",
+      (.mutants[] |
+        "  \(.outcome) \(.name) owner=\(.owning_test_command | join(" "))" +
+        if .disposition == null then ""
+        else " tracking=\(.disposition.tracking); \(.disposition.justification)" end)
+    ' "${candidate}"
+    printf 'Mutation autonomy gate: %s\n' \
+        "$(jq -r 'if .claims.autonomy_gate_passed then "PASS" else "FAIL" end' "${candidate}")"
+    printf 'Receipt: %s sha256=%s\n' "${candidate}" \
+        "$(sha256sum -- "${candidate}" | awk '{print $1}')"
+}
+
+run_cohort() {
+    local cohort="$1" evidence_root="$2" id package output_root raw_root
+    local list_json outcomes_json mutants_json baseline_summary cargo_status
+    local jobs jobserver_tasks timeout minimum_timeout source_file
+    local generated caught missed timed_out unviable total cohort_pass=true
+    local mutants_jsonl row mutant outcome log_path diff_path log_identity diff_identity
+    local disposition owning_test included_genres source_files cohort_result
+    id="$(jq -r '.id' <<<"${cohort}")"
+    package="$(jq -r '.package' <<<"${cohort}")"
+    output_root="${evidence_root}/${id}"
+    list_json="${output_root}/listed-mutants.json"
+    mkdir -p "${output_root}"
+
+    jobs="$(jq -r '.safety.jobs' "${policy}")"
+    jobserver_tasks="$(jq -r '.safety.jobserver_tasks' "${policy}")"
+    timeout="$(jq -r '.safety.timeout_seconds' "${policy}")"
+    minimum_timeout="$(jq -r '.safety.minimum_test_timeout_seconds' "${policy}")"
+    mutation_args=(
+        --package "${package}"
+        --jobs "${jobs}"
+        --jobserver-tasks "${jobserver_tasks}"
+        --timeout "${timeout}"
+        --minimum-test-timeout "${minimum_timeout}"
+        --cargo-arg=--locked
+    )
+    while IFS= read -r source_file; do
+        mutation_args+=(--file "${source_file}")
+    done < <(jq -r '.source_files[]' <<<"${cohort}")
+    mapfile -t cargo_test_args < <(jq -r '.cargo_test_args[]' <<<"${cohort}")
+
+    "${mutate_runner}" "${mutation_args[@]}" --list --json -- \
+        "${cargo_test_args[@]}" >"${list_json}"
+    jq -e 'type == "array"' "${list_json}" >/dev/null || fail "${id} mutant list is invalid"
+    generated="$(jq 'length' "${list_json}")"
+    (( generated >= $(jq -r '.minimum_generated_mutants' <<<"${cohort}") )) ||
+        fail "${id} generated too few mutants: ${generated}"
+    jq -e --argjson cohort "${cohort}" \
+        'all(.[]; (.genre as $genre | any($cohort.included_genres[]; . == $genre)))' \
+        "${list_json}" >/dev/null || fail "${id} generated an undeclared mutation genre"
+
+    set +e
+    "${mutate_runner}" "${mutation_args[@]}" --output "${output_root}" -- \
+        "${cargo_test_args[@]}"
+    cargo_status=$?
+    set -e
+    raw_root="${output_root}/mutants.out"
+    outcomes_json="${raw_root}/outcomes.json"
+    mutants_json="${raw_root}/mutants.json"
+    [[ -f "${outcomes_json}" && -f "${mutants_json}" ]] ||
+        fail "${id} cargo-mutants did not preserve machine results (exit ${cargo_status})"
+    diff -u \
+        <(jq -S '[.[].name] | sort' "${list_json}") \
+        <(jq -S '[.[].name] | sort' "${mutants_json}") >/dev/null ||
+        fail "${id} executed a different mutation inventory than it listed"
+
+    caught="$(jq -r '.caught' "${outcomes_json}")"
+    missed="$(jq -r '.missed' "${outcomes_json}")"
+    timed_out="$(jq -r '.timeout' "${outcomes_json}")"
+    unviable="$(jq -r '.unviable' "${outcomes_json}")"
+    total="$(jq -r '.total_mutants' "${outcomes_json}")"
+    [[ "${total}" == "${generated}" ]] || fail "${id} result total does not match its inventory"
+    baseline_summary=FAIL
+    if jq -e '.outcomes[] | select(.scenario == "Baseline" and .summary == "Success")' \
+        "${outcomes_json}" >/dev/null; then
+        baseline_summary=SUCCESS
+    fi
+
+    mutants_jsonl="${output_root}/receipt-mutants.jsonl"
+    : >"${mutants_jsonl}"
+    owning_test="$(jq -c '.owning_test_command' <<<"${cohort}")"
+    while IFS= read -r row; do
+        mutant="$(jq -c '.scenario.Mutant' <<<"${row}")"
+        case "$(jq -r '.summary' <<<"${row}")" in
+            CaughtMutant) outcome=CAUGHT ;;
+            MissedMutant) outcome=MISSED ;;
+            Timeout) outcome=TIMEOUT ;;
+            Unviable) outcome=UNVIABLE ;;
+            *) fail "${id} reported an unknown mutant outcome" ;;
+        esac
+        log_path="${raw_root}/$(jq -r '.log_path' <<<"${row}")"
+        diff_path="${raw_root}/$(jq -r '.diff_path' <<<"${row}")"
+        log_identity="$(zentty_qualification_file_identity "${repo_root}" "${log_path}")" ||
+            fail "${id} mutant log is missing"
+        diff_identity="$(zentty_qualification_file_identity "${repo_root}" "${diff_path}")" ||
+            fail "${id} mutant diff is missing"
+        disposition=null
+        if [[ "${outcome}" == UNVIABLE ]]; then
+            disposition="$(jq -c --arg name "$(jq -r '.name' <<<"${mutant}")" \
+                '[.unviable_dispositions[] | select(.mutant == $name)][0] // null' \
+                <<<"${cohort}")"
+        fi
+        jq -cn \
+            --arg name "$(jq -r '.name' <<<"${mutant}")" \
+            --arg file "$(jq -r '.file' <<<"${mutant}")" \
+            --arg function "$(jq -r '.function.function_name // "<module>"' <<<"${mutant}")" \
+            --arg genre "$(jq -r '.genre' <<<"${mutant}")" \
+            --arg outcome "${outcome}" \
+            --argjson owning_test "${owning_test}" \
+            --argjson log "${log_identity}" --argjson diff "${diff_identity}" \
+            --argjson disposition "${disposition}" '
+              {name:$name,file:$file,function:$function,genre:$genre,outcome:$outcome,
+               owning_test_command:$owning_test,log:$log,diff:$diff,
+               disposition:$disposition}
+            ' >>"${mutants_jsonl}"
+    done < <(jq -c '.outcomes[] | select(.scenario | type == "object")' "${outcomes_json}")
+
+    [[ "$(wc -l <"${mutants_jsonl}")" == "${total}" ]] ||
+        fail "${id} per-mutant receipt is incomplete"
+    source_files="$(jq -c '.source_files' <<<"${cohort}")"
+    included_genres="$(jq -c '.included_genres' <<<"${cohort}")"
+    if (( cargo_status != 0 || caught + missed + timed_out == 0 )) ||
+        [[ "${baseline_summary}" != SUCCESS || "${missed}" != 0 || "${timed_out}" != 0 ]]; then
+        cohort_pass=false
+    fi
+    if ! diff -u \
+        <(jq -S '[.unviable_dispositions[].mutant] | sort' <<<"${cohort}") \
+        <(jq -sS '[.[] | select(.outcome == "UNVIABLE") | .name] | sort' "${mutants_jsonl}") \
+        >/dev/null; then
+        cohort_pass=false
+    fi
+    cohort_result="$(jq -cn \
+        --arg id "${id}" --argjson source_files "${source_files}" \
+        --argjson owning_test "${owning_test}" --argjson genres "${included_genres}" \
+        --arg baseline "${baseline_summary}" \
+        --argjson cargo_status "${cargo_status}" \
+        --argjson caught "${caught}" --argjson missed "${missed}" \
+        --argjson timeout "${timed_out}" --argjson unviable "${unviable}" \
+        --argjson total "${total}" \
+        --argjson mutants "$(jq -cs 'sort_by(.name)' "${mutants_jsonl}")" \
+        --argjson raw_mutants "$(zentty_qualification_file_identity "${repo_root}" "${mutants_json}")" \
+        --argjson raw_outcomes "$(zentty_qualification_file_identity "${repo_root}" "${outcomes_json}")" '
+          {id:$id,source_files:$source_files,owning_test_command:$owning_test,
+           included_genres:$genres,excluded_mutants:[],
+           cargo_mutants_exit_code:$cargo_status,
+           baseline:{summary:$baseline,command:$owning_test},
+           counts:{caught:$caught,missed:$missed,timeout:$timeout,
+             unviable:$unviable,excluded:0,total:$total},
+           mutants:$mutants,raw:{mutants:$raw_mutants,outcomes:$raw_outcomes}}
+        ')"
+    printf '%s\n' "${cohort_result}" >>"${evidence_root}/cohorts.jsonl"
+    "${cohort_pass}" || return 1
+}
+
+run_gate() {
+    local source_before source_after policy_identity tool_identity evidence_root
+    local candidate cohorts totals passed=true receipt_directory
+    validate_policy
+    source_before="$(zentty_qualification_source_identity "${repo_root}")" ||
+        fail "could not capture source identity"
+    if jq -e '.receipt.require_clean_tree' "${policy}" >/dev/null &&
+        jq -e '.dirty' <<<"${source_before}" >/dev/null; then
+        fail "mutation gate requires a clean source tree"
+    fi
+
+    receipt_directory="$(dirname "${receipt}")"
+    case "$(readlink -m -- "${receipt_directory}")" in
+        "${repo_root}/build/linux/mutation-autonomy"*) ;;
+        *) fail "run receipt must stay under build/linux/mutation-autonomy" ;;
+    esac
+    mkdir -p "${receipt_directory}"
+    evidence_root="$(mktemp -d "${receipt_directory}/evidence.XXXXXX")"
+    : >"${evidence_root}/cohorts.jsonl"
+    while IFS= read -r cohort; do
+        run_cohort "${cohort}" "${evidence_root}" || passed=false
+    done < <(jq -c '.cohorts[]' "${policy}")
+
+    source_after="$(zentty_qualification_source_identity "${repo_root}")" ||
+        fail "could not recapture source identity"
+    [[ "$(jq -cS . <<<"${source_before}")" == "$(jq -cS . <<<"${source_after}")" ]] ||
+        fail "source tree changed during mutation execution"
+    policy_identity="$(zentty_qualification_file_identity "${repo_root}" "${policy}")" ||
+        fail "could not capture policy identity"
+    tool_identity="$(capture_mutants_tool_identity)" ||
+        fail "could not capture cargo-mutants identity"
+    cohorts="$(jq -cs 'sort_by(.id)' "${evidence_root}/cohorts.jsonl")"
+    totals="$(jq -cn --argjson cohorts "${cohorts}" '
+      reduce $cohorts[].counts as $counts
+        ({caught:0,excluded:0,missed:0,timeout:0,total:0,unviable:0};
+          with_entries(.value += $counts[.key]))
+    ')"
+    candidate="${receipt}.tmp.$$"
+    jq -nS \
+        --argjson generated_at_epoch "$(date +%s)" \
+        --argjson source "${source_after}" --argjson policy "${policy_identity}" \
+        --argjson tool "${tool_identity}" --slurpfile policy_document "${policy}" \
+        --argjson cohorts "${cohorts}" --argjson totals "${totals}" \
+        --argjson passed "${passed}" '
+          {schema_version:1,generated_at_epoch:$generated_at_epoch,source:$source,
+           policy:$policy,tool:$tool,safety:$policy_document[0].safety,
+           cohorts:$cohorts,totals:$totals,
+           claims:{autonomy_gate_passed:$passed}}
+        ' >"${candidate}"
+    validate_receipt_structure "${candidate}" ||
+        fail "generated receipt failed its own structural validation"
+    mv -f -- "${candidate}" "${receipt}"
+    print_report "${receipt}"
+    "${passed}" || fail "mutation outcomes did not satisfy the autonomy policy"
+    verify_receipt "${receipt}"
+}
+
+case "${1:-}" in
+    "")
+        verify_receipt "${receipt}"
+        print_report "${receipt}"
+        ;;
+    --validate-policy)
+        [[ $# == 1 ]] || fail "--validate-policy accepts no other arguments"
+        validate_policy
+        echo "Mutation autonomy policy passed"
+        ;;
+    run)
+        [[ $# == 1 ]] || fail "run accepts no other arguments"
+        run_gate
+        ;;
+    verify)
+        [[ $# -le 2 ]] || fail "verify accepts at most one receipt path"
+        [[ $# == 1 ]] || receipt="$2"
+        verify_receipt "${receipt}"
+        print_report "${receipt}"
+        ;;
+    *)
+        echo "usage: linux/tests/mutation-autonomy [--validate-policy|run|verify [receipt]]" >&2
+        exit 64
+        ;;
+esac

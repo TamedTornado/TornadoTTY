@@ -190,6 +190,12 @@ suite is not an owning test. Timeout, crash, compile failure and unrelated
 failure remain invalid kills. Mutation testing supplements real integration;
 it does not run inside the product qualification matrix.
 
+After the first Rust vertical slice is green, the checked-in mutation-autonomy
+policy is mandatory for protected unattended-maintenance and release-candidate
+work. The bounded campaign is run once on the clean candidate and
+`qualify-local` verifies its current-source receipt; ordinary focused bug fixes
+and the advisory PR subset do not rerun the campaign.
+
 No mutation tool is introduced before the first Rust vertical slice passes its
 real Wayland and X11 integration tests.
 

@@ -236,8 +236,14 @@ The full local qualification entry point is available for release work, but is
 not required for ordinary development or every bug fix:
 
 ```bash
+linux/tests/mutation-autonomy run
 linux/tests/qualify-local
 ```
+
+The first command is the bounded current-source mutation gate for protected
+Rust cohorts. `qualify-local` verifies its receipt rather than rerunning the
+campaign. See [`linux/test-policy/README.md`](linux/test-policy/README.md) for
+the autonomy and release policy.
 
 ## macOS and upstream Zentty
 

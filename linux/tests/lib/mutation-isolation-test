@@ -11,6 +11,18 @@ fail() {
     exit 1
 }
 
+expect_rejected() {
+    local label="$1" expected="$2"
+    shift 2
+    if "$@" >"${fixture}/${label}.stdout" 2>"${fixture}/${label}.stderr"; then
+        fail "${label} unexpectedly passed"
+    fi
+    grep -Fq -- "${expected}" "${fixture}/${label}.stderr" || {
+        cat "${fixture}/${label}.stderr" >&2
+        fail "${label} failed for the wrong reason"
+    }
+}
+
 mkdir -p "${fixture}/bin"
 cat >"${fixture}/bin/systemctl" <<'EOF'
 #!/usr/bin/env bash
@@ -61,5 +73,36 @@ PATH="${fixture}/bin:/usr/bin:/bin" \
     "${runner}" --list >/dev/null
 [[ "$(cat "${fixture}/limit.receipt")" == 6291456 ]] ||
     fail "inner mutation process does not inherit the 6 GiB virtual-memory ceiling"
+
+for unsafe in \
+    '--gitignore=false' \
+    '--copy-target=true' \
+    '--copy-vcs=true' \
+    '--no-config' \
+    '--in-place' \
+    '--leak-dirs' \
+    '--config=unreviewed.toml'; do
+    expect_rejected "unsafe-${unsafe%%=*}" \
+        'cargo-mutants' \
+        "${runner}" "${unsafe}" --list
+done
+expect_rejected unsafe-split-gitignore \
+    'unsafe cargo-mutants copy override' \
+    "${runner}" --gitignore false --list
+expect_rejected unsafe-split-copy-target \
+    'unsafe cargo-mutants copy override' \
+    "${runner}" --copy-target true --list
+expect_rejected unsafe-split-copy-vcs \
+    'unsafe cargo-mutants copy override' \
+    "${runner}" --copy-vcs true --list
+
+# Explicitly repeating the reviewed values is harmless and must reach the tool.
+ZENTTY_MUTATION_RESOURCE_SCOPE=active \
+ZENTTY_MUTATION_ISOLATION_KIND=test \
+ZENTTY_MUTATION_LIMIT_RECEIPT="${fixture}/safe-options.receipt" \
+PATH="${fixture}/bin:/usr/bin:/bin" \
+    "${runner}" --gitignore=true --copy-target=false --list >/dev/null
+[[ -s "${fixture}/safe-options.receipt" ]] ||
+    fail "reviewed command-line copy settings did not reach cargo-mutants"
 
 printf 'mutation resource-isolation tests passed\n'

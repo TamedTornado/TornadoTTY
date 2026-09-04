@@ -5,10 +5,37 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 config="${repo_root}/.cargo/mutants.toml"
 expected_config=$'gitignore = true\ncopy_target = false'
 
-if [[ ! -f "${config}" ]] || [[ "$(cat "${config}")" != "${expected_config}" ]]; then
-    printf 'error: safe cargo-mutants copy policy is missing from %s\n' "${config}" >&2
+fail() {
+    printf 'mutate-rust: error: %s\n' "$*" >&2
     exit 2
+}
+
+if [[ ! -f "${config}" ]] || [[ "$(cat "${config}")" != "${expected_config}" ]]; then
+    fail "safe cargo-mutants copy policy is missing from ${config}"
 fi
+
+arguments=("$@")
+for ((index = 0; index < ${#arguments[@]}; index++)); do
+    argument="${arguments[index]}"
+    case "${argument}" in
+        --no-config | --config | --config=* | --in-place | --leak-dirs)
+            fail "cargo-mutants configuration overrides are not allowed: ${argument}"
+            ;;
+        --gitignore=false | --copy-target=true | --copy-vcs=true)
+            fail "unsafe cargo-mutants copy override is not allowed: ${argument}"
+            ;;
+        --gitignore | --copy-target | --copy-vcs)
+            ((index + 1 < ${#arguments[@]})) ||
+                fail "cargo-mutants option is missing its value: ${argument}"
+            value="${arguments[index + 1]}"
+            if [[ "${argument}" == --gitignore && "${value}" != true ]] ||
+                [[ "${argument}" != --gitignore && "${value}" != false ]]; then
+                fail "unsafe cargo-mutants copy override is not allowed: ${argument} ${value}"
+            fi
+            ((index += 1))
+            ;;
+    esac
+done
 
 if [[ "${1:-}" == "--check-config" ]]; then
     printf 'Safe cargo-mutants copy policy passed\n'
@@ -50,7 +77,7 @@ fi
 # worker peak and far below the 93 GiB runaway that triggered the host OOM.
 ulimit -v 6291456
 printf 'Mutation resource isolation: %s; process-vm-max=6GiB; scope-memory-max=12GiB\n' \
-    "${ZENTTY_MUTATION_ISOLATION_KIND:-unknown}"
+    "${ZENTTY_MUTATION_ISOLATION_KIND:-unknown}" >&2
 
 ghostty_lib_dir="${repo_root}/build/linux-deps/ghostty/zig-out/lib"
 if [[ -z "${GHOSTTY_LIB_DIR:-}" && -f "${ghostty_lib_dir}/libghostty-gtk-embed.so" ]]; then

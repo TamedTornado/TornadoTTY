@@ -14,6 +14,9 @@ The normative execution plan is
   Wayland, X11, and isolated-session wrappers.
 - `../tests/valgrind-suppressions.json` and its adjacent schema govern the
   effective Valgrind suppression set.
+- `mutation-autonomy-v1.json` defines the protected Rust mutation cohorts,
+  owning tests, mutation genres, exclusions, reviewed compiler-unviable
+  dispositions, resource limits, and receipt lifetime.
 
 ## Test layers
 
@@ -41,6 +44,39 @@ envelope and verifies it at publication; it is not another execution layer.
 
 Mutation testing returns after the Rust vertical slice is green and only for
 focused Rust state, ownership, callback, persistence, and rollback logic.
+
+## Autonomy and release mutation gate
+
+Generate a current receipt from a clean release/autonomous candidate with:
+
+```sh
+linux/tests/mutation-autonomy run
+```
+
+The command runs the policy's focused owning test as cargo-mutants' baseline,
+executes every generated mutant through `linux/tests/mutate-rust`, and preserves
+the raw inventory, outcomes, logs, diffs, and a compact machine receipt below
+`build/linux/mutation-autonomy/`. It fails on a bad baseline, zero-mutant
+cohort, a cohort with no viable mutant, survivor, timeout, unexpected mutation genre, inventory drift, or
+unreviewed/unexpected compiler-unviable mutant.
+
+Verify without rerunning cargo-mutants:
+
+```sh
+linux/tests/mutation-autonomy
+```
+
+Verification binds the receipt to the exact Git revision/tree, policy, owning
+test, cargo-mutants executable/version, raw evidence, and maximum age. It is a
+support gate in `qualify-local`, so release qualification cannot pass without a
+current clean-tree receipt. It is intentionally absent from the advisory PR
+subset and is not required for an ordinary focused bug-fix test.
+
+An unattended maintenance agent may not claim a protected change is safe to
+merge or deploy from ordinary green tests alone. It must produce a current
+passing mutation-autonomy receipt, in addition to the focused real-product
+tests owned by the change. Compile failures are separately reviewed UNVIABLE
+outcomes; they are never counted as caught mutants.
 
 ## Local entry points
 
