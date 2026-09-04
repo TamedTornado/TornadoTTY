@@ -1623,9 +1623,11 @@ fn make_pane_context_menu(
     let rename_window = window.clone();
     let pane_id = pane.pane_id.clone();
     let current_title = pane.custom_title.clone().unwrap_or_default();
-    let rename_popover = popover.clone();
+    let rename_popover = popover.downgrade();
     rename.connect_clicked(move |_| {
-        rename_popover.popdown();
+        if let Some(popover) = rename_popover.upgrade() {
+            popover.popdown();
+        }
         present_rename_dialog(
             &rename_window,
             "Rename Pane",
@@ -1703,8 +1705,8 @@ fn make_move_to_worklane_button(
     destinations: &[Vec<WorklaneDestination>],
     can_create_new_worklane: bool,
     current_window_id: &str,
-) -> gtk::Button {
-    let button = gtk::Button::new();
+) -> gtk::MenuButton {
+    let button = gtk::MenuButton::new();
     button.add_css_class("pane-context-action");
     button.set_tooltip_text(Some(source_ui::MOVE_PANE_TO_WORKLANE));
     button.update_property(&[gtk::accessible::Property::Label(
@@ -1738,8 +1740,8 @@ fn make_move_to_worklane_button(
     submenu.set_position(gtk::PositionType::Right);
     submenu.set_has_arrow(false);
     let popovers = MovePanePopovers {
-        parent: parent_popover.clone(),
-        submenu: submenu.clone(),
+        parent: parent_popover.downgrade(),
+        submenu: submenu.downgrade(),
     };
     submenu.set_child(Some(&make_move_to_worklane_content(
         &popovers,
@@ -1750,13 +1752,19 @@ fn make_move_to_worklane_button(
         can_create_new_worklane,
         current_window_id,
     )));
-    submenu.set_parent(&button);
-    let submenu_for_parent_close = submenu.clone();
-    parent_popover.connect_closed(move |_| submenu_for_parent_close.popdown());
-    let parent_popover = parent_popover.clone();
+    button.set_popover(Some(&submenu));
+    let submenu_for_parent_close = submenu.downgrade();
+    parent_popover.connect_closed(move |_| {
+        if let Some(submenu) = submenu_for_parent_close.upgrade() {
+            submenu.popdown();
+        }
+    });
+    let parent_popover = parent_popover.downgrade();
     let pane_id = pane_id.to_owned();
-    button.connect_clicked(move |_| {
-        submenu.popup();
+    submenu.connect_visible_notify(move |submenu| {
+        if !submenu.is_visible() {
+            return;
+        }
         let submenu_focus = submenu.clone();
         gtk::glib::idle_add_local_once(move || {
             if let Some(first_destination) = submenu_focus
@@ -1768,7 +1776,9 @@ fn make_move_to_worklane_button(
         });
         eprintln!(
             "zentty-linux: pane-context action=move-pane-to-worklane pane={pane_id} view=submenu parent-visible={} can-create={can_create_new_worklane}",
-            parent_popover.is_visible(),
+            parent_popover
+                .upgrade()
+                .is_some_and(|popover| popover.is_visible()),
         );
     });
     button
@@ -1776,8 +1786,8 @@ fn make_move_to_worklane_button(
 
 #[derive(Clone)]
 struct MovePanePopovers {
-    parent: gtk::Popover,
-    submenu: gtk::Popover,
+    parent: gtk::glib::WeakRef<gtk::Popover>,
+    submenu: gtk::glib::WeakRef<gtk::Popover>,
 }
 
 fn make_move_to_worklane_content(
@@ -1812,6 +1822,11 @@ fn make_move_to_worklane_content(
             let popovers = popovers.clone();
             let current_window_id = current_window_id.to_owned();
             button.connect_clicked(move |_| {
+                let (Some(parent), Some(submenu)) =
+                    (popovers.parent.upgrade(), popovers.submenu.upgrade())
+                else {
+                    return;
+                };
                 eprintln!(
                     "zentty-linux: pane-context action=move-pane-to-worklane window={target_window_id} target={target_worklane_id} activated=true"
                 );
@@ -1821,8 +1836,7 @@ fn make_move_to_worklane_content(
                 let target_window_id = target_window_id.clone();
                 let target_worklane_id = target_worklane_id.clone();
                 let current_window_id = current_window_id.clone();
-                let parent = popovers.parent.clone();
-                popovers.submenu.popdown();
+                submenu.popdown();
                 after_popover_closed(&parent, move || {
                     let _ = window.activate_action(
                         "workspace.select-pane",
@@ -1858,11 +1872,15 @@ fn make_move_to_worklane_content(
         let pane_id = pane_id.to_owned();
         let popovers = popovers.clone();
         button.connect_clicked(move |_| {
+            let (Some(parent), Some(submenu)) =
+                (popovers.parent.upgrade(), popovers.submenu.upgrade())
+            else {
+                return;
+            };
             let window = window.clone();
             let source_worklane_id = source_worklane_id.clone();
             let pane_id = pane_id.clone();
-            let parent = popovers.parent.clone();
-            popovers.submenu.popdown();
+            submenu.popdown();
             after_popover_closed(&parent, move || {
                 let _ = window.activate_action(
                     "workspace.select-pane",
@@ -2142,8 +2160,9 @@ mod tests {
     use super::{
         WorklaneDestinationGroup, WorklaneDropEdge, WorklaneSelectionState,
         compact_working_directory_in_home, find_named_widget, local_destination_groups,
-        make_context_menu, make_worklane_card, pane_accessible_label, pane_action_specs,
-        reveal_range, selection_state, worklane_context_text, worklane_destinations,
+        make_context_menu, make_pane_context_menu, make_worklane_card, pane_accessible_label,
+        pane_action_specs, reveal_range, selection_state, worklane_context_text,
+        worklane_destinations,
     };
     use crate::{
         pane_controls::{PaneControlAction, PaneFrame},
@@ -2460,6 +2479,41 @@ mod tests {
         menu_window.close();
         assert_pane_control_accessibility();
         assert_divider_accessibility();
+    }
+
+    #[test]
+    #[ignore = "requires a controlled GTK display"]
+    fn detached_pane_context_menu_releases_its_widget_tree() {
+        gtk::init().expect("controlled GTK display must initialize");
+        let window = gtk::Window::new();
+        let source = lane("source", &["agent", "logs"], None);
+        let target = lane("target", &["server"], Some(WorklaneColor::Blue));
+        let summaries = [source.clone(), target];
+        let anchor = gtk::MenuButton::new();
+        let mut replaced = Vec::new();
+        for _ in 0..128 {
+            let popover = make_pane_context_menu(
+                &window,
+                &source,
+                &summaries,
+                &source.pane_rows[0],
+                true,
+                ClipboardConfig::default(),
+                "window-1",
+                None,
+            );
+            replaced.push(popover.downgrade());
+            anchor.set_popover(Some(&popover));
+        }
+        anchor.set_popover(gtk::Popover::NONE);
+        while gtk::glib::MainContext::default().pending() {
+            gtk::glib::MainContext::default().iteration(false);
+        }
+
+        assert!(
+            replaced.iter().all(|popover| popover.upgrade().is_none()),
+            "replaced context menus must not retain themselves through child signal handlers"
+        );
     }
 
     fn accessibility_summary() -> SidebarWorklaneSummary {

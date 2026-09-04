@@ -1,6 +1,23 @@
 use std::collections::BTreeMap;
 use zentty_core::AgentPhase;
 
+#[derive(Default)]
+pub(crate) struct TerminalTitleEventGate {
+    last_semantic_title: Option<String>,
+}
+
+impl TerminalTitleEventGate {
+    pub(crate) fn accepts(&mut self, title: &str) -> bool {
+        let semantic_title =
+            zentty_core::stable_codex_terminal_title(title).unwrap_or_else(|| title.to_owned());
+        if self.last_semantic_title.as_deref() == Some(&semantic_title) {
+            return false;
+        }
+        self.last_semantic_title = Some(semantic_title);
+        true
+    }
+}
+
 pub(crate) fn is_eligible(
     title: &str,
     agent_name: Option<&str>,
@@ -24,14 +41,19 @@ pub(crate) struct CodexTitleAnimation {
 impl CodexTitleAnimation {
     pub(crate) fn reconcile(&mut self, pane_id: &str, title: &str, eligible: bool) -> bool {
         if eligible {
+            // Codex advances the same Braille spinner in its terminal title.
+            // Keep one canonical template so those source frames do not
+            // restart TornadoTTY's frame-clock animation.
+            let canonical = zentty_core::codex_activity_title_frame(title, 0)
+                .unwrap_or_else(|| title.to_owned());
             if self
                 .titles
                 .get(pane_id)
-                .is_some_and(|current| current == title)
+                .is_some_and(|current| current == &canonical)
             {
                 return false;
             }
-            self.titles.insert(pane_id.to_owned(), title.to_owned());
+            self.titles.insert(pane_id.to_owned(), canonical);
             self.last_frame = None;
             true
         } else {
@@ -95,7 +117,7 @@ impl CodexTitleAnimation {
 
 #[cfg(test)]
 mod tests {
-    use super::{CodexTitleAnimation, is_eligible};
+    use super::{CodexTitleAnimation, TerminalTitleEventGate, is_eligible};
     use zentty_core::AgentPhase;
 
     #[test]
@@ -160,6 +182,38 @@ mod tests {
         assert!(animation.reconcile("pane-1", "Ready | zentty", false));
         assert!(animation.is_empty());
         assert!(animation.render_frame(2, false).unwrap().is_empty());
+    }
+
+    #[test]
+    fn source_spinner_frames_are_one_semantic_animation_not_restarts() {
+        let mut animation = CodexTitleAnimation::default();
+        assert!(animation.reconcile("pane-1", "Working ⠋ zentty", true));
+        assert_eq!(
+            animation.render_frame(4, false).unwrap()["pane-1"],
+            "Working ⠼ zentty"
+        );
+
+        // Codex also advances the spinner in its terminal title. Receiving
+        // that next frame must not reset our frame-clock animation or replace
+        // the semantic title retained for the pane.
+        assert!(!animation.reconcile("pane-1", "Working ⠙ zentty", true));
+        assert!(animation.render_frame(4, false).is_none());
+        assert_eq!(
+            animation.render_frame(5, false).unwrap()["pane-1"],
+            "Working ⠴ zentty"
+        );
+    }
+
+    #[test]
+    fn title_event_gate_drops_frames_but_preserves_semantic_transitions() {
+        let mut gate = TerminalTitleEventGate::default();
+        assert!(gate.accepts("Working ⠋ zentty | Tasks 1/5"));
+        assert!(!gate.accepts("Working ⠙ zentty | Tasks 1/5"));
+        assert!(!gate.accepts("Working ⠹ zentty | Tasks 1/5"));
+        assert!(gate.accepts("Working ⠸ zentty | Tasks 2/5"));
+        assert!(gate.accepts("ordinary shell title"));
+        assert!(!gate.accepts("ordinary shell title"));
+        assert!(gate.accepts("different shell title"));
     }
 
     #[test]

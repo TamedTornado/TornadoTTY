@@ -15,6 +15,9 @@ private_home=""
 start_receipt=""
 model_log=""
 amp_audit_receipt=""
+burst_gate=""
+burst_receipt=""
+burst_finish_gate=""
 actor="${repo_root}/linux/tests/fixtures/controlled-agent"
 # shellcheck disable=SC1091
 source "${repo_root}/linux/tests/lib/product-input"
@@ -81,12 +84,15 @@ cleanup() {
     [[ -z "${private_home}" ]] || rm -rf -- "${private_home}"
     [[ -z "${start_receipt}" ]] || rm -f -- "${start_receipt}"
     [[ -z "${amp_audit_receipt}" ]] || rm -f -- "${amp_audit_receipt}"
+    [[ -z "${burst_gate}" ]] || rm -f -- "${burst_gate}"
+    [[ -z "${burst_receipt}" ]] || rm -f -- "${burst_receipt}"
+    [[ -z "${burst_finish_gate}" ]] || rm -f -- "${burst_finish_gate}"
 }
 trap cleanup EXIT
 
 case "${scenario}" in
-    full | installed-gemini | copilot-presentation | amp-plugin | cursor-hooks | droid-hooks | kimi-hooks | remaining-hooks) ;;
-    *) fail "ZENTTY_AGENT_IPC_SCENARIO must be full, installed-gemini, copilot-presentation, amp-plugin, cursor-hooks, droid-hooks, kimi-hooks, or remaining-hooks" ;;
+    full | installed-gemini | copilot-presentation | amp-plugin | cursor-hooks | droid-hooks | kimi-hooks | remaining-hooks | event-coalescing) ;;
+    *) fail "ZENTTY_AGENT_IPC_SCENARIO must be full, installed-gemini, copilot-presentation, amp-plugin, cursor-hooks, droid-hooks, kimi-hooks, remaining-hooks, or event-coalescing" ;;
 esac
 
 case "${backend}" in
@@ -116,7 +122,7 @@ esac
 if [[ "${scenario}" == installed-gemini && "${ZENTTY_REQUIRE_REAL_GEMINI:-false}" != true ]]; then
     fail "installed-gemini scenario requires the reviewed real Gemini prerequisite"
 fi
-for dependency in cut grep jq mkfifo mktemp ps sed sha256sum sleep stat; do
+for dependency in cut date find grep jq mkfifo mktemp pgrep ps sed sha256sum sleep stat wc; do
     command -v "${dependency}" >/dev/null || fail "${dependency} is required"
 done
 [[ -x "${product}" ]] || fail "staged product is not built: ${product}"
@@ -819,6 +825,249 @@ run_gemini_terminal_notifications() {
     private_home=""
 }
 
+run_event_coalescing() {
+    local burst_count="${ZENTTY_AGENT_EVENT_BURST_COUNT:-500}"
+    local before_rss after_rss rss_growth before_pss after_pss pss_growth
+    local before_anon_pss after_anon_pss anon_pss_growth before_heap_pss after_heap_pss heap_pss_growth
+    local before_fds after_fds fd_growth before_threads after_threads thread_growth
+    local before_children after_children child_growth
+    local burst_started_ns producer_finished_ns gtk_barrier_ns burst_duration_ms gtk_drain_latency_ms coalescing_log_max
+    local before_changed before_progress before_project before_fleet before_sidebar before_unchanged
+    local before_attention before_desktop before_persistence before_status before_titles before_animations
+    local changed_events progress_events project_refreshes fleet_refreshes sidebar_renders unchanged_logs
+    local attention_changes desktop_notifications persistence_saves status_updates title_events animation_restarts
+    local receipt="${ZENTTY_AGENT_EVENT_COALESCING_RECEIPT:-${repo_root}/build/linux/agent-event-coalescing.json}"
+    local receipt_temp
+
+    [[ "${burst_count}" =~ ^[1-9][0-9]*$ && "${burst_count}" -le 10000 ]] ||
+        fail "ZENTTY_AGENT_EVENT_BURST_COUNT must be between 1 and 10000"
+
+    log="$(mktemp)"
+    start_receipt="$(mktemp)"
+    burst_receipt="$(mktemp)"
+    state_directory="$(mktemp -d)"
+    burst_gate="${state_directory}/burst-go"
+    burst_finish_gate="${state_directory}/finish.fifo"
+    mkfifo "${burst_finish_gate}"
+    private_home="$(mktemp -d)"
+    XDG_CONFIG_HOME="${private_home}/xdg-config" \
+        zentty_product_disable_lifecycle_confirmations
+    PATH="${fake_bin}:${PATH}" GDK_SCALE=1 GDK_DPI_SCALE=1 \
+        HOME="${private_home}" XDG_CONFIG_HOME="${private_home}/xdg-config" \
+        ZENTTY_CONTROLLED_AGENT_PROFILE=event-coalescing \
+        ZENTTY_CONTROLLED_AGENT_START_RECEIPT="${start_receipt}" \
+        ZENTTY_CONTROLLED_AGENT_BURST_GATE="${burst_gate}" \
+        ZENTTY_CONTROLLED_AGENT_BURST_RECEIPT="${burst_receipt}" \
+        ZENTTY_CONTROLLED_AGENT_BURST_COUNT="${burst_count}" \
+        ZENTTY_CONTROLLED_AGENT_FINISH_GATE="${burst_finish_gate}" \
+        "${product}" --command "${actor}" \
+        --state-directory "${state_directory}" --no-session-restore >"${log}" 2>&1 &
+    product_pid=$!
+
+    zentty_product_wait_for_log "${log}" \
+        'kind=agent.running session=event-coalescing result=changed' \
+        "priming event did not cross the real authenticated product boundary" 600 ||
+        fail "priming event did not cross the real authenticated product boundary"
+    zentty_product_wait_for_log "${log}" \
+        'project-context pane=pane-1 refresh=agent-completion-requested' \
+        "priming event did not request its one project refresh" 600 ||
+        fail "priming event did not request its one project refresh"
+    zentty_product_wait_for_log "${log}" \
+        'title-pane=pane-1 value=Working ⠋ event-coalescing' \
+        "priming terminal title did not cross the real PTY" 600 ||
+        fail "priming terminal title did not cross the real PTY"
+    zentty_product_wait_for_log "${log}" \
+        'codex-title-animation pane=pane-1 state=active' \
+        "priming terminal title did not establish one animation owner" 600 ||
+        fail "priming terminal title did not establish one animation owner"
+    zentty_product_wait_for_log "${log}" \
+        'project-context pane=pane-1 root=' \
+        "priming project refresh did not complete" 600 ||
+        fail "priming project refresh did not complete"
+    zentty_product_wait_for_log "${log}" \
+        'persistence-save reason=liveSnapshot stage=queued' \
+        "priming state was not persisted" 600 ||
+        fail "priming state was not persisted"
+    grep -Fqx 'primed' "${burst_receipt}" ||
+        fail "controlled child did not stop at the burst boundary"
+    before_rss="$(awk '/^RssAnon:/ { print $2; exit }' "/proc/${product_pid}/status")"
+    [[ "${before_rss}" =~ ^[0-9]+$ ]] || fail "could not read product RssAnon before burst"
+    before_pss="$(awk '/^Pss:/ { print $2; exit }' "/proc/${product_pid}/smaps_rollup")"
+    before_anon_pss="$(awk '/^Pss_Anon:/ { print $2; exit }' "/proc/${product_pid}/smaps_rollup")"
+    before_heap_pss="$(awk '$NF == "[heap]" { heap = 1; next } heap && /^Pss:/ { print $2; exit }' "/proc/${product_pid}/smaps")"
+    before_fds="$(find "/proc/${product_pid}/fd" -mindepth 1 -maxdepth 1 -printf . | wc -c)"
+    before_threads="$(awk '/^Threads:/ { print $2; exit }' "/proc/${product_pid}/status")"
+    before_children="$(pgrep -P "${product_pid}" | wc -l)"
+    for value in "${before_pss}" "${before_anon_pss}" "${before_heap_pss}" "${before_fds}" "${before_threads}" "${before_children}"; do
+        [[ "${value}" =~ ^[0-9]+$ ]] || fail "could not read a bounded process metric before burst"
+    done
+    before_changed="$(grep -Fc 'kind=agent.running session=event-coalescing result=changed' "${log}" || true)"
+    before_progress="$(grep -Fc 'kind=task.progress session=event-coalescing result=changed' "${log}" || true)"
+    before_project="$(grep -Fc 'project-context pane=pane-1 refresh=agent-completion-requested' "${log}" || true)"
+    before_fleet="$(grep -Fc 'fleet-refresh ' "${log}" || true)"
+    before_sidebar="$(grep -Fc 'sidebar-selection-emphasis value=' "${log}" || true)"
+    before_unchanged="$(grep -Fc 'agent-events result=unchanged count=' "${log}" || true)"
+    before_attention="$(grep -Fc 'attention-inbox commit ' "${log}" || true)"
+    before_desktop="$(grep -Fc 'desktop-attention id=' "${log}" || true)"
+    before_persistence="$(grep -Fc 'persistence-save reason=liveSnapshot stage=queued' "${log}" || true)"
+    before_status="$(grep -Fc 'sidebar-agent-status pane=pane-1 ' "${log}" || true)"
+    before_titles="$(grep -Fc 'title-pane=pane-1 value=Working ' "${log}" || true)"
+    before_animations="$(grep -Fc 'codex-title-animation pane=pane-1 state=active' "${log}" || true)"
+    [[ "${before_changed}" -eq 1 ]] || fail "priming produced ${before_changed} changed events"
+    [[ "${before_project}" -eq 1 ]] || fail "priming produced ${before_project} project refreshes"
+
+    burst_started_ns="$(date +%s%N)"
+    : >"${burst_gate}"
+    for _ in {1..1200}; do
+        grep -Fqx "completed=${burst_count}" "${burst_receipt}" && break
+        sleep 0.05
+    done
+    grep -Fqx "completed=${burst_count}" "${burst_receipt}" ||
+        fail "controlled child did not complete the duplicate event burst"
+    for _ in {1..1200}; do
+        grep -Fqx 'transition=sent-twice' "${burst_receipt}" && break
+        sleep 0.05
+    done
+    grep -Fqx 'transition=sent-twice' "${burst_receipt}" ||
+        fail "controlled child did not send the meaningful transition and its duplicate"
+    producer_finished_ns="$(date +%s%N)"
+    zentty_product_wait_for_log "${log}" \
+        'kind=task.progress session=event-coalescing result=changed' \
+        "meaningful event after duplicate burst did not cross the reducer" 600 ||
+        fail "meaningful event after duplicate burst did not cross the reducer"
+    zentty_product_wait_for_log "${log}" \
+        'sidebar-agent-status pane=pane-1 phase=Running interaction=None attention=false progress=1/2' \
+        "GTK did not present the meaningful event after the duplicate burst" 600 ||
+        fail "GTK did not present the meaningful event after the duplicate burst"
+    gtk_barrier_ns="$(date +%s%N)"
+    burst_duration_ms=$(((producer_finished_ns - burst_started_ns) / 1000000))
+    gtk_drain_latency_ms=$(((gtk_barrier_ns - producer_finished_ns) / 1000000))
+    coalescing_log_max=$((burst_duration_ms / 5000 + 2))
+    ((gtk_drain_latency_ms <= 2000)) ||
+        fail "GTK responsiveness barrier took ${gtk_drain_latency_ms} ms after the producer finished"
+    zentty_product_wait_for_log "${log}" 'agent-events result=unchanged count=' \
+        "duplicate events were not observably coalesced" 600 ||
+        fail "duplicate events were not observably coalesced"
+    for _ in {1..600}; do
+        (( $(grep -Fc 'persistence-save reason=liveSnapshot stage=queued' "${log}" || true) > before_persistence )) && break
+        sleep 0.05
+    done
+    (( $(grep -Fc 'persistence-save reason=liveSnapshot stage=queued' "${log}" || true) > before_persistence )) ||
+        fail "meaningful transition after duplicate burst was not persisted"
+    after_rss="$(awk '/^RssAnon:/ { print $2; exit }' "/proc/${product_pid}/status")"
+    [[ "${after_rss}" =~ ^[0-9]+$ ]] || fail "could not read product RssAnon after burst"
+    after_pss="$(awk '/^Pss:/ { print $2; exit }' "/proc/${product_pid}/smaps_rollup")"
+    after_anon_pss="$(awk '/^Pss_Anon:/ { print $2; exit }' "/proc/${product_pid}/smaps_rollup")"
+    after_heap_pss="$(awk '$NF == "[heap]" { heap = 1; next } heap && /^Pss:/ { print $2; exit }' "/proc/${product_pid}/smaps")"
+    after_fds="$(find "/proc/${product_pid}/fd" -mindepth 1 -maxdepth 1 -printf . | wc -c)"
+    after_threads="$(awk '/^Threads:/ { print $2; exit }' "/proc/${product_pid}/status")"
+    after_children="$(pgrep -P "${product_pid}" | wc -l)"
+    for value in "${after_pss}" "${after_anon_pss}" "${after_heap_pss}" "${after_fds}" "${after_threads}" "${after_children}"; do
+        [[ "${value}" =~ ^[0-9]+$ ]] || fail "could not read a bounded process metric after burst"
+    done
+    rss_growth=$((after_rss - before_rss))
+    pss_growth=$((after_pss - before_pss))
+    anon_pss_growth=$((after_anon_pss - before_anon_pss))
+    heap_pss_growth=$((after_heap_pss - before_heap_pss))
+    fd_growth=$((after_fds - before_fds))
+    thread_growth=$((after_threads - before_threads))
+    child_growth=$((after_children - before_children))
+    ((rss_growth <= 16384)) ||
+        fail "duplicate event burst retained ${rss_growth} KiB of anonymous RSS"
+    ((pss_growth <= 16384 && anon_pss_growth <= 16384 && heap_pss_growth <= 16384)) ||
+        fail "duplicate event burst exceeded the 16 MiB PSS/heap growth ceiling"
+    ((fd_growth <= 2)) || fail "duplicate event burst retained ${fd_growth} file descriptors"
+    ((thread_growth <= 2)) || fail "duplicate event burst retained ${thread_growth} threads"
+    ((child_growth <= 0)) || fail "duplicate event burst retained ${child_growth} child processes"
+
+    changed_events=$(( $(grep -Fc 'kind=agent.running session=event-coalescing result=changed' "${log}" || true) - before_changed ))
+    progress_events=$(( $(grep -Fc 'kind=task.progress session=event-coalescing result=changed' "${log}" || true) - before_progress ))
+    project_refreshes=$(( $(grep -Fc 'project-context pane=pane-1 refresh=agent-completion-requested' "${log}" || true) - before_project ))
+    fleet_refreshes=$(( $(grep -Fc 'fleet-refresh ' "${log}" || true) - before_fleet ))
+    sidebar_renders=$(( $(grep -Fc 'sidebar-selection-emphasis value=' "${log}" || true) - before_sidebar ))
+    unchanged_logs=$(( $(grep -Fc 'agent-events result=unchanged count=' "${log}" || true) - before_unchanged ))
+    attention_changes=$(( $(grep -Fc 'attention-inbox commit ' "${log}" || true) - before_attention ))
+    desktop_notifications=$(( $(grep -Fc 'desktop-attention id=' "${log}" || true) - before_desktop ))
+    persistence_saves=$(( $(grep -Fc 'persistence-save reason=liveSnapshot stage=queued' "${log}" || true) - before_persistence ))
+    status_updates=$(( $(grep -Fc 'sidebar-agent-status pane=pane-1 ' "${log}" || true) - before_status ))
+    title_events=$(( $(grep -Fc 'title-pane=pane-1 value=Working ' "${log}" || true) - before_titles ))
+    animation_restarts=$(( $(grep -Fc 'codex-title-animation pane=pane-1 state=active' "${log}" || true) - before_animations ))
+    [[ "${changed_events}" -eq 0 ]] || fail "duplicate burst produced ${changed_events} changed events"
+    [[ "${progress_events}" -eq 1 ]] || fail "meaningful task transition and its duplicate produced ${progress_events} changed events"
+    [[ "${project_refreshes}" -eq 0 ]] || fail "duplicate burst produced ${project_refreshes} project refreshes"
+    [[ "${fleet_refreshes}" -eq 1 ]] || fail "meaningful transition and duplicate burst produced ${fleet_refreshes} fleet refreshes"
+    [[ "${sidebar_renders}" -eq 0 ]] || fail "duplicate burst rebuilt the sidebar ${sidebar_renders} times"
+    ((unchanged_logs >= 1 && unchanged_logs <= coalescing_log_max)) ||
+        fail "duplicate burst produced ${unchanged_logs} coalescing log records; duration-derived maximum is ${coalescing_log_max}"
+    [[ "${attention_changes}" -eq 0 ]] || fail "duplicate burst changed attention state ${attention_changes} times"
+    [[ "${desktop_notifications}" -eq 0 ]] || fail "duplicate burst produced ${desktop_notifications} desktop notifications"
+    [[ "${persistence_saves}" -eq 1 ]] || fail "meaningful transition and duplicate burst produced ${persistence_saves} persistence saves"
+    [[ "${status_updates}" -eq 1 ]] || fail "meaningful transition and duplicate burst produced ${status_updates} GTK status updates"
+    [[ "${title_events}" -eq 0 ]] || fail "source spinner burst produced ${title_events} semantic terminal-title events"
+    [[ "${animation_restarts}" -eq 0 ]] || fail "source spinner burst restarted title animation ${animation_restarts} times"
+
+    mkdir -p "$(dirname "${receipt}")"
+    receipt_temp="$(mktemp "${receipt}.tmp.XXXXXX")"
+    jq -n \
+        --argjson burst_count "${burst_count}" \
+        --argjson before_rss_kib "${before_rss}" \
+        --argjson after_rss_kib "${after_rss}" \
+        --argjson rss_growth_kib "${rss_growth}" \
+        --argjson before_pss_kib "${before_pss}" \
+        --argjson after_pss_kib "${after_pss}" \
+        --argjson pss_growth_kib "${pss_growth}" \
+        --argjson before_anon_pss_kib "${before_anon_pss}" \
+        --argjson after_anon_pss_kib "${after_anon_pss}" \
+        --argjson anon_pss_growth_kib "${anon_pss_growth}" \
+        --argjson before_heap_pss_kib "${before_heap_pss}" \
+        --argjson after_heap_pss_kib "${after_heap_pss}" \
+        --argjson heap_pss_growth_kib "${heap_pss_growth}" \
+        --argjson before_fds "${before_fds}" \
+        --argjson after_fds "${after_fds}" \
+        --argjson fd_growth "${fd_growth}" \
+        --argjson before_threads "${before_threads}" \
+        --argjson after_threads "${after_threads}" \
+        --argjson thread_growth "${thread_growth}" \
+        --argjson before_children "${before_children}" \
+        --argjson after_children "${after_children}" \
+        --argjson child_growth "${child_growth}" \
+        --argjson burst_duration_ms "${burst_duration_ms}" \
+        --argjson gtk_drain_latency_ms "${gtk_drain_latency_ms}" \
+        --argjson coalescing_log_max "${coalescing_log_max}" \
+        --argjson changed_events "${changed_events}" \
+        --argjson progress_events "${progress_events}" \
+        --argjson project_refreshes "${project_refreshes}" \
+        --argjson fleet_refreshes "${fleet_refreshes}" \
+        --argjson sidebar_renders "${sidebar_renders}" \
+        --argjson coalescing_log_records "${unchanged_logs}" \
+        --argjson attention_changes "${attention_changes}" \
+        --argjson desktop_notifications "${desktop_notifications}" \
+        --argjson persistence_saves "${persistence_saves}" \
+        --argjson status_updates "${status_updates}" \
+        --argjson title_events "${title_events}" \
+        --argjson animation_restarts "${animation_restarts}" \
+        '{schema_version:1,status:"PASS",transport:"real-unix-socket",pty:"real",gtk:"real",burst_count:$burst_count,source_title_frame_count:$burst_count,memory:{maximum_growth_kib:16384,rss_anon:{before_kib:$before_rss_kib,after_kib:$after_rss_kib,growth_kib:$rss_growth_kib},pss:{before_kib:$before_pss_kib,after_kib:$after_pss_kib,growth_kib:$pss_growth_kib},anonymous_pss:{before_kib:$before_anon_pss_kib,after_kib:$after_anon_pss_kib,growth_kib:$anon_pss_growth_kib},main_heap_pss:{before_kib:$before_heap_pss_kib,after_kib:$after_heap_pss_kib,growth_kib:$heap_pss_growth_kib}},resources:{file_descriptors:{before:$before_fds,after:$after_fds,growth:$fd_growth,maximum_growth:2},threads:{before:$before_threads,after:$after_threads,growth:$thread_growth,maximum_growth:2},child_processes:{before:$before_children,after:$after_children,growth:$child_growth,maximum_growth:0}},burst_effect_deltas:{duplicate_running_state_changes:$changed_events,meaningful_task_state_changes:$progress_events,project_refreshes:$project_refreshes,fleet_refreshes:$fleet_refreshes,sidebar_renders:$sidebar_renders,gtk_status_updates:$status_updates,attention_changes:$attention_changes,desktop_notifications:$desktop_notifications,persistence_saves:$persistence_saves,coalescing_log_records:$coalescing_log_records,maximum_coalescing_log_records:$coalescing_log_max,semantic_terminal_title_events:$title_events,animation_restarts:$animation_restarts},timing:{producer_duration_ms:$burst_duration_ms,gtk_drain_latency_ms:$gtk_drain_latency_ms,maximum_gtk_drain_latency_ms:2000},responsiveness_barrier:{kind:"task.progress",progress:"1/2",duplicate_delivery:true,gtk_presented:true}}' \
+        >"${receipt_temp}"
+    mv -f -- "${receipt_temp}" "${receipt}"
+
+    zentty_product_prepare_input "${backend}" "${log}"
+    zentty_product_close_window "${backend}"
+    wait_for_product "event coalescing product run" 240
+    rm -f -- "${log}" "${start_receipt}" "${burst_gate}" "${burst_receipt}" "${burst_finish_gate}"
+    rm -rf -- "${state_directory}" "${private_home}"
+    log=""
+    start_receipt=""
+    burst_gate=""
+    burst_receipt=""
+    burst_finish_gate=""
+    state_directory=""
+    private_home=""
+}
+
+if [[ "${scenario}" == event-coalescing ]]; then
+    run_event_coalescing
+fi
+
 if [[ "${scenario}" == full ]]; then
 run_adapter \
     codex \
@@ -1143,6 +1392,8 @@ elif [[ "${scenario}" == kimi-hooks ]]; then
     adapters="kimi-modern-real-hooks+kimi-legacy-real-hooks"
 elif [[ "${scenario}" == remaining-hooks ]]; then
     adapters="custom-explicit+grok-real-hooks+agy-real-hooks+hermes-real-hooks-and-title+vibe-real-hooks"
+elif [[ "${scenario}" == event-coalescing ]]; then
+    adapters="authenticated-event-coalescing"
 else
     adapters="not-run-in-installed-gemini-scenario"
 fi

@@ -78,6 +78,40 @@ codex_has_hook() {
 }
 
 case "${profile}" in
+    event-coalescing)
+        require_helper
+        burst_gate="${ZENTTY_CONTROLLED_AGENT_BURST_GATE:-}"
+        burst_receipt="${ZENTTY_CONTROLLED_AGENT_BURST_RECEIPT:-}"
+        burst_count="${ZENTTY_CONTROLLED_AGENT_BURST_COUNT:-500}"
+        [[ "${burst_gate}" == /* ]] ||
+            fail "ZENTTY_CONTROLLED_AGENT_BURST_GATE must be an absolute path"
+        [[ "${burst_receipt}" == /* ]] ||
+            fail "ZENTTY_CONTROLLED_AGENT_BURST_RECEIPT must be an absolute path"
+        [[ "${burst_count}" =~ ^[1-9][0-9]*$ && "${burst_count}" -le 10000 ]] ||
+            fail "ZENTTY_CONTROLLED_AGENT_BURST_COUNT must be between 1 and 10000"
+        event="$(jq -cn --argjson pid "$$" --arg directory "${PWD}" \
+            '{version:1,event:"agent.running",agent:{name:"Codex",pid:$pid},session:{id:"event-coalescing"},context:{workingDirectory:$directory}}')"
+        printf '%s' "${event}" | "${helper}" ipc agent-event
+        spinner_frames=('⠋' '⠙' '⠹' '⠸' '⠼' '⠴' '⠦' '⠧' '⠇' '⠏')
+        printf '\033]0;Working %s event-coalescing\007' "${spinner_frames[0]}"
+        printf 'primed\n' >"${burst_receipt}"
+        for _ in {1..400}; do
+            [[ -e "${burst_gate}" ]] && break
+            sleep 0.05
+        done
+        [[ -e "${burst_gate}" ]] || fail "event burst gate did not open"
+        for ((event_index = 0; event_index < burst_count; event_index++)); do
+            printf '%s' "${event}" | "${helper}" ipc agent-event
+            frame_index=$((event_index % ${#spinner_frames[@]}))
+            printf '\033]0;Working %s event-coalescing\007' "${spinner_frames[frame_index]}"
+        done
+        printf 'completed=%s\n' "${burst_count}" >>"${burst_receipt}"
+        transition="$(jq -cn \
+            '{version:1,event:"task.progress",agent:{name:"Codex"},session:{id:"event-coalescing"},progress:{done:1,total:2}}')"
+        printf '%s' "${transition}" | "${helper}" ipc agent-event
+        printf '%s' "${transition}" | "${helper}" ipc agent-event
+        printf 'transition=sent-twice\n' >>"${burst_receipt}"
+        ;;
     amp-plugin)
         require_helper
         [[ "${PLUGINS:-}" == all ]] || fail "Amp plugin activation is missing"

@@ -2883,8 +2883,8 @@ impl WorkspaceState {
         outcome
     }
 
-    pub fn apply_agent_event(&mut self, event: AuthenticatedAgentEvent, now: u64) {
-        self.agent_statuses.apply(event, now);
+    pub fn apply_agent_event(&mut self, event: AuthenticatedAgentEvent, now: u64) -> bool {
+        self.agent_statuses.apply(event, now)
     }
 
     /// Applies an event whose target was already canonicalized by another
@@ -2895,8 +2895,8 @@ impl WorkspaceState {
         target: crate::AgentTarget,
         event: &crate::AgentEvent,
         now: u64,
-    ) {
-        self.agent_statuses.apply_for_target(target, event, now);
+    ) -> bool {
+        self.agent_statuses.apply_for_target(target, event, now)
     }
 
     pub fn apply_agent_signal_event(
@@ -2906,9 +2906,9 @@ impl WorkspaceState {
         origin: crate::AgentSignalOrigin,
         confidence: crate::AgentSignalConfidence,
         now: u64,
-    ) {
+    ) -> bool {
         self.agent_statuses
-            .apply_for_target_with_signal(target, event, origin, confidence, now);
+            .apply_for_target_with_signal(target, event, origin, confidence, now)
     }
 
     pub fn apply_agent_pid_signal(

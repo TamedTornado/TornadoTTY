@@ -1,7 +1,7 @@
 use zentty_core::{
     AgentIntegrationState, AppConfig, BackgroundOpacity, CommandFlattenAggressiveness,
-    FocusFollowsMouseDelay, NewWorklanePlacement, PaneRightBehaviorMode, SidebarSelectionEmphasis,
-    ThemeMode, UpdateChannel,
+    FocusFollowsMouseDelay, NewWorklanePlacement, PRODUCT_NAME, PaneRightBehaviorMode,
+    SidebarSelectionEmphasis, ThemeMode, UpdateChannel,
 };
 
 #[test]
@@ -223,7 +223,10 @@ fn partial_reload_rejects_syntax_failure_without_exposing_input() {
         &AppConfig::default(),
     )
     .unwrap_err();
-    assert!(error.contains("invalid Zentty configuration"));
+    assert_eq!(
+        error,
+        format!("invalid {PRODUCT_NAME} configuration syntax")
+    );
     assert!(!error.contains(secret));
 }
 

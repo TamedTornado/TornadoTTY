@@ -28,14 +28,14 @@ fn pane_tokens_are_distinct_256_bit_os_random_capabilities() {
 }
 
 #[test]
-fn real_unix_socket_authenticates_and_canonicalizes_the_target() {
+fn real_unix_socket_reconnects_canonicalizes_and_rejects_revoked_panes() {
     let (_directory, socket) = temporary_socket();
     let canonical = AgentTarget::new("window-a", "lane-a", "pane-a");
     let mut registry = PaneTokenRegistry::default();
     registry.register("token-a", canonical.clone()).unwrap();
     let registry = Arc::new(Mutex::new(registry));
     let (sender, receiver) = mpsc::channel();
-    let server = AgentIpcServer::start(&socket, registry, sender).unwrap();
+    let server = AgentIpcServer::start(&socket, Arc::clone(&registry), sender).unwrap();
 
     let event = br#"{"version":1,"event":"agent.running","agent":{"name":"Codex"},"session":{"id":"session-a"}}"#;
     AgentIpcClient::send_event(
@@ -53,6 +53,35 @@ fn real_unix_socket_authenticates_and_canonicalizes_the_target() {
         statuses.status_for(&canonical).unwrap().phase,
         AgentPhase::Running
     );
+
+    // Every client call opens a fresh connection. A later process must be
+    // accepted after the first disconnect without losing canonical routing.
+    AgentIpcClient::send_event(
+        &socket,
+        "token-a",
+        br#"{"version":1,"event":"agent.idle","session":{"id":"session-a"}}"#,
+        None,
+    )
+    .unwrap();
+    let reconnected = receiver.recv_timeout(Duration::from_secs(2)).unwrap();
+    assert_eq!(reconnected.target, canonical);
+    statuses.apply(reconnected, 2);
+    assert_eq!(
+        statuses.status_for(&canonical).unwrap().phase,
+        AgentPhase::Idle
+    );
+
+    assert!(registry.lock().unwrap().unregister("token-a"));
+    assert!(
+        AgentIpcClient::send_event(
+            &socket,
+            "token-a",
+            br#"{"version":1,"event":"agent.running","session":{"id":"session-a"}}"#,
+            None,
+        )
+        .is_err()
+    );
+    assert!(receiver.recv_timeout(Duration::from_millis(100)).is_err());
     assert_eq!(
         fs::metadata(&socket).unwrap().permissions().mode() & 0o777,
         0o600

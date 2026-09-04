@@ -226,6 +226,112 @@ fn real_terminal_titles_reconcile_agent_state_used_by_sidebar_summaries() {
 }
 
 #[test]
+fn identical_running_events_do_not_mutate_canonical_agent_state() {
+    let mut state = WorkspaceState::new("worklane-a", "pane-a");
+    let running = || {
+        AuthenticatedAgentEvent {
+            target: AgentTarget::new("window-a", "worklane-a", "pane-a"),
+            pane_token: "token-a".to_owned(),
+            event: AgentEvent::parse(
+                br#"{"version":1,"event":"agent.running","agent":{"name":"Codex","pid":4101},"session":{"id":"session-a"},"context":{"workingDirectory":"/tmp"}}"#,
+            )
+            .unwrap(),
+        }
+    };
+
+    state.apply_agent_event(running(), 1_000);
+    let before_duplicate = state.clone();
+    state.apply_agent_event(running(), 9_000);
+
+    assert_eq!(state, before_duplicate);
+    assert_eq!(state.pane_agent_status("pane-a").unwrap().updated_at, 1_000);
+}
+
+#[test]
+fn meaningful_running_metadata_changes_update_canonical_agent_state_once() {
+    let mut state = WorkspaceState::new("worklane-a", "pane-a");
+    let event = |directory: &str| {
+        AuthenticatedAgentEvent {
+            target: AgentTarget::new("window-a", "worklane-a", "pane-a"),
+            pane_token: "token-a".to_owned(),
+            event: AgentEvent::parse(
+                format!(
+                    r#"{{"version":1,"event":"agent.running","agent":{{"name":"Codex","pid":4101}},"session":{{"id":"session-a"}},"context":{{"workingDirectory":"{directory}"}}}}"#
+                )
+                .as_bytes(),
+            )
+            .unwrap(),
+        }
+    };
+
+    state.apply_agent_event(event("/tmp"), 1_000);
+    state.apply_agent_event(event("/"), 2_000);
+    let status = state.pane_agent_status("pane-a").unwrap();
+    assert_eq!(status.working_directory.as_deref(), Some("/"));
+    assert_eq!(status.updated_at, 2_000);
+
+    let before_duplicate = state.clone();
+    state.apply_agent_event(event("/"), 3_000);
+    assert_eq!(state, before_duplicate);
+}
+
+#[test]
+fn idempotent_agent_protocol_events_report_and_preserve_unchanged_state() {
+    let payloads = [
+        br#"{"version":1,"event":"session.start","agent":{"name":"Codex"},"session":{"id":"session-a"}}"#.as_slice(),
+        br#"{"version":1,"event":"agent.compacting","agent":{"name":"Codex"},"session":{"id":"session-a"},"state":{"text":"Compacting"}}"#.as_slice(),
+        br#"{"version":1,"event":"agent.compacted","agent":{"name":"Codex"},"session":{"id":"session-a"}}"#.as_slice(),
+        br#"{"version":1,"event":"agent.input-resolved","agent":{"name":"Codex"},"session":{"id":"session-a"}}"#.as_slice(),
+        br#"{"version":1,"event":"agent.idle","agent":{"name":"Codex"},"session":{"id":"session-a"}}"#.as_slice(),
+        br#"{"version":1,"event":"agent.needs-input","agent":{"name":"Codex"},"session":{"id":"session-a"},"state":{"interaction":{"kind":"approval","text":"Approve?"}}}"#.as_slice(),
+        br#"{"version":1,"event":"agent.failed","agent":{"name":"Codex"},"session":{"id":"session-a"},"state":{"text":"failed"}}"#.as_slice(),
+        br#"{"version":1,"event":"task.progress","agent":{"name":"Codex"},"session":{"id":"session-a"},"progress":{"done":2,"total":5}}"#.as_slice(),
+        br#"{"version":1,"event":"task.snapshot","agent":{"name":"Codex"},"session":{"id":"session-a"},"tasks":[{"id":"one","completed":true},{"id":"two","completed":false}]}"#.as_slice(),
+        br#"{"version":1,"event":"task.started","agent":{"name":"Codex"},"session":{"id":"session-a"},"task":{"id":"one"}}"#.as_slice(),
+        br#"{"version":1,"event":"task.completed","agent":{"name":"Codex"},"session":{"id":"session-a"},"task":{"id":"one"}}"#.as_slice(),
+        br#"{"version":1,"event":"session.end","agent":{"name":"Codex"},"session":{"id":"session-a"}}"#.as_slice(),
+    ];
+
+    for payload in payloads {
+        let event = || AuthenticatedAgentEvent {
+            target: AgentTarget::new("window-a", "worklane-a", "pane-a"),
+            pane_token: "token-a".to_owned(),
+            event: AgentEvent::parse(payload).unwrap(),
+        };
+        let mut state = WorkspaceState::new("worklane-a", "pane-a");
+        assert!(state.apply_agent_event(event(), 1_000));
+        let before_duplicate = state.clone();
+        assert!(!state.apply_agent_event(event(), 9_000));
+        assert_eq!(
+            state,
+            before_duplicate,
+            "payload={}",
+            String::from_utf8_lossy(payload)
+        );
+    }
+}
+
+#[test]
+fn task_delta_remains_non_idempotent_and_accumulates_each_delivery() {
+    let mut state = WorkspaceState::new("worklane-a", "pane-a");
+    let delta = || {
+        AuthenticatedAgentEvent {
+            target: AgentTarget::new("window-a", "worklane-a", "pane-a"),
+            pane_token: "token-a".to_owned(),
+            event: AgentEvent::parse(
+                br#"{"version":1,"event":"task.delta","agent":{"name":"Codex"},"session":{"id":"session-a"},"delta":{"done":1,"total":2}}"#,
+            )
+            .unwrap(),
+        }
+    };
+
+    assert!(state.apply_agent_event(delta(), 1_000));
+    assert!(state.apply_agent_event(delta(), 2_000));
+    let progress = state.pane_agent_status("pane-a").unwrap().progress.unwrap();
+    assert_eq!((progress.done, progress.total), (2, 4));
+}
+
+#[test]
 fn agent_pid_signals_are_session_scoped_and_an_unscoped_clear_clears_every_session() {
     let mut state = WorkspaceState::new("worklane-a", "pane-a");
     assert!(state.apply_agent_pid_signal(
@@ -278,21 +384,25 @@ fn agent_pid_signals_are_session_scoped_and_an_unscoped_clear_clears_every_sessi
 fn signal_priority_rejects_weaker_conflicts_and_prefers_an_active_root_over_its_child() {
     let mut state = WorkspaceState::new("worklane-a", "pane-a");
     let target = AgentTarget::new("window-a", "worklane-a", "pane-a");
-    state.apply_agent_signal_event(
+    assert!(state.apply_agent_signal_event(
         target.clone(),
         &AgentEvent::parse(br#"{"version":1,"event":"agent.running","agent":{"name":"Codex"},"session":{"id":"root"}}"#).unwrap(),
         zentty_core::AgentSignalOrigin::ExplicitHook,
         zentty_core::AgentSignalConfidence::Explicit,
         1,
+    ));
+    let before_weaker_signal = state.clone();
+    assert!(
+        !state.apply_agent_signal_event(
+            target.clone(),
+            &AgentEvent::parse(br#"{"version":1,"event":"agent.idle","session":{"id":"root"}}"#)
+                .unwrap(),
+            zentty_core::AgentSignalOrigin::Inferred,
+            zentty_core::AgentSignalConfidence::Weak,
+            2,
+        )
     );
-    state.apply_agent_signal_event(
-        target.clone(),
-        &AgentEvent::parse(br#"{"version":1,"event":"agent.idle","session":{"id":"root"}}"#)
-            .unwrap(),
-        zentty_core::AgentSignalOrigin::Inferred,
-        zentty_core::AgentSignalConfidence::Weak,
-        2,
-    );
+    assert_eq!(state, before_weaker_signal);
     assert_eq!(
         state.sidebar_summaries()[0].pane_rows[0]
             .agent_status
@@ -302,13 +412,13 @@ fn signal_priority_rejects_weaker_conflicts_and_prefers_an_active_root_over_its_
         AgentPhase::Running
     );
 
-    state.apply_agent_signal_event(
+    assert!(state.apply_agent_signal_event(
         target,
         &AgentEvent::parse(br#"{"version":1,"event":"agent.running","agent":{"name":"Codex"},"session":{"id":"child","parentId":"root"}}"#).unwrap(),
         zentty_core::AgentSignalOrigin::ExplicitHook,
         zentty_core::AgentSignalConfidence::Explicit,
         3,
-    );
+    ));
     assert_eq!(
         state.sidebar_summaries()[0].pane_rows[0]
             .agent_status
@@ -317,6 +427,31 @@ fn signal_priority_rejects_weaker_conflicts_and_prefers_an_active_root_over_its_
             .session_id,
         "root"
     );
+}
+
+#[test]
+fn lifecycle_only_transition_reports_once_without_retimestamping_visible_status() {
+    let mut state = WorkspaceState::new("worklane-a", "pane-a");
+    let event = |payload: &[u8]| AuthenticatedAgentEvent {
+        target: AgentTarget::new("window-a", "worklane-a", "pane-a"),
+        pane_token: "token-a".to_owned(),
+        event: AgentEvent::parse(payload).unwrap(),
+    };
+    let running = br#"{"version":1,"event":"agent.running","agent":{"name":"Codex"},"session":{"id":"session-a"}}"#;
+    let stop_candidate = br#"{"version":1,"event":"agent.idle","agent":{"name":"Codex"},"session":{"id":"session-a"},"state":{"stopCandidate":true}}"#;
+
+    assert!(state.apply_agent_event(event(running), 1_000));
+    assert!(state.apply_agent_event(event(stop_candidate), 2_000));
+    assert_eq!(state.pane_agent_status("pane-a").unwrap().updated_at, 1_000);
+    let after_transition = state.clone();
+    assert!(!state.apply_agent_event(event(stop_candidate), 3_000));
+    assert_eq!(state, after_transition);
+
+    assert!(state.apply_agent_event(event(running), 4_000));
+    assert_eq!(state.pane_agent_status("pane-a").unwrap().updated_at, 1_000);
+    let after_cancellation = state.clone();
+    assert!(!state.apply_agent_event(event(running), 5_000));
+    assert_eq!(state, after_cancellation);
 }
 
 #[test]

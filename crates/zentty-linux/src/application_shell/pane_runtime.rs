@@ -614,7 +614,13 @@ impl PaneRuntimeCoordinator {
         });
         let title_id = pane_id.to_owned();
         let weak = Rc::downgrade(shell);
+        let title_gate = Rc::new(RefCell::new(
+            crate::codex_title_animation::TerminalTitleEventGate::default(),
+        ));
         surface.on_title_changed(move |title| {
+            if !title_gate.borrow_mut().accepts(&title) {
+                return;
+            }
             eprintln!("zentty-linux: title={title}");
             eprintln!("zentty-linux: title-pane={title_id} value={title}");
             let weak = weak.clone();

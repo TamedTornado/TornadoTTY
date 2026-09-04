@@ -1,4 +1,5 @@
 use std::cell::RefCell;
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
@@ -12,6 +13,7 @@ use crate::codex_enrichment::CodexTranscriptEnricher;
 use super::{ApplicationShell, unix_time_ms};
 
 const LIFECYCLE_SWEEP_INTERVAL_MS: u64 = 500;
+const COALESCED_EVENT_LOG_INTERVAL_MS: u64 = 5_000;
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 enum EventRouteDecision {
@@ -34,6 +36,23 @@ fn event_route_decision(
     }
 }
 
+#[derive(Default)]
+struct CoalescedEventLog {
+    pending: u64,
+    last_at: Option<u64>,
+}
+
+impl CoalescedEventLog {
+    fn record(&mut self, count: u64, now: u64) -> Option<u64> {
+        self.pending = self.pending.saturating_add(count);
+        if !coalesced_event_log_due(self.last_at, now) {
+            return None;
+        }
+        self.last_at = Some(now);
+        Some(std::mem::take(&mut self.pending))
+    }
+}
+
 /// Owns authenticated agent-event ingestion and bounded transcript enrichment
 /// for one application window. `AgentRuntime` remains the sole transport and
 /// token authority; `WorkspaceState` remains the sole status reducer.
@@ -42,6 +61,7 @@ pub(super) struct AgentEventCoordinator {
     window_id: String,
     transcript_enricher: CodexTranscriptEnricher,
     last_lifecycle_sweep_at: Option<u64>,
+    coalesced_event_log: CoalescedEventLog,
 }
 
 impl AgentEventCoordinator {
@@ -56,6 +76,7 @@ impl AgentEventCoordinator {
             window_id,
             transcript_enricher: CodexTranscriptEnricher::new(codex_home),
             last_lifecycle_sweep_at: None,
+            coalesced_event_log: CoalescedEventLog::default(),
         }
     }
 
@@ -210,7 +231,8 @@ impl AgentEventCoordinator {
 
         let now = unix_time_ms();
         let mut sidebar_changed = false;
-        let mut review_refresh_panes = Vec::new();
+        let mut review_refresh_panes = BTreeSet::new();
+        let mut coalesced_events = 0_u64;
         for mut event in events {
             let pane_id = event.target.pane_id.clone();
             let event_working_directory = event.event.working_directory();
@@ -239,16 +261,18 @@ impl AgentEventCoordinator {
                 }
                 EventRouteDecision::ApplyAuthenticatedTarget => {}
             }
-            eprintln!(
-                "zentty-linux: agent-event pane={} worklane={} kind={} session={}",
-                event.target.pane_id,
-                event.target.worklane_id,
-                event.event_kind(),
-                event.session_id().unwrap_or("pane-default")
-            );
             Self::confirm_restored_agent(shell, &pane_id);
+            let worklane_id = event.target.worklane_id.clone();
+            let event_kind = event.event_kind();
+            let session_id = event.session_id().unwrap_or("pane-default").to_owned();
             let mut shell = shell.borrow_mut();
-            shell.state.apply_agent_event(event, now);
+            if !shell.state.apply_agent_event(event, now) {
+                coalesced_events = coalesced_events.saturating_add(1);
+                continue;
+            }
+            eprintln!(
+                "zentty-linux: agent-event pane={pane_id} worklane={worklane_id} kind={event_kind} session={session_id} result=changed"
+            );
             Self::log_pane_context_owner(
                 &shell.state,
                 &pane_id,
@@ -256,7 +280,7 @@ impl AgentEventCoordinator {
                 session_ended,
             );
             if refresh_context {
-                review_refresh_panes.push(pane_id.clone());
+                review_refresh_panes.insert(pane_id.clone());
             }
             let ApplicationShell {
                 state,
@@ -266,9 +290,19 @@ impl AgentEventCoordinator {
             agent_events.schedule_for_pane(state, &pane_id);
             sidebar_changed = true;
         }
+        if coalesced_events > 0 {
+            let report = shell
+                .borrow_mut()
+                .agent_events
+                .coalesced_event_log
+                .record(coalesced_events, now);
+            if let Some(count) = report {
+                eprintln!("zentty-linux: agent-events result=unchanged count={count}");
+            }
+        }
 
         if !review_refresh_panes.is_empty() {
-            Self::refresh_project_context(shell, review_refresh_panes);
+            Self::refresh_project_context(shell, review_refresh_panes.into_iter().collect());
         }
 
         let enrichments = shell.borrow_mut().agent_events.transcript_enricher.drain();
@@ -297,7 +331,7 @@ impl AgentEventCoordinator {
             sidebar_changed = true;
         }
         if sidebar_changed {
-            shell.borrow().render_sidebar();
+            shell.borrow().refresh_sidebar_metadata();
         }
     }
 
@@ -314,13 +348,22 @@ fn lifecycle_sweep_due(last: Option<u64>, now: u64) -> bool {
     last.is_none_or(|last| now < last || now.saturating_sub(last) >= LIFECYCLE_SWEEP_INTERVAL_MS)
 }
 
+fn coalesced_event_log_due(last: Option<u64>, now: u64) -> bool {
+    last.is_none_or(|last| {
+        now < last || now.saturating_sub(last) >= COALESCED_EVENT_LOG_INTERVAL_MS
+    })
+}
+
 fn linux_process_is_alive(pid: i32) -> bool {
     pid > 0 && Path::new("/proc").join(pid.to_string()).exists()
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{EventRouteDecision, event_route_decision, lifecycle_sweep_due};
+    use super::{
+        CoalescedEventLog, EventRouteDecision, coalesced_event_log_due, event_route_decision,
+        lifecycle_sweep_due,
+    };
 
     #[test]
     fn authenticated_events_apply_only_to_current_pane_identity() {
@@ -344,5 +387,18 @@ mod tests {
         assert!(!lifecycle_sweep_due(Some(1_000), 1_499));
         assert!(lifecycle_sweep_due(Some(1_000), 1_500));
         assert!(lifecycle_sweep_due(Some(1_500), 10));
+    }
+
+    #[test]
+    fn coalesced_event_logging_is_rate_limited_and_preserves_the_total() {
+        assert!(coalesced_event_log_due(None, 1_000));
+        assert!(!coalesced_event_log_due(Some(1_000), 5_999));
+        assert!(coalesced_event_log_due(Some(1_000), 6_000));
+        assert!(coalesced_event_log_due(Some(6_000), 10));
+
+        let mut log = CoalescedEventLog::default();
+        assert_eq!(log.record(3, 1_000), Some(3));
+        assert_eq!(log.record(4, 1_100), None);
+        assert_eq!(log.record(5, 6_000), Some(9));
     }
 }

@@ -638,10 +638,10 @@ impl AgentStatusStore {
         }
     }
 
-    pub fn apply(&mut self, authenticated: AuthenticatedAgentEvent, now: u64) {
+    pub fn apply(&mut self, authenticated: AuthenticatedAgentEvent, now: u64) -> bool {
         let target = authenticated.target;
         let event = authenticated.event;
-        self.apply_for_target(target, &event, now);
+        self.apply_for_target(target, &event, now)
     }
 
     pub(crate) fn apply_for_target(
@@ -649,14 +649,14 @@ impl AgentStatusStore {
         target: AgentTarget,
         event: &crate::AgentEvent,
         now: u64,
-    ) {
+    ) -> bool {
         self.apply_for_target_with_signal(
             target,
             event,
             AgentSignalOrigin::ExplicitHook,
             AgentSignalConfidence::Explicit,
             now,
-        );
+        )
     }
 
     // Keeping the canonical lifecycle phases in one exhaustive transition
@@ -670,7 +670,7 @@ impl AgentStatusStore {
         origin: AgentSignalOrigin,
         confidence: AgentSignalConfidence,
         now: u64,
-    ) {
+    ) -> bool {
         let pane_id = target.pane_id;
         let session_id = self.resolve_session_id(&pane_id, event);
         self.rekey_matching_provisional_session(&pane_id, &session_id, event);
@@ -681,42 +681,48 @@ impl AgentStatusStore {
             .is_some_and(|state| state.lifecycle == SessionLifecycle::Ended)
             && event.kind() != "session.start"
         {
-            return;
+            return false;
         }
-        if event.kind() == "session.start"
-            && let Some(state) = self.session_bookkeeping.get_mut(&session_key)
-        {
-            state.lifecycle = SessionLifecycle::Active;
-        }
+        let suppression_before = self.codex_interrupt_suppression.get(&pane_id).cloned();
         let Some(event_is_codex) =
             self.suppress_interrupted_codex_event(&pane_id, &session_id, event, now)
         else {
-            return;
+            return false;
         };
+        let suppression_changed =
+            self.codex_interrupt_suppression.get(&pane_id) != suppression_before.as_ref();
         if event.kind() == "session.end" {
             self.remove_session(&pane_id, &session_id);
             self.session_bookkeeping
                 .entry(session_key)
                 .or_default()
                 .lifecycle = SessionLifecycle::Ended;
-            return;
+            return true;
         }
 
         let sessions = self.panes.entry(pane_id.clone()).or_default();
+        let status_existed = sessions.contains_key(&session_id);
         let status = sessions.entry(session_id.clone()).or_insert_with(|| {
             new_status(&session_id, event, event_is_codex, origin, confidence, now)
         });
+        let status_before = status.clone();
         if !should_apply_signal(status, event, origin, confidence) {
-            return;
+            return suppression_changed;
+        }
+        if should_suppress_claude_post_stop_notification(status, event, now) {
+            return suppression_changed;
         }
         update_status_identity(status, event);
-        if should_suppress_claude_post_stop_notification(status, event, now) {
-            return;
-        }
+        let lifecycle_before = self
+            .session_bookkeeping
+            .get(&session_key)
+            .cloned()
+            .unwrap_or_default();
         let lifecycle = self.session_bookkeeping.entry(session_key).or_default();
         match event.kind() {
             "session.start" => {
                 status.phase = AgentPhase::Starting;
+                lifecycle.lifecycle = SessionLifecycle::Active;
                 lifecycle.codex_title_ownership = CodexTitleOwnership::Explicit;
                 lifecycle.codex_idle_suppression_until = None;
                 lifecycle.completion_candidate_deadline = None;
@@ -743,22 +749,27 @@ impl AgentStatusStore {
                     status.phase = AgentPhase::Running;
                     status.interaction = AgentInteractionKind::None;
                     status.text = None;
-                    lifecycle.completion_candidate_deadline =
-                        Some(now.saturating_add(STOP_GRACE_MS));
+                    if lifecycle.completion_candidate_deadline.is_none() {
+                        lifecycle.completion_candidate_deadline =
+                            Some(now.saturating_add(STOP_GRACE_MS));
+                    }
                     lifecycle.idle_visible_until = None;
                     lifecycle.unresolved_stop_visible_until = None;
-                    status.updated_at = now;
-                    return;
+                } else {
+                    status.phase = AgentPhase::Idle;
+                    status.interaction = AgentInteractionKind::None;
+                    status.text = None;
+                    lifecycle.codex_title_ownership = CodexTitleOwnership::Explicit;
+                    if lifecycle.codex_idle_suppression_until.is_none() {
+                        lifecycle.codex_idle_suppression_until =
+                            Some(now.saturating_add(CODEX_TITLE_IDLE_SUPPRESSION_MS));
+                    }
+                    lifecycle.completion_candidate_deadline = None;
+                    if lifecycle.idle_visible_until.is_none() {
+                        lifecycle.idle_visible_until = Some(now.saturating_add(IDLE_VISIBILITY_MS));
+                    }
+                    lifecycle.unresolved_stop_visible_until = None;
                 }
-                status.phase = AgentPhase::Idle;
-                status.interaction = AgentInteractionKind::None;
-                status.text = None;
-                lifecycle.codex_title_ownership = CodexTitleOwnership::Explicit;
-                lifecycle.codex_idle_suppression_until =
-                    Some(now.saturating_add(CODEX_TITLE_IDLE_SUPPRESSION_MS));
-                lifecycle.completion_candidate_deadline = None;
-                lifecycle.idle_visible_until = Some(now.saturating_add(IDLE_VISIBILITY_MS));
-                lifecycle.unresolved_stop_visible_until = None;
             }
             "agent.needs-input" => {
                 status.phase = AgentPhase::NeedsInput;
@@ -781,20 +792,25 @@ impl AgentStatusStore {
                 lifecycle.codex_idle_suppression_until = None;
                 lifecycle.completion_candidate_deadline = None;
                 lifecycle.idle_visible_until = None;
-                lifecycle.unresolved_stop_visible_until =
-                    Some(now.saturating_add(UNRESOLVED_STOP_VISIBILITY_MS));
+                if lifecycle.unresolved_stop_visible_until.is_none() {
+                    lifecycle.unresolved_stop_visible_until =
+                        Some(now.saturating_add(UNRESOLVED_STOP_VISIBILITY_MS));
+                }
             }
             "task.progress" | "task.snapshot" | "task.delta" | "task.started"
             | "task.completed" => {
-                if !apply_task_projection(status, event, lifecycle) {
-                    return;
-                }
+                let _ = apply_task_projection(status, event, lifecycle);
             }
             _ => unreachable!("AgentEvent exposes only known protocol events"),
         }
         status.signal_origin = origin;
         status.signal_confidence = confidence;
-        status.updated_at = now;
+        let status_changed = !status_existed || *status != status_before;
+        if status_changed {
+            status.updated_at = now;
+        }
+        let lifecycle_changed = *lifecycle != lifecycle_before;
+        status_changed || lifecycle_changed || suppression_changed
     }
 
     pub(crate) fn apply_pid_signal(
