@@ -18,6 +18,8 @@ source "${repo_root}/linux/tests/lib/bounded-batch"
 source "${repo_root}/linux/tests/lib/qualification-capacity"
 # shellcheck source=linux/tests/lib/qualification-gap
 source "${repo_root}/linux/tests/lib/qualification-gap"
+# shellcheck source=linux/tests/lib/qualification-provenance
+source "${repo_root}/linux/tests/lib/qualification-provenance"
 validate_only=false
 qualification_jobs="${ZENTTY_QUALIFICATION_JOBS:-$(zentty_qualification_matrix_jobs)}"
 qualification_display_jobs="${ZENTTY_QUALIFICATION_DISPLAY_JOBS:-$(zentty_qualification_display_jobs)}"
@@ -101,6 +103,7 @@ fi
 
 command -v jq >/dev/null || fail "jq is required"
 command -v jsonschema >/dev/null || fail "jsonschema is required"
+command -v git >/dev/null || fail "git is required"
 command -v sha256sum >/dev/null || fail "sha256sum is required"
 command -v stat >/dev/null || fail "stat is required"
 command -v mktemp >/dev/null || fail "mktemp is required"
@@ -716,6 +719,7 @@ run_qualification_cell() {
     local id status command expected_exit_code valgrind_report environment_profile
     local cell_optimize cell_display expected_valgrind_scenario is_suppression_governance
     local outcome exit_code valgrind environment log_identity valgrind_report_identity
+    local qualification_inputs command_sha256
     local qualification_gap
     local cell_evidence_lock_fd cell_evidence_lock_acquired retain_cell_evidence_lock
     local environment_capture_span_seconds log environment_report cell_started_at_epoch
@@ -726,6 +730,10 @@ run_qualification_cell() {
     id="$(jq -r '.id' <<<"${cell}")"
     status="$(jq -r '.status' <<<"${cell}")"
     command="$(jq -r '.command // empty' <<<"${cell}")"
+    command_sha256="$(printf '%s' "${command}" | sha256sum | awk '{print $1}')"
+    qualification_inputs="$(zentty_qualification_capture_cell_inputs \
+        "${repo_root}" "${command}")" ||
+        fail "could not capture qualification inputs for ${id}"
     expected_exit_code="$(jq -r '.expected_exit_code // "null"' <<<"${cell}")"
     valgrind_report="$(jq -r '.valgrind_report // empty' <<<"${cell}")"
     environment_profile="$(jq -r '.environment_profile // empty' <<<"${cell}")"
@@ -1030,6 +1038,8 @@ run_qualification_cell() {
         --arg id "${id}" \
         --arg declared "${status}" \
         --arg outcome "${outcome}" \
+        --arg command "${command}" \
+        --arg command_sha256 "${command_sha256}" \
         --argjson exit_code "${exit_code}" \
         --argjson expected_exit_code "${expected_exit_code}" \
         --argjson log "${log_identity}" \
@@ -1037,13 +1047,17 @@ run_qualification_cell() {
         --argjson valgrind "${valgrind}" \
         --argjson valgrind_report "${valgrind_report_identity}" \
         --argjson qualification_gap "${qualification_gap}" \
+        --argjson qualification_inputs "${qualification_inputs}" \
         --argjson timing "${timing}" '
-        {id: $id, declared_status: $declared, outcome: $outcome, exit_code: $exit_code} +
+        {id: $id, declared_status: $declared, outcome: $outcome,
+         exit_code: $exit_code,
+         command:{value:$command,sha256:$command_sha256}} +
         if $expected_exit_code == null then {} else {expected_exit_code: $expected_exit_code} end +
         if $log == null then {} else {log: $log} end +
         if $environment == null then {} else {environment: $environment} end +
         if $valgrind == null then {} else {valgrind: $valgrind, valgrind_report: $valgrind_report} end +
         if $qualification_gap == null then {} else {qualification_gap: $qualification_gap} end +
+        if $qualification_inputs == {} then {} else {qualification_inputs:$qualification_inputs} end +
         if $timing == null then {} else {timing: $timing} end
     ')"
     printf '%s\n' "${result}" >"${result_path}"
@@ -1051,7 +1065,7 @@ run_qualification_cell() {
 
 run_qualification_worker() {
     local cell="$1"
-    local id result_path worker_code worker_log worker_log_identity
+    local id result_path worker_code worker_log worker_log_identity command command_sha256
     # The scheduler owns the shared result directory. Background functions
     # inherit its EXIT trap, so clear that trap before this worker exits or one
     # completed cell can erase every other worker's unpublished result.
@@ -1073,15 +1087,26 @@ run_qualification_worker() {
         --arg path "${worker_log}" \
         --arg sha256 "$(sha256sum "${worker_log}" | awk '{print $1}')" \
         '{path:$path,sha256:$sha256}')"
+    command="$(jq -r '.command // empty' <<<"${cell}")"
+    command_sha256="$(printf '%s' "${command}" | sha256sum | awk '{print $1}')"
     jq -cn \
         --arg id "${id}" \
         --arg declared "$(jq -r '.status' <<<"${cell}")" \
+        --arg command "${command}" \
+        --arg command_sha256 "${command_sha256}" \
         --argjson exit_code "${worker_code}" \
         --argjson log "${worker_log_identity}" \
-        '{id:$id,declared_status:$declared,outcome:"FAIL",exit_code:$exit_code,log:$log}' \
+        '{id:$id,declared_status:$declared,outcome:"FAIL",exit_code:$exit_code,
+          command:{value:$command,sha256:$command_sha256},log:$log}' \
         >"${result_path}"
     return 0
 }
+
+qualification_provenance="$(zentty_qualification_capture_provenance \
+    "${repo_root}" "${matrix}" "${matrix_schema}" "${BASH_SOURCE[0]}")" ||
+    fail "could not capture source, input, and tool provenance"
+zentty_qualification_validate_provenance "${qualification_provenance}" ||
+    fail "captured qualification provenance is invalid"
 
 run_failed=false
 retained_valgrind_evidence_lock_fd=""
@@ -1473,21 +1498,44 @@ jq -e '
     )
 ' <<<"${results}" >/dev/null || fail "normalized runtime environment evidence is malformed"
 
+jq -e '
+    def sha: type == "string" and test("^[0-9a-f]{64}$");
+    all(.[];
+      (.command | keys | sort) == ["sha256","value"] and
+      (.command.value | type == "string") and (.command.sha256 | sha)) and
+    all(.[] | select(has("qualification_inputs"));
+      (.qualification_inputs | keys - ["agent_executables","container_images"] | length) == 0 and
+      ((.qualification_inputs.agent_executables // []) | type == "array") and
+      all(.qualification_inputs.agent_executables[]?;
+        (keys | sort) == ["name","path","sha256","version"] and
+        (.name | IN("codex","gemini")) and
+        (.path | type == "string" and length > 0) and (.sha256 | sha) and
+        (.version | type == "string" and length > 0)) and
+      ((.qualification_inputs.container_images // []) | type == "array") and
+      all(.qualification_inputs.container_images[]?;
+        (keys | sort) == ["digest","reference"] and
+        (.reference | type == "string" and length > 0) and
+        (.digest | type == "string" and test("^sha256:[0-9a-f]{64}$"))))
+' <<<"${results}" >/dev/null || fail "command or specialized input evidence is malformed"
+while IFS= read -r result; do
+    command_sha256="$(jq -r '.command.sha256' <<<"${result}")"
+    [[ "$(jq -j '.command.value' <<<"${result}" | sha256sum | awk '{print $1}')" == \
+       "${command_sha256}" ]] || fail "cell command identity is inconsistent: $(jq -r '.id' <<<"${result}")"
+done < <(jq -c '.[]' <<<"${results}")
+
 [[ -n "${retained_valgrind_evidence_lock_fd}" ]] ||
     fail "suppression governance did not retain the Valgrind evidence lease; refusing to publish a summary"
 
 evidence_changed=false
 while IFS= read -r identity; do
     identity_path="$(jq -r '.path' <<<"${identity}")"
-    identity_sha="$(jq -r '.sha256' <<<"${identity}")"
     identity_captured_at="$(jq -r '.captured_at_epoch // "null"' <<<"${identity}")"
     resolved_identity_path="${identity_path}"
     if [[ "${resolved_identity_path}" != /* ]]; then
         resolved_identity_path="${repo_root}/${resolved_identity_path}"
     fi
-    if [[ ! -f "${resolved_identity_path}" || -L "${resolved_identity_path}" ]] ||
+    if ! zentty_qualification_verify_file_identity "${repo_root}" "${identity}" ||
         [[ "${identity_captured_at}" != "null" && ! -s "${resolved_identity_path}" ]] ||
-        [[ "$(sha256sum "${resolved_identity_path}" | awk '{print $1}')" != "${identity_sha}" ]] ||
         [[ "${identity_captured_at}" != "null" && "$(stat -c %Y "${resolved_identity_path}")" != "${identity_captured_at}" ]]; then
         echo "qualification-matrix: error: run evidence changed before summary publication: ${identity_path}" >&2
         evidence_changed=true
@@ -1498,6 +1546,7 @@ done < <(jq -c '
       .log?,
       .valgrind_report?,
       .environment.evidence_files[]?,
+      .qualification_inputs.agent_executables[]?,
       if has("valgrind") then
         {
           path:.valgrind.raw_receipt,
@@ -1551,6 +1600,12 @@ while IFS= read -r harness; do
 done < <(jq -c '.[] | .environment.harness? | select(. != null)' <<<"${results}")
 if "${evidence_changed}"; then
     run_failed=true
+fi
+
+if ! zentty_qualification_verify_provenance \
+    "${repo_root}" "${matrix}" "${matrix_schema}" "${BASH_SOURCE[0]}" \
+    "${qualification_provenance}"; then
+    fail "source, qualification input, or tool provenance changed before summary publication"
 fi
 
 expected_valgrind_ids="$(jq -c '[.cells[] | select(((.valgrind_report // "") | length) > 0) | .id] | sort' "${matrix}")"
@@ -1659,8 +1714,10 @@ jq -n \
     --argjson full "${full}" \
     --argjson qualification_timing "${qualification_timing}" \
     --argjson qualification_scheduler "${qualification_scheduler}" \
+    --argjson qualification_provenance "${qualification_provenance}" \
     '$summary_results[0] as $results | {
-      schema_version: 1,
+      schema_version: 2,
+      provenance: $qualification_provenance,
       totals_by_declared_status: $totals,
       logs_directory: $logs_directory,
       qualification_timing: $qualification_timing,
@@ -1710,6 +1767,11 @@ jq -n \
       }
     }' \
     >"${summary_temp}"
+if ! zentty_qualification_verify_provenance \
+    "${repo_root}" "${matrix}" "${matrix_schema}" "${BASH_SOURCE[0]}" \
+    "${qualification_provenance}"; then
+    fail "source, qualification input, or tool provenance changed during summary assembly"
+fi
 mv -f -- "${summary_temp}" "${summary}"
 summary_temp=""
 rm -f -- "${summary_results_temp}"
@@ -1731,6 +1793,11 @@ printf 'Scheduler:                 jobs=%s peak=%s display_jobs=%s display_peak=
     "${qualification_host_logical_cpus}" "${qualification_host_available_memory_kib}"
 printf 'CPU partitions:            work=%s display=%s\n' \
     "${qualification_work_cpu_set}" "${qualification_display_cpu_set}"
+printf 'Source identity:            %s tree=%s dirty=%s matrix=%s\n' \
+    "$(jq -r '.source.revision[0:12]' <<<"${qualification_provenance}")" \
+    "$(jq -r '.source.tree_sha256[0:12]' <<<"${qualification_provenance}")" \
+    "$(jq -r '.source.dirty' <<<"${qualification_provenance}")" \
+    "$(jq -r '.inputs.matrix.sha256[0:12]' <<<"${qualification_provenance}")"
 printf 'Longest cells:             %s\n' "$(jq -r '
     .longest_cells | map(.id + "=" + (.duration_ms | tostring) + "ms") | join(", ")
 ' <<<"${qualification_timing}")"

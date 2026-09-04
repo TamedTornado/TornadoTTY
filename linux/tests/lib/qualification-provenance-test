@@ -1,0 +1,149 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
+# shellcheck source=linux/tests/lib/qualification-provenance
+source "${repo_root}/linux/tests/lib/qualification-provenance"
+fixture="$(mktemp -d)"
+trap 'rm -rf -- "${fixture}"' EXIT
+test_repo="${fixture}/repo"
+fake_bin="${fixture}/bin"
+mkdir -p "${test_repo}/linux/test-policy" "${test_repo}/linux/tests" \
+    "${test_repo}/linux/ci/node-tools/node_modules/.bin" "${fake_bin}"
+
+for path in Cargo.lock rust-toolchain.toml linux/ghostty.lock \
+    linux/ci/environment-v1.json linux/ci/node-tools/pnpm-lock.yaml \
+    linux/qualification-matrix.json linux/test-policy/qualification-matrix.schema.json \
+    linux/tests/qualification-matrix; do
+    mkdir -p "$(dirname "${test_repo}/${path}")"
+    printf '%s\n' "${path}" >"${test_repo}/${path}"
+done
+for tool in rustc cargo zig node pnpm; do
+    cat >"${fake_bin}/${tool}" <<EOF
+#!/usr/bin/env bash
+echo '${tool} 1.0-test'
+EOF
+    chmod +x "${fake_bin}/${tool}"
+done
+for agent in codex gemini; do
+    cat >"${test_repo}/linux/ci/node-tools/node_modules/.bin/${agent}" <<EOF
+#!/usr/bin/env bash
+echo '${agent} 1.0-test'
+EOF
+    chmod +x "${test_repo}/linux/ci/node-tools/node_modules/.bin/${agent}"
+done
+
+git -C "${test_repo}" init -q
+git -C "${test_repo}" config user.name 'Qualification Test'
+git -C "${test_repo}" config user.email 'qualification@example.invalid'
+git -C "${test_repo}" add .
+git -C "${test_repo}" commit -qm baseline
+
+export ZENTTY_QUALIFICATION_RUSTC="${fake_bin}/rustc"
+export ZENTTY_QUALIFICATION_CARGO="${fake_bin}/cargo"
+export ZIG="${fake_bin}/zig"
+export ZENTTY_QUALIFICATION_NODE="${fake_bin}/node"
+export ZENTTY_QUALIFICATION_PNPM="${fake_bin}/pnpm"
+matrix="${test_repo}/linux/qualification-matrix.json"
+schema="${test_repo}/linux/test-policy/qualification-matrix.schema.json"
+runner="${test_repo}/linux/tests/qualification-matrix"
+
+capture() {
+    zentty_qualification_capture_provenance \
+        "${test_repo}" "${matrix}" "${schema}" "${runner}"
+}
+
+expect_verification_failure() {
+    local expected="$1"
+    if zentty_qualification_verify_provenance \
+        "${test_repo}" "${matrix}" "${schema}" "${runner}" "${expected}"; then
+        echo "qualification-provenance-test: changed provenance was accepted" >&2
+        exit 1
+    fi
+}
+
+baseline="$(capture)"
+zentty_qualification_validate_provenance "${baseline}"
+zentty_qualification_verify_provenance \
+    "${test_repo}" "${matrix}" "${schema}" "${runner}" "${baseline}"
+
+expect_verification_failure "$(jq '.source.revision = ("0" * 40)' <<<"${baseline}")"
+expect_verification_failure "$(jq '.source.tree_sha256 = ("0" * 64)' <<<"${baseline}")"
+expect_verification_failure "$(jq '.source.dirty = true' <<<"${baseline}")"
+expect_verification_failure "$(jq '.inputs.matrix.sha256 = ("0" * 64)' <<<"${baseline}")"
+if zentty_qualification_validate_provenance \
+    "$(jq 'del(.tools.cargo)' <<<"${baseline}")"; then
+    echo "qualification-provenance-test: missing tool identity was accepted" >&2
+    exit 1
+fi
+
+for path in linux/qualification-matrix.json \
+    linux/test-policy/qualification-matrix.schema.json \
+    linux/tests/qualification-matrix \
+    Cargo.lock rust-toolchain.toml linux/ghostty.lock \
+    linux/ci/environment-v1.json linux/ci/node-tools/pnpm-lock.yaml; do
+    printf 'changed\n' >>"${test_repo}/${path}"
+    expect_verification_failure "${baseline}"
+    git -C "${test_repo}" checkout -- "${path}"
+done
+
+external_matrix="${fixture}/external-matrix.json"
+printf 'external matrix\n' >"${external_matrix}"
+external_baseline="$(zentty_qualification_capture_provenance \
+    "${test_repo}" "${external_matrix}" "${schema}" "${runner}")"
+printf 'changed outside git\n' >>"${external_matrix}"
+if zentty_qualification_verify_provenance \
+    "${test_repo}" "${external_matrix}" "${schema}" "${runner}" \
+    "${external_baseline}"; then
+    echo "qualification-provenance-test: changed external matrix was accepted" >&2
+    exit 1
+fi
+
+printf 'staged\n' >>"${test_repo}/Cargo.lock"
+git -C "${test_repo}" add Cargo.lock
+staged="$(capture)"
+[[ "$(jq -r '.source.tree_sha256' <<<"${staged}")" != \
+   "$(jq -r '.source.tree_sha256' <<<"${baseline}")" ]]
+jq -e '.source.dirty and .source.index_dirty' <<<"${staged}" >/dev/null
+git -C "${test_repo}" reset -q --hard HEAD
+
+printf 'unstaged\n' >>"${test_repo}/Cargo.lock"
+unstaged="$(capture)"
+[[ "$(jq -r '.source.tree_sha256' <<<"${unstaged}")" != \
+   "$(jq -r '.source.tree_sha256' <<<"${baseline}")" ]]
+jq -e '.source.dirty and .source.worktree_dirty' <<<"${unstaged}" >/dev/null
+git -C "${test_repo}" checkout -- Cargo.lock
+
+printf 'untracked\n' >"${test_repo}/new-source.rs"
+untracked="$(capture)"
+[[ "$(jq -r '.source.tree_sha256' <<<"${untracked}")" != \
+   "$(jq -r '.source.tree_sha256' <<<"${baseline}")" ]]
+jq -e '.source.dirty and .source.untracked_count == 1' <<<"${untracked}" >/dev/null
+rm -f -- "${test_repo}/new-source.rs"
+
+irrelevant="$(zentty_qualification_capture_cell_inputs "${test_repo}" 'echo hello')"
+[[ "${irrelevant}" == '{}' ]]
+agents="$(zentty_qualification_capture_cell_inputs "${test_repo}" \
+    'ZENTTY_REAL_GEMINI_BIN=linux/ci/node-tools/node_modules/.bin/gemini ZENTTY_RUN_CODEX_LIFECYCLE=true run')"
+jq -e '
+  [.agent_executables[].name] == ["gemini","codex"] and
+  all(.agent_executables[]; (.sha256 | test("^[0-9a-f]{64}$")) and
+    (.version | endswith("1.0-test"))) and has("container_images") == false
+' <<<"${agents}" >/dev/null
+gemini_identity="$(jq -c '.agent_executables[] | select(.name == "gemini")' <<<"${agents}")"
+zentty_qualification_verify_file_identity "${test_repo}" "${gemini_identity}"
+printf 'changed\n' >>"${test_repo}/linux/ci/node-tools/node_modules/.bin/gemini"
+if zentty_qualification_verify_file_identity "${test_repo}" "${gemini_identity}"; then
+    echo "qualification-provenance-test: stale per-cell executable identity was accepted" >&2
+    exit 1
+fi
+container="$(zentty_qualification_capture_cell_inputs "${test_repo}" \
+    'ZENTTY_TEST_BUSYBOX_IMAGE=busybox@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa run')"
+jq -e '
+  .container_images == [{
+    reference:"busybox@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    digest:"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  }] and has("agent_executables") == false
+' <<<"${container}" >/dev/null
+
+echo 'Qualification provenance focused tests passed: source, inputs, tools, and per-cell identities'

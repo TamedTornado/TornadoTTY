@@ -1,0 +1,236 @@
+#!/usr/bin/env bash
+
+zentty_qualification_file_identity() {
+    local repo_root="$1" path="$2" resolved display_path
+    [[ -f "${path}" && ! -L "${path}" ]] || return 1
+    resolved="$(readlink -f -- "${path}")"
+    display_path="${resolved}"
+    if [[ "${resolved}" == "${repo_root}/"* ]]; then
+        display_path="${resolved#"${repo_root}/"}"
+    fi
+    jq -cn \
+        --arg path "${display_path}" \
+        --arg sha256 "$(sha256sum -- "${resolved}" | awk '{print $1}')" \
+        '{path:$path,sha256:$sha256}'
+}
+
+zentty_qualification_verify_file_identity() {
+    local repo_root="$1" identity="$2" path expected_sha256 resolved
+    path="$(jq -er '.path | select(type == "string" and length > 0)' <<<"${identity}")" || return 1
+    expected_sha256="$(jq -er '.sha256 | select(type == "string" and test("^[0-9a-f]{64}$"))' <<<"${identity}")" || return 1
+    resolved="${path}"
+    [[ "${resolved}" == /* ]] || resolved="${repo_root}/${resolved}"
+    [[ -f "${resolved}" && ! -L "${resolved}" ]] || return 1
+    [[ "$(sha256sum -- "${resolved}" | awk '{print $1}')" == "${expected_sha256}" ]]
+}
+
+zentty_qualification_tool_identity() {
+    local repo_root="$1" requested="$2" version_argument="${3:---version}"
+    local executable resolved display_path version
+    if [[ "${requested}" == */* ]]; then
+        executable="${requested}"
+    else
+        executable="$(command -v -- "${requested}")" || return 1
+    fi
+    [[ -x "${executable}" ]] || return 1
+    resolved="$(readlink -f -- "${executable}")"
+    display_path="${resolved}"
+    if [[ "${resolved}" == "${repo_root}/"* ]]; then
+        display_path="${resolved#"${repo_root}/"}"
+    fi
+    version="$("${executable}" "${version_argument}" 2>/dev/null | head -n 1)"
+    [[ -n "${version}" ]] || return 1
+    jq -cn \
+        --arg path "${display_path}" \
+        --arg sha256 "$(sha256sum -- "${resolved}" | awk '{print $1}')" \
+        --arg version "${version}" \
+        '{path:$path,sha256:$sha256,version:$version}'
+}
+
+zentty_qualification_source_identity() {
+    local repo_root="$1" revision index_sha256 worktree_sha256
+    local untracked_stream untracked_sha256 untracked_count path
+    local index_dirty=false worktree_dirty=false dirty=false tree_payload tree_sha256
+    revision="$(git -C "${repo_root}" rev-parse HEAD)" || return 1
+    [[ "${revision}" =~ ^[0-9a-f]{40}$ ]] || return 1
+
+    index_sha256="$(git -C "${repo_root}" ls-files --stage -z | sha256sum | awk '{print $1}')"
+    worktree_sha256="$({
+        git -C "${repo_root}" diff --no-ext-diff --no-textconv \
+            --binary --full-index --no-renames
+    } | sha256sum | awk '{print $1}')"
+    git -C "${repo_root}" diff --cached --quiet HEAD -- || index_dirty=true
+    git -C "${repo_root}" diff --quiet -- || worktree_dirty=true
+
+    untracked_stream="$(mktemp)" || return 1
+    while IFS= read -r -d '' path; do
+        printf '%s\0%s\0%s\0' \
+            "${path}" \
+            "$(stat -c '%f' -- "${repo_root}/${path}")" \
+            "$(git -C "${repo_root}" hash-object --no-filters -- "${path}")"
+    done < <(git -C "${repo_root}" ls-files --others --exclude-standard -z) \
+        >"${untracked_stream}"
+    untracked_sha256="$(sha256sum -- "${untracked_stream}" | awk '{print $1}')"
+    untracked_count="$(git -C "${repo_root}" ls-files --others --exclude-standard -z |
+        awk 'BEGIN { RS = "\0" } length { count++ } END { print count + 0 }')"
+    rm -f -- "${untracked_stream}"
+
+    if "${index_dirty}" || "${worktree_dirty}" || (( untracked_count > 0 )); then
+        dirty=true
+    fi
+    tree_payload="$(jq -cnS \
+        --arg revision "${revision}" \
+        --arg index_sha256 "${index_sha256}" \
+        --arg worktree_sha256 "${worktree_sha256}" \
+        --arg untracked_sha256 "${untracked_sha256}" \
+        --argjson untracked_count "${untracked_count}" \
+        '{revision:$revision,index_sha256:$index_sha256,
+          worktree_sha256:$worktree_sha256,
+          untracked_sha256:$untracked_sha256,
+          untracked_count:$untracked_count}')"
+    tree_sha256="$(printf '%s' "${tree_payload}" | sha256sum | awk '{print $1}')"
+
+    jq -cn \
+        --arg revision "${revision}" \
+        --argjson dirty "${dirty}" \
+        --argjson index_dirty "${index_dirty}" \
+        --argjson worktree_dirty "${worktree_dirty}" \
+        --arg index_sha256 "${index_sha256}" \
+        --arg worktree_sha256 "${worktree_sha256}" \
+        --arg untracked_sha256 "${untracked_sha256}" \
+        --argjson untracked_count "${untracked_count}" \
+        --arg tree_sha256 "${tree_sha256}" '
+        {
+          revision:$revision,dirty:$dirty,index_dirty:$index_dirty,
+          worktree_dirty:$worktree_dirty,untracked_count:$untracked_count,
+          tree_sha256:$tree_sha256,index_sha256:$index_sha256,
+          worktree_sha256:$worktree_sha256,untracked_sha256:$untracked_sha256
+        }
+    '
+}
+
+zentty_qualification_capture_provenance() {
+    local repo_root="$1" matrix="$2" matrix_schema="$3" matrix_runner="$4"
+    local source matrix_identity schema_identity runner_identity cargo_lock
+    local rust_toolchain ghostty_lock ci_environment agent_tools_lock
+    local rustc cargo zig node pnpm
+
+    source="$(zentty_qualification_source_identity "${repo_root}")" || return 1
+    matrix_identity="$(zentty_qualification_file_identity "${repo_root}" "${matrix}")" || return 1
+    schema_identity="$(zentty_qualification_file_identity "${repo_root}" "${matrix_schema}")" || return 1
+    runner_identity="$(zentty_qualification_file_identity "${repo_root}" "${matrix_runner}")" || return 1
+    cargo_lock="$(zentty_qualification_file_identity "${repo_root}" "${repo_root}/Cargo.lock")" || return 1
+    rust_toolchain="$(zentty_qualification_file_identity "${repo_root}" "${repo_root}/rust-toolchain.toml")" || return 1
+    ghostty_lock="$(zentty_qualification_file_identity "${repo_root}" "${repo_root}/linux/ghostty.lock")" || return 1
+    ci_environment="$(zentty_qualification_file_identity "${repo_root}" "${repo_root}/linux/ci/environment-v1.json")" || return 1
+    agent_tools_lock="$(zentty_qualification_file_identity "${repo_root}" "${repo_root}/linux/ci/node-tools/pnpm-lock.yaml")" || return 1
+
+    rustc="$(zentty_qualification_tool_identity "${repo_root}" "${ZENTTY_QUALIFICATION_RUSTC:-rustc}")" || return 1
+    cargo="$(zentty_qualification_tool_identity "${repo_root}" "${ZENTTY_QUALIFICATION_CARGO:-cargo}")" || return 1
+    zig="$(zentty_qualification_tool_identity "${repo_root}" \
+        "${ZIG:-${repo_root}/../.tools/zig-x86_64-linux-0.16.0/zig}" version)" || return 1
+    node="$(zentty_qualification_tool_identity "${repo_root}" "${ZENTTY_QUALIFICATION_NODE:-node}")" || return 1
+    pnpm="$(zentty_qualification_tool_identity "${repo_root}" "${ZENTTY_QUALIFICATION_PNPM:-pnpm}")" || return 1
+
+    jq -cn \
+        --argjson source "${source}" \
+        --argjson matrix "${matrix_identity}" \
+        --argjson matrix_schema "${schema_identity}" \
+        --argjson matrix_runner "${runner_identity}" \
+        --argjson cargo_lock "${cargo_lock}" \
+        --argjson rust_toolchain "${rust_toolchain}" \
+        --argjson ghostty_lock "${ghostty_lock}" \
+        --argjson ci_environment "${ci_environment}" \
+        --argjson agent_tools_lock "${agent_tools_lock}" \
+        --argjson rustc "${rustc}" --argjson cargo "${cargo}" \
+        --argjson zig "${zig}" --argjson node "${node}" \
+        --argjson pnpm "${pnpm}" '
+        {
+          schema_version:1,source:$source,
+          inputs:{
+            matrix:$matrix,matrix_schema:$matrix_schema,
+            runner:$matrix_runner,cargo_lock:$cargo_lock,
+            rust_toolchain:$rust_toolchain,ghostty_lock:$ghostty_lock,
+            ci_environment:$ci_environment,agent_tools_lock:$agent_tools_lock
+          },
+          tools:{rustc:$rustc,cargo:$cargo,zig:$zig,node:$node,pnpm:$pnpm}
+        }
+    '
+}
+
+zentty_qualification_validate_provenance() {
+    jq -e '
+      def sha: type == "string" and test("^[0-9a-f]{64}$");
+      def file_identity:
+        (keys | sort) == ["path","sha256"] and
+        (.path | type == "string" and length > 0) and (.sha256 | sha);
+      def tool_identity:
+        (keys | sort) == ["path","sha256","version"] and
+        (.path | type == "string" and length > 0) and (.sha256 | sha) and
+        (.version | type == "string" and length > 0);
+      (keys | sort) == ["inputs","schema_version","source","tools"] and
+      .schema_version == 1 and
+      (.source | keys | sort) == [
+        "dirty","index_dirty","index_sha256","revision","tree_sha256",
+        "untracked_count","untracked_sha256","worktree_dirty","worktree_sha256"
+      ] and
+      (.source.revision | type == "string" and test("^[0-9a-f]{40}$")) and
+      (.source.dirty | type == "boolean") and
+      (.source.index_dirty | type == "boolean") and
+      (.source.worktree_dirty | type == "boolean") and
+      (.source.untracked_count | type == "number" and floor == . and . >= 0) and
+      (.source.tree_sha256 | sha) and (.source.index_sha256 | sha) and
+      (.source.worktree_sha256 | sha) and (.source.untracked_sha256 | sha) and
+      (.source.dirty == (.source.index_dirty or .source.worktree_dirty or
+        .source.untracked_count > 0)) and
+      (.inputs | keys | sort) == [
+        "agent_tools_lock","cargo_lock","ci_environment","ghostty_lock",
+        "matrix","matrix_schema","runner","rust_toolchain"
+      ] and all(.inputs[]; file_identity) and
+      (.tools | keys | sort) == ["cargo","node","pnpm","rustc","zig"] and
+      all(.tools[]; tool_identity)
+    ' <<<"$1" >/dev/null
+}
+
+zentty_qualification_verify_provenance() {
+    local repo_root="$1" matrix="$2" matrix_schema="$3" matrix_runner="$4" expected="$5"
+    local actual
+    zentty_qualification_validate_provenance "${expected}" || return 1
+    actual="$(zentty_qualification_capture_provenance \
+        "${repo_root}" "${matrix}" "${matrix_schema}" "${matrix_runner}")" || return 1
+    [[ "$(jq -cS . <<<"${actual}")" == "$(jq -cS . <<<"${expected}")" ]]
+}
+
+zentty_qualification_capture_cell_inputs() {
+    local repo_root="$1" command="$2" agent_executables='[]' container_images='[]'
+    local path identity reference digest
+
+    if [[ "${command}" == *"ZENTTY_REAL_GEMINI_BIN="* ]]; then
+        path="$(sed -n 's/.*ZENTTY_REAL_GEMINI_BIN=\([^ ]*\).*/\1/p' <<<"${command}")"
+        [[ "${path}" == /* ]] || path="${repo_root}/${path}"
+        identity="$(zentty_qualification_tool_identity "${repo_root}" "${path}")" || return 1
+        agent_executables="$(jq -cn --argjson values "${agent_executables}" \
+            --argjson identity "${identity}" '$values + [({name:"gemini"} + $identity)]')"
+    fi
+    if [[ "${command}" == *"ZENTTY_RUN_CODEX_LIFECYCLE=true"* ]]; then
+        path="${repo_root}/linux/ci/node-tools/node_modules/.bin/codex"
+        identity="$(zentty_qualification_tool_identity "${repo_root}" "${path}")" || return 1
+        agent_executables="$(jq -cn --argjson values "${agent_executables}" \
+            --argjson identity "${identity}" '$values + [({name:"codex"} + $identity)]')"
+    fi
+    if [[ "${command}" == *"ZENTTY_TEST_BUSYBOX_IMAGE="* ]]; then
+        reference="$(sed -n 's/.*ZENTTY_TEST_BUSYBOX_IMAGE=\([^ ]*\).*/\1/p' <<<"${command}")"
+        digest="${reference#*@}"
+        [[ "${digest}" =~ ^sha256:[0-9a-f]{64}$ ]] || return 1
+        container_images="$(jq -cn --argjson values "${container_images}" \
+            --arg reference "${reference}" --arg digest "${digest}" \
+            '$values + [{reference:$reference,digest:$digest}]')"
+    fi
+
+    jq -cn --argjson agents "${agent_executables}" \
+        --argjson containers "${container_images}" '
+        {} +
+        if ($agents | length) == 0 then {} else {agent_executables:$agents} end +
+        if ($containers | length) == 0 then {} else {container_images:$containers} end
+    '
+}

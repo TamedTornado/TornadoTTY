@@ -32,10 +32,12 @@ Exit 77 is an unexpected skip and cannot pass qualification.
 ## Intentionally retired machinery
 
 The pre-product phase created mutation manifests for Bash governance, nested
-aggregate runner tests, source-snapshot attestations, archive attack fixtures,
-review-record schemas, and retirement-record schemas. Those artifacts were
-removed because they tested the evidence framework rather than the delivered
-application and caused recursive multi-hour qualification.
+aggregate runner tests, standalone source-snapshot attestation systems,
+archive attack fixtures, review-record schemas, and retirement-record schemas.
+Those artifacts were removed because they tested the evidence framework rather
+than the delivered application and caused recursive multi-hour qualification.
+The final machine summary instead embeds one compact source/input provenance
+envelope and verifies it at publication; it is not another execution layer.
 
 Mutation testing returns after the Rust vertical slice is green and only for
 focused Rust state, ownership, callback, persistence, and rollback logic.
@@ -46,6 +48,7 @@ Fast validation:
 
 ```sh
 linux/tests/qualification-matrix-test
+linux/tests/lib/qualification-provenance-test
 linux/tests/qualification-matrix --validate-only
 ```
 

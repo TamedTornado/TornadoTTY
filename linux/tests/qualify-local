@@ -41,6 +41,7 @@ support_tests=(
     linux/tests/tmux-compat-source-contract-test
     linux/tests/controlled-agent-test
     linux/tests/lib/qualification-capacity-test
+    linux/tests/lib/qualification-provenance-test
     linux/tests/lib/valgrind-evidence-lock-test
     linux/tests/lib/working-tree-fixture-test
     linux/tests/lib/controlled-environment-test

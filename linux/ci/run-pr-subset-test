@@ -53,7 +53,29 @@ revision="0123456789abcdef0123456789abcdef01234567"
 jq -n \
     --arg revision "${revision}" --arg hash "${hash}" '
     {
-      schema_version:1,source_revision:$revision,ghostty_revision:$revision,
+      schema_version:2,
+      provenance:{
+        schema_version:1,
+        source:{
+          revision:$revision,dirty:false,index_dirty:false,worktree_dirty:false,
+          untracked_count:0,tree_sha256:$hash,index_sha256:$hash,
+          worktree_sha256:$hash,untracked_sha256:$hash
+        },
+        inputs:({
+          matrix:{path:"linux/qualification-matrix.json",sha256:$hash},
+          matrix_schema:{path:"linux/test-policy/qualification-matrix.schema.json",sha256:$hash},
+          runner:{path:"linux/ci/run-pr-subset",sha256:$hash},
+          cargo_lock:{path:"Cargo.lock",sha256:$hash},
+          rust_toolchain:{path:"rust-toolchain.toml",sha256:$hash},
+          ghostty_lock:{path:"linux/ghostty.lock",sha256:$hash},
+          ci_environment:{path:"linux/ci/environment-v1.json",sha256:$hash},
+          agent_tools_lock:{path:"linux/ci/node-tools/pnpm-lock.yaml",sha256:$hash}
+        }),
+        tools:(["rustc","cargo","zig","node","pnpm"] |
+          map({key:.,value:{path:("bin/" + .),sha256:$hash,version:(. + " test")}}) |
+          from_entries)
+      },
+      source_revision:$revision,ghostty_revision:$revision,
       policy_sha256:$hash,matrix_sha256:$hash,
       started_at_epoch:1,finished_at_epoch:2,
       totals:{selected:1,passed:1,support_selected:1,support_passed:1},
@@ -88,5 +110,8 @@ expect_summary_rejected false-subset-claim '.claims.public_pr_subset_passed=fals
 expect_summary_rejected false-full-claim '.claims.full_linux_qualification_passed=true'
 expect_summary_rejected incomplete-success '.totals.selected=2'
 expect_summary_rejected duplicate-result '.results += [.results[0]] | .totals.selected=2 | .totals.passed=2'
+expect_summary_rejected conflicting-source-revision '.source_revision = ("f" * 40)'
+expect_summary_rejected conflicting-matrix-identity '.matrix_sha256 = ("f" * 64)'
+expect_summary_rejected missing-tool-identity 'del(.provenance.tools.cargo)'
 
-echo "run-pr-subset-test: PASS negatives=stale+command+skip+receipt+support+claims+incomplete+duplicate"
+echo "run-pr-subset-test: PASS negatives=stale+command+skip+receipt+support+claims+incomplete+duplicate+provenance"

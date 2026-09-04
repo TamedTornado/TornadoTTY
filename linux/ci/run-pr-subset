@@ -4,11 +4,14 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 policy="${ZENTTY_CI_PR_SUBSET_POLICY:-${repo_root}/linux/ci/pr-subset-v1.json}"
 matrix="${ZENTTY_QUALIFICATION_MATRIX:-${repo_root}/linux/qualification-matrix.json}"
+matrix_schema="${repo_root}/linux/test-policy/qualification-matrix.schema.json"
 summary="${ZENTTY_CI_PR_SUBSET_SUMMARY:-${repo_root}/build/linux/ci-pr-subset-summary.json}"
 logs_dir="${ZENTTY_CI_PR_SUBSET_LOGS:-${repo_root}/build/linux/ci-pr-subset-logs}"
 # Repository-root path is resolved at runtime.
 # shellcheck disable=SC1091
 source "${repo_root}/linux/tests/lib/controlled-environment"
+# shellcheck source=linux/tests/lib/qualification-provenance
+source "${repo_root}/linux/tests/lib/qualification-provenance"
 result_tool="${repo_root}/linux/ci/pr-subset-result"
 
 fail() {
@@ -54,6 +57,12 @@ if [[ -n "${ZENTTY_EXPECTED_COMMIT:-}" ]]; then
     [[ "${source_revision}" == "${ZENTTY_EXPECTED_COMMIT}" ]] ||
         fail "source revision differs from the exact event commit"
 fi
+qualification_provenance="$(zentty_qualification_capture_provenance \
+    "${repo_root}" "${matrix}" "${matrix_schema}" "${BASH_SOURCE[0]}")" ||
+    fail "could not capture source, input, and tool provenance"
+zentty_qualification_validate_provenance "${qualification_provenance}" ||
+    fail "captured qualification provenance is invalid"
+policy_sha256_start="$(sha256sum "${policy}" | awk '{print $1}')"
 
 results_file="$(mktemp)"
 support_results_file="$(mktemp)"
@@ -194,10 +203,18 @@ if ! "${run_failed}" && (( passed_count == selected_count )) &&
     subset_passed=true
 fi
 summary_temp="$(mktemp "${summary}.tmp.XXXXXX")"
+if ! zentty_qualification_verify_provenance \
+    "${repo_root}" "${matrix}" "${matrix_schema}" "${BASH_SOURCE[0]}" \
+    "${qualification_provenance}"; then
+    fail "source, qualification input, or tool provenance changed before summary publication"
+fi
+[[ "$(sha256sum "${policy}" | awk '{print $1}')" == "${policy_sha256_start}" ]] ||
+    fail "PR subset policy changed before summary publication"
 jq -n \
+    --argjson qualification_provenance "${qualification_provenance}" \
     --arg source_revision "${source_revision}" \
     --arg ghostty_revision "$(sed -n 's/^revision=//p' "${repo_root}/linux/ghostty.lock")" \
-    --arg policy_sha256 "$(sha256sum "${policy}" | awk '{print $1}')" \
+    --arg policy_sha256 "${policy_sha256_start}" \
     --arg matrix_sha256 "$(sha256sum "${matrix}" | awk '{print $1}')" \
     --argjson started_at_epoch "${started_at_epoch}" \
     --argjson finished_at_epoch "${finished_at_epoch}" \
@@ -209,7 +226,8 @@ jq -n \
     --argjson support_results "${support_results}" \
     --argjson subset_passed "${subset_passed}" '
     {
-      schema_version:1,source_revision:$source_revision,
+      schema_version:2,provenance:$qualification_provenance,
+      source_revision:$source_revision,
       ghostty_revision:$ghostty_revision,policy_sha256:$policy_sha256,
       matrix_sha256:$matrix_sha256,started_at_epoch:$started_at_epoch,
       finished_at_epoch:$finished_at_epoch,
@@ -226,6 +244,13 @@ jq -n \
       }
     }
   ' >"${summary_temp}"
+if ! zentty_qualification_verify_provenance \
+    "${repo_root}" "${matrix}" "${matrix_schema}" "${BASH_SOURCE[0]}" \
+    "${qualification_provenance}"; then
+    fail "source, qualification input, or tool provenance changed during summary assembly"
+fi
+[[ "$(sha256sum "${policy}" | awk '{print $1}')" == "${policy_sha256_start}" ]] ||
+    fail "PR subset policy changed during summary assembly"
 mv -f -- "${summary_temp}" "${summary}"
 summary_temp=""
 "${result_tool}" validate-summary "${summary}" >/dev/null

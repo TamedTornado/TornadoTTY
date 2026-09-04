@@ -259,3 +259,72 @@ weakening its acceptance criteria.
 - This slice does not claim stronger unit assertions or a mutation kill rate.
   Those remain GH-146. Source/input identity in full-run receipts remains
   GH-168, and aggregate/retry simplification remains GH-169.
+
+## 2026-09-04 — source-bound qualification receipts (GH-168)
+
+### Discovery
+
+- The full matrix summary recorded result and evidence-file hashes but no Git
+  revision, dirty state, matrix identity, runner identity, lockfile identities,
+  or actual tool versions. Copying the receipt away from its working tree lost
+  the answer to “what was qualified?”
+- The PR-subset summary carried flat source and matrix hashes, but the full
+  summary did not. The two paths therefore represented the same concepts with
+  different strength.
+- Matrix results named a cell and outcome but did not bind the result to the
+  exact command text. Agent and Docker cells also did not identify the
+  executable versions or pinned image digest they exercised.
+
+### Repair
+
+- Added one shared `qualification-provenance` contract consumed by the full
+  matrix and PR-subset runners. It produces one aggregate Git-tree identity,
+  not a per-source-file manifest. The identity changes independently for HEAD,
+  index, tracked-worktree, or non-ignored untracked-file changes and reports
+  whether the tree is dirty.
+- The envelope records SHA-256 identities for the matrix, authoritative schema,
+  active runner, Cargo lock, Rust toolchain file, Ghostty lock, controlled CI
+  environment manifest, and pnpm agent-tools lock. It also records the actual
+  rustc, Cargo, Zig, Node, and pnpm version output plus executable identity.
+- Ordinary dirty local trees remain allowed and are represented honestly.
+  Ignored build products are excluded using Git's own ignore contract.
+- Every matrix result now carries the exact command and its SHA-256 identity.
+  Only agent lifecycle cells receive Codex/Gemini path, version, and executable
+  hashes; only the Docker dev-server cell receives its pinned image reference
+  and digest. Other cells receive no placeholder metadata.
+- Both runners recapture and compare the complete provenance before summary
+  creation and again immediately before atomic publication. The full runner's
+  existing evidence lease/check now also covers agent executables. The PR
+  policy hash is independently held stable across its run.
+- The PR subset embeds the same provenance envelope and its legacy flat source
+  and matrix fields are required to equal that envelope. Both generated
+  summary formats are now schema version 2 because this is a machine-contract
+  change.
+
+### Focused negative evidence
+
+- A temporary real Git repository proved clean verification and rejection of a
+  wrong revision, wrong aggregate tree identity, inconsistent dirty state,
+  wrong matrix hash, missing tool identity, and changed matrix, schema, runner,
+  Cargo lock, Rust toolchain, Ghostty lock, CI manifest, or pnpm lock.
+- Separate staged, unstaged, and untracked changes each produced a distinct
+  aggregate tree identity and the correct dirty-state component.
+- An external matrix file was changed without changing the Git tree and was
+  still rejected, proving the explicit input identity is effective.
+- A captured per-cell Gemini identity was rejected after its executable
+  changed. Agent and container metadata was absent from an irrelevant cell and
+  present with exact versions/digests on relevant fixtures.
+- PR summary negatives reject a conflicting flat source revision, conflicting
+  matrix hash, or missing provenance tool. Existing matrix negatives continue
+  to reject false full-qualification claims.
+
+### Executed checks and limits
+
+- `linux/tests/lib/qualification-provenance-test`: passed.
+- `linux/ci/run-pr-subset-test`: passed.
+- `linux/tests/qualification-matrix-test`: passed.
+- `linux/tests/qualification-matrix --validate-only`: passed.
+- Warning-level ShellCheck and `git diff --check`: passed.
+- No product matrix or aggregate local qualification was run. This slice proves
+  the capture/verification/publication contracts with focused fixtures; it
+  does not manufacture a new qualification result for code that was not run.

@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+# shellcheck source=linux/tests/lib/qualification-provenance
+source "${repo_root}/linux/tests/lib/qualification-provenance"
+
 fail() {
     echo "pr-subset-result: error: $*" >&2
     exit 1
@@ -26,17 +30,23 @@ case "${1:-}" in
         [[ $# == 2 ]] || fail "usage: $0 validate-summary SUMMARY"
         summary="$2"
         [[ -f "${summary}" && ! -L "${summary}" ]] || fail "summary is missing or unsafe"
+        provenance="$(jq -ce '.provenance' "${summary}")" ||
+            fail "summary provenance is missing"
+        zentty_qualification_validate_provenance "${provenance}" ||
+            fail "summary provenance is invalid"
         jq -e '
           (keys | sort) == [
             "claims","finished_at_epoch","ghostty_revision","matrix_sha256",
-            "policy_sha256","results","schema_version","source_revision",
+            "policy_sha256","provenance","results","schema_version","source_revision",
             "started_at_epoch","support_results","totals"
           ] and
-          .schema_version == 1 and
+          .schema_version == 2 and
           (.source_revision | type == "string" and test("^[0-9a-f]{40}$")) and
           (.ghostty_revision | type == "string" and test("^[0-9a-f]{40}$")) and
           (.policy_sha256 | type == "string" and test("^[0-9a-f]{64}$")) and
           (.matrix_sha256 | type == "string" and test("^[0-9a-f]{64}$")) and
+          .source_revision == .provenance.source.revision and
+          .matrix_sha256 == .provenance.inputs.matrix.sha256 and
           (.started_at_epoch | type == "number" and floor == . and . >= 0) and
           (.finished_at_epoch | type == "number" and floor == . and . >= 0) and
           .finished_at_epoch >= .started_at_epoch and
