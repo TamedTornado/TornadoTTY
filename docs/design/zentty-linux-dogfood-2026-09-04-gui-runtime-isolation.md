@@ -575,3 +575,31 @@ No sleep, retry, text inference, terminal-title inference, or new test harness
 was added. The currently running installed client does not contain this repair;
 activation requires a later coordinated client restart. Switching away from
 and back to the affected pane remains the workaround for that running build.
+
+### Correction to the field attribution
+
+Jason clarified that the reported completion arrived while he was in another
+pane. He selected the affected pane and began typing; the visible Needs Input
+state remained until he submitted the prompt. The exact journal sequence then
+showed that focus acknowledgement was not the failing component:
+
+- at 20:48:05, pane 14 transitioned correctly to `agent.idle`;
+- a generic terminal completion notification immediately projected the pane as
+  `NeedsInput` with `Approval` interaction;
+- at 20:48:09, selecting pane 14 changed the inbox unresolved count from one
+  to zero;
+- at 20:48:33, prompt submission produced `agent.running`, which replaced the
+  false sidebar status.
+
+The live Codex process had been launched at 19:54 by the formerly stale private
+CLI, before that installed copy was corrected at 19:59. Its immutable launch
+arguments enable OSC notifications but do not contain the corrected
+`tui.notifications=["approval-requested"]` restriction. Ordinary turn
+completion can therefore still enter that legacy process's approval-only OSC
+channel. The new launcher policy is installed but cannot rewrite an existing
+Codex process's command line; it takes effect when the session is next launched.
+
+The already-focused acknowledgement defect fixed above was independently real
+and was explicitly encoded by the former unit expectation, but it was not the
+cause of this particular field symptom. The observed false Needs Input status
+remains GH-172 validation, not evidence that pane selection failed.
