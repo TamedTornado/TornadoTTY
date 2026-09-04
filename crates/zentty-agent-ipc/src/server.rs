@@ -56,7 +56,7 @@ impl ServerCommand {
                     .to_vec();
                 if command.is_empty() {
                     Err(ServerIpcError::Invalid(
-                        "missing command after zentty server watch --".to_owned(),
+                        "missing command after tornadotty-cli server watch --".to_owned(),
                     ))
                 } else {
                     Ok(Self::Watch { command })

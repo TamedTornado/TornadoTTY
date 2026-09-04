@@ -223,5 +223,24 @@
   PASS; Debian packaging policy PASS; packaging negative fixtures PASS; Arch
   packaging policy PASS; Arch artifact-auditor fixtures PASS; isolated
   installed-product-root fixture PASS; `agent_runtime` path-resolution tests
-  PASS. Real Debian and Arch package receipts are still required after a clean
-  commit; these focused results are not a release-qualification claim.
+  PASS.
+- The first real Debian candidate passed structural audit (1,298 declared
+  files) and all nine disposable dpkg lifecycle transitions, including removal
+  of the old owned paths and preservation of user XDG data. Executing its
+  private binaries then exposed one remaining public leak:
+  `tornadotty-cli` printed a `zentty: usage: zentty ...` error. The CLI prefix,
+  usage strings, launch diagnostics, server diagnostics, and tmux CLI
+  expectations now use `tornadotty-cli`/`TornadoTTY`; the internal Cargo binary
+  target remains `zentty`.
+- PASS: focused public CLI identity process test and five real Unix-socket tmux
+  CLI process tests. The package structural suite now executes both packaged
+  binaries and rejects obsolete public names. A final current-revision Debian
+  rebuild/lifecycle and a real Arch/Omarchy artifact remain required; none of
+  these focused results is a release-qualification claim.
+- A direct full IPC-crate run from a dogfooded Codex pane initially failed three
+  “outside a managed agent” launch cases because the real pane correctly
+  exported `ZENTTY_AGENT_TOOL=codex`. Serial execution reproduced the same
+  failures, disproving an initial concurrency hypothesis. Re-running the full
+  24-case launch process suite with only that ambient marker removed satisfied
+  the cases' documented outside-agent precondition and passed. No assertion or
+  production behavior was changed to hide the environmental mismatch.

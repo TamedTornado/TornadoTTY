@@ -19,10 +19,12 @@ use zentty_tmux_compat::{
     Command, Invocation, TmuxCompatRequest, WAIT_POLL_INTERVAL, WaitForAction,
 };
 
+const PUBLIC_CLI: &str = "tornadotty-cli";
+
 fn main() -> ExitCode {
     let result = run();
     if let Err(error) = &result {
-        eprintln!("zentty: {error}");
+        eprintln!("{PUBLIC_CLI}: {error}");
     }
     application_exit_code(&result)
 }
@@ -64,7 +66,8 @@ fn run() -> Result<(), String> {
     }
     if command.as_deref() != Some("ipc") {
         return Err(
-            "usage: zentty ipc <agent-event|agent-signal|agent-status> [arguments...]".to_owned(),
+            "usage: tornadotty-cli ipc <agent-event|agent-signal|agent-status> [arguments...]"
+                .to_owned(),
         );
     }
     let subcommand = arguments.next();
@@ -78,7 +81,8 @@ fn run() -> Result<(), String> {
     }
     if subcommand.as_deref() != Some("agent-event") {
         return Err(
-            "usage: zentty ipc <agent-event|agent-signal|agent-status> [arguments...]".to_owned(),
+            "usage: tornadotty-cli ipc <agent-event|agent-signal|agent-status> [arguments...]"
+                .to_owned(),
         );
     }
     let remaining = arguments.collect::<Vec<_>>();
@@ -138,7 +142,7 @@ fn run() -> Result<(), String> {
 
 fn run_launch(mut arguments: impl Iterator<Item = String>) -> Result<(), String> {
     let tool = arguments.next().ok_or_else(|| {
-        "usage: zentty launch <amp|claude|codex|copilot|cursor|droid|gemini|opencode|pi|omp|kimi|grok|agy|hermes|vibe|small-harness> [arguments...]".to_owned()
+        "usage: tornadotty-cli launch <amp|claude|codex|copilot|cursor|droid|gemini|opencode|pi|omp|kimi|grok|agy|hermes|vibe|small-harness> [arguments...]".to_owned()
     })?;
     launch_agent(&tool, &arguments.collect::<Vec<_>>()).map_err(|error| error.to_string())
 }
@@ -374,9 +378,9 @@ fn run_server(arguments: &[String]) -> Result<(), String> {
 
 fn send_server_command(command: &ServerCommand) -> Result<(), String> {
     let socket = std::env::var("ZENTTY_INSTANCE_SOCKET")
-        .map_err(|_| "zentty server commands must run inside a Zentty pane".to_owned())?;
+        .map_err(|_| "tornadotty-cli server commands must run inside a TornadoTTY pane".to_owned())?;
     let token = require_pane_credential()
-        .map_err(|_| "zentty server commands must run inside a Zentty pane".to_owned())?;
+        .map_err(|_| "tornadotty-cli server commands must run inside a TornadoTTY pane".to_owned())?;
     let route = command
         .route()
         .ok_or_else(|| "server watch must be handled by the watch runner".to_owned())?;
@@ -405,7 +409,7 @@ fn send_server_command(command: &ServerCommand) -> Result<(), String> {
 fn run_server_watch(command: &[String]) -> Result<(), String> {
     let executable = command
         .first()
-        .ok_or_else(|| "missing command after zentty server watch --".to_owned())?;
+        .ok_or_else(|| "missing command after tornadotty-cli server watch --".to_owned())?;
     let _ = send_server_command(&ServerCommand::WatchClear { json: false });
     let mut child = ProcessCommand::new(executable)
         .args(&command[1..])

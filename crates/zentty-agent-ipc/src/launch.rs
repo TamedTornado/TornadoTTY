@@ -120,7 +120,9 @@ pub fn launch_agent(tool: &str, arguments: &[String]) -> Result<(), LaunchError>
     if let Err(error) = install_result {
         integrated = false;
         if environment.get("ZENTTY_CLI_DEBUG").map(String::as_str) == Some("1") {
-            eprintln!("zentty: {tool:?} hook installation failed; launching directly: {error}");
+            eprintln!(
+                "tornadotty-cli: {tool:?} hook installation failed; launching directly: {error}"
+            );
         }
     }
     let mut command = Command::new(&plan.executable_path);
@@ -287,7 +289,7 @@ fn prepare_kimi_launch(
         if let Err(error) = canonicalize_kimi_session_index(&home)
             && environment.get("ZENTTY_CLI_DEBUG").map(String::as_str) == Some("1")
         {
-            eprintln!("zentty: Kimi session index repair skipped: {error}");
+            eprintln!("tornadotty-cli: Kimi session index repair skipped: {error}");
         }
         environment.insert(
             "ZENTTY_KIMI_HOME".to_owned(),
@@ -721,7 +723,7 @@ fn prepare_opencode_overlay(environment: &mut BTreeMap<String, String>) -> Resul
     if let Err(error) = apply_opencode_theme_sync(&overlay, environment)
         && environment.get("ZENTTY_CLI_DEBUG").map(String::as_str) == Some("1")
     {
-        eprintln!("zentty: OpenCode theme synchronization skipped: {error}");
+        eprintln!("tornadotty-cli: OpenCode theme synchronization skipped: {error}");
     }
     Ok(())
 }
@@ -1059,7 +1061,7 @@ fn send_pre_launch_actions(actions: &[AgentLaunchAction], environment: &BTreeMap
         if let Err(error) = AgentIpcClient::send_event(socket, token, event.as_bytes(), None)
             && environment.get("ZENTTY_CLI_DEBUG").map(String::as_str) == Some("1")
         {
-            eprintln!("zentty: pre-launch agent event was not delivered: {error}");
+            eprintln!("tornadotty-cli: pre-launch agent event was not delivered: {error}");
         }
     }
 }

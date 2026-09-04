@@ -118,7 +118,7 @@ fn real_cli_process_forwards_piped_stdin_and_surfaces_product_failure() {
     assert!(output.stdout.is_empty());
     assert_eq!(
         String::from_utf8(output.stderr).unwrap(),
-        "zentty: tmux set-buffer: set-buffer is not implemented\n"
+        "tornadotty-cli: tmux set-buffer: set-buffer is not implemented\n"
     );
     handler.join().unwrap();
     server.shutdown().unwrap();
@@ -206,7 +206,7 @@ fn real_cli_reports_deterministic_wait_timeout() {
     assert!(output.stdout.is_empty());
     assert_eq!(
         String::from_utf8(output.stderr).unwrap(),
-        "zentty: tmux wait-for: timed out waiting for 'never-ready'\n"
+        "tornadotty-cli: tmux wait-for: timed out waiting for 'never-ready'\n"
     );
     handler.join().unwrap();
     server.shutdown().unwrap();
@@ -240,6 +240,6 @@ fn waiting_cli_fails_promptly_when_the_instance_shuts_down() {
     assert!(
         String::from_utf8(output.stderr)
             .unwrap()
-            .starts_with("zentty: ")
+            .starts_with("tornadotty-cli: ")
     );
 }

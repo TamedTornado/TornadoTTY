@@ -42,6 +42,21 @@ extract_package positive
 "${audit}" "${temporary}/positive" "${manifest}" >/dev/null
 ZENTTY_BUILD_DIR="${temporary}/positive/usr/lib/tornadotty" \
     "${repo_root}/linux/tests/abi-surface" >/dev/null
+LD_LIBRARY_PATH="${temporary}/positive/usr/lib/tornadotty/lib" \
+    "${temporary}/positive/usr/lib/tornadotty/bin/tornadotty" --help \
+    >"${temporary}/gui-help"
+grep -Fxq 'Usage: tornadotty [OPTIONS]' "${temporary}/gui-help" ||
+    fail "packaged GUI help uses the wrong public executable name"
+set +e
+"${temporary}/positive/usr/lib/tornadotty/bin/tornadotty-cli" \
+    >"${temporary}/cli-stdout" 2>"${temporary}/cli-stderr"
+cli_status=$?
+set -e
+[[ "${cli_status}" -ne 0 && ! -s "${temporary}/cli-stdout" ]] ||
+    fail "packaged CLI usage did not take its expected error path"
+grep -Fxq \
+    'tornadotty-cli: usage: tornadotty-cli ipc <agent-event|agent-signal|agent-status> [arguments...]' \
+    "${temporary}/cli-stderr" || fail "packaged CLI usage leaks an obsolete executable name"
 (
     cd "${temporary}/positive"
     md5sum --check --strict DEBIAN/md5sums >/dev/null
