@@ -468,7 +468,29 @@ security boundary: another child in the same managed Codex PTY could emit OSC
 denying permission. A future Codex change to its documented notification kind
 or configuration keys would require the launcher contract to be updated.
 
-No installed client was replaced or restarted for this repair. GH-172 remains
-open until a coordinated installed build confirms both Approve-for-me silence
-and one real human-approval notification during dogfooding. No full Linux
-qualification run was performed for this issue-sized fix.
+The first installed field check was invalid because the client had restarted
+before, not after, the 19:42 deployment. After the current GUI and public CLI
+were installed, the restarted GUI (PID 53226) still received a false
+`agent.needs-input` event at 19:54. This was initially treated as a failed
+semantic-routing repair, but the absence of a corresponding
+`terminal-notification` record disproved the OSC hypothesis.
+
+The installed agent wrapper resolved a third executable copy at
+`/usr/lib/tornadotty/libexec/zentty/agent-wrappers/shared/zentty`. That copy
+still had the old `c703e5cd...` ELF build ID and therefore continued mapping
+raw pre-policy `PermissionRequest` hooks to attention. The public CLI already
+had corrected build ID `267186d1...`. At 19:59 the wrapper-owned copy was
+replaced from the same corrected build; both installed CLI paths then had
+SHA-256
+`a4fbfc3cac880de0c1d756336ce127bc3aa21110e6e5cead43c0d2eb93fcf0ce`.
+Because each hook starts this helper by pathname, no GUI or Codex restart was
+required for that correction.
+
+A controlled `PermissionRequest` was then sent through the exact
+wrapper-owned CLI, live pane credential, and authenticated product socket.
+The helper succeeded and the product journal contained no needs-input event,
+attention item, or desktop delivery after the probe. This establishes the
+correct installed negative route. GH-172 remains open until a naturally
+occurring Approve-for-me request is silent and one request genuinely routed to
+the user still notifies during dogfooding. No full Linux qualification run was
+performed for this issue-sized fix.
