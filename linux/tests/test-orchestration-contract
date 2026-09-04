@@ -453,7 +453,7 @@ require "Open With journey does not count a new primary-target application" \
 require "task runner journey does not wait for the shell working-directory boundary" \
     grep -Fq 'real shell did not publish the task project working directory' \
     "${repo_root}/linux/tests/rust-task-runners"
-require "bookmark journey does not guard retry against an already mapped modal dialog" \
+require "bookmark journey guards repeated activation against an already mapped modal dialog" \
     grep -Fq -- "--name '^Save workspace$'" "${repo_root}/linux/tests/rust-bookmarks-presets"
 require "bookmark activation reintroduces toplevel activation after widget focus" \
     grep -Fq 'Do not reactivate the toplevel after reaching the button' \

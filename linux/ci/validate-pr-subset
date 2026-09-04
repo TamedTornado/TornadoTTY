@@ -29,7 +29,6 @@ jq -e '
     "linux/ci/workflow-contract-test",
     "linux/ci/gate-workflow-contract-test",
     "linux/ci/validate-pr-subset-test",
-    "linux/ci/run-pr-subset-test",
     "linux/tests/cargo-publish-age-test",
     "linux/tests/qualification-failure-ledger-test",
     "linux/scripts/audit-cargo-publish-age",

@@ -25,8 +25,9 @@ pinned_gemini_bin="${repo_root}/linux/ci/node-tools/node_modules/.bin/gemini"
 mapfile -t ci_support_tests < <(jq -r '.support_tests[]' "${repo_root}/linux/ci/pr-subset-v1.json")
 support_tests=(
     "${ci_support_tests[@]}"
+    linux/ci/run-pr-subset-test
+    linux/tests/qualification-boundary-contract-test
     linux/tests/qualification-matrix-test
-    linux/tests/qualification-failure-ledger-test
     linux/tests/external-atspi-runner-test
     linux/tests/application-api-inventory-test
     linux/tests/application-api-schema
@@ -40,8 +41,13 @@ support_tests=(
     linux/tests/cli-source-contract-test
     linux/tests/tmux-compat-source-contract-test
     linux/tests/controlled-agent-test
+    linux/tests/lib/bounded-batch-test
+    linux/tests/lib/inline-test-audit-test
     linux/tests/lib/qualification-capacity-test
+    linux/tests/lib/qualification-gap-test
+    linux/tests/lib/qualification-outcome-test
     linux/tests/lib/qualification-provenance-test
+    linux/tests/lib/qualified-package-source-test
     linux/tests/lib/valgrind-evidence-lock-test
     linux/tests/lib/working-tree-fixture-test
     linux/tests/lib/controlled-environment-test
@@ -59,6 +65,12 @@ support_tests=(
     linux/tests/ghostty-async-backend-abi-test
     linux/tests/suppression-governance-test
 )
+duplicate_support_tests="$(printf '%s\n' "${support_tests[@]}" | sort | uniq -d)"
+[[ -z "${duplicate_support_tests}" ]] || {
+    echo "qualify-local: duplicate support tests are not allowed:" >&2
+    printf '%s\n' "${duplicate_support_tests}" >&2
+    exit 1
+}
 
 support_results="$(mktemp -d)"
 trap 'rm -rf -- "${support_results}"' EXIT

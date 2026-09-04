@@ -27,14 +27,6 @@ expect_schema_validation_failure() {
 }
 
 "${runner}" --validate-only >/dev/null
-"${repo_root}/linux/tests/qualification-boundary-contract-test" >/dev/null
-"${repo_root}/linux/tests/lib/qualification-outcome-test" >/dev/null
-"${repo_root}/linux/tests/lib/bounded-batch-test" >/dev/null
-"${repo_root}/linux/tests/lib/qualification-capacity-test" >/dev/null
-"${repo_root}/linux/tests/lib/qualification-gap-test" >/dev/null
-"${repo_root}/linux/tests/lib/inline-test-audit-test" >/dev/null
-"${repo_root}/linux/tests/lib/valgrind-evidence-lock-test" >/dev/null
-"${repo_root}/linux/tests/lib/qualified-package-source-test" >/dev/null
 
 # CI checks repository changes; it is not product behavior or qualification
 # authority. Keep provider/workflow state out of the product matrix.
@@ -309,14 +301,7 @@ jq '(.cells[] | select(.id == "valgrind-suppression-governance")).depends_on = [
 expect_validation_failure \
     'suppression-governance cell must execute after every Valgrind report and artifact-mutating build cell'
 
-# Presentation order is not an execution barrier, profile builds are immutable,
-# and the obsolete third build may not return.
-if grep -F 'while IFS= read -r order' "${runner}" >/dev/null; then
-    echo "qualification-matrix-test: global order barrier returned" >&2
-    exit 1
-fi
-grep -F 'sort_by(.schedule_priority // .order, .order, .id)' "${runner}" >/dev/null
-grep -F 'duration_ms' "${runner}" >/dev/null
+# Profile builds are immutable, and the obsolete third build may not return.
 if jq -e '.cells[] | select(.id == "restore-release")' "${source_matrix}" >/dev/null; then
     echo "qualification-matrix-test: redundant ReleaseSafe rebuild returned" >&2
     exit 1
@@ -336,18 +321,12 @@ jq -e '
       (.command | contains("ZENTTY_ZIG_LOCAL_CACHE_DIR=build/linux-deps/ghostty/.zig-cache/qualification/regression")) and
       .skip_profile_prerequisite == true)
 ' "${source_matrix}" >/dev/null
-grep -F 'ghostty-regression-timing.json' "${repo_root}/linux/tests/ghostty-regression" >/dev/null
-grep -F 'ghostty_test_ms' "${repo_root}/linux/tests/ghostty-regression" >/dev/null
-grep -F 'gtk_embed_lib_test_ms' "${repo_root}/linux/tests/ghostty-regression" >/dev/null
 
-# Every graphical journey owns a nested display. CPU-heavy producers are
-# bounded internally rather than imposing a global display barrier.
+# Every graphical journey owns a nested display rather than imposing a global
+# display barrier in the declared execution graph.
 jq -e '
     [.cells[] | select(.blocks_display == true) | .id] == []
 ' "${source_matrix}" >/dev/null
-grep -F 'active_display_cells' "${runner}" >/dev/null
-grep -F 'active_display_blockers' "${runner}" >/dev/null
-grep -F '.schedule.blocks_display' "${runner}" >/dev/null
 
 # Cargo test commands share one build target and do not gain real parallelism
 # by contending on Cargo's own lock. Profile builds and Ghostty regression use
@@ -391,75 +370,9 @@ jq -e '
       ((.resources // []) | length) == 0)
 ' "${source_matrix}" >/dev/null
 
-# The production runner must use the focused classifier tested above.
-# The grep intentionally matches the literal source line.
-# shellcheck disable=SC2016
-grep -F 'source "${repo_root}/linux/tests/lib/qualification-outcome"' \
-    "${runner}" >/dev/null
-# shellcheck disable=SC2016
-grep -F 'source "${repo_root}/linux/tests/lib/bounded-batch"' \
-    "${runner}" >/dev/null
-grep -F 'zentty_qualification_classify_outcome' "${runner}" >/dev/null
-grep -F 'qualification_jobs="${ZENTTY_QUALIFICATION_JOBS:-$(zentty_qualification_matrix_jobs)}"' \
-    "${runner}" >/dev/null
-grep -F 'observed_peak_workers' "${runner}" >/dev/null
-grep -F 'observed_peak_display_workers' "${runner}" >/dev/null
-grep -F 'observed_peak_interactive_workers' "${runner}" >/dev/null
-if jq -e '.cells[] | has("exclusive_host_input")' "${source_matrix}" >/dev/null ||
-    grep -F 'exclusive_host_input' "${runner}" >/dev/null; then
+if jq -e '.cells[] | has("exclusive_host_input")' "${source_matrix}" >/dev/null; then
     echo "qualification-matrix-test: disproven global input exclusivity returned" >&2
     exit 1
 fi
-grep -F 'startswith("nested-")' "${runner}" >/dev/null
-
-# Local support contracts overlap the real matrix; returning to a strict
-# matrix-then-support sequence would restore several minutes of dead time.
-qualify_local="${repo_root}/linux/tests/qualify-local"
-matrix_start_line="$(grep -n '"${repo_root}/linux/tests/qualification-matrix" >"${matrix_output}"' \
-    "${qualify_local}" | cut -d: -f1)"
-support_start_line="$(grep -n 'zentty_run_bounded_batch "${support_jobs}"' \
-    "${qualify_local}" | tail -n 1 | cut -d: -f1)"
-matrix_wait_line="$(grep -n 'wait "${matrix_pid}"' "${qualify_local}" | cut -d: -f1)"
-[[ -n "${matrix_start_line}" && -n "${support_start_line}" &&
-    -n "${matrix_wait_line}" &&
-    "${matrix_start_line}" -lt "${support_start_line}" &&
-    "${support_start_line}" -lt "${matrix_wait_line}" ]] || {
-    echo "qualification-matrix-test: support checks no longer overlap the matrix" >&2
-    exit 1
-}
-
-[[ ! -e "${repo_root}/linux/tests/debian-package-reproducibility" ]] || {
-    echo "qualification-matrix-test: duplicate package reproducibility runner returned" >&2
-    exit 1
-}
-
-# The complete real matrix can exceed Linux's argv limit. Feed the matrix and
-# JSON-lines results to jq as files rather than expanding either document into
-# one process argument list.
-# shellcheck disable=SC2016
-if grep -F -- '--argjson matrix "$(jq -c . "${matrix}")"' "${runner}" >/dev/null; then
-    echo "qualification-matrix-test: unbounded final JSON returned to argv" >&2
-    exit 1
-fi
-# Per-cell results must also be appended as JSON Lines. Rebuilding an ever
-# larger array through --argjson crosses ARG_MAX before the final summary.
-# shellcheck disable=SC2016
-grep -F 'printf '\''%s\n'\'' "${result}" >>"${raw_results_path}"' "${runner}" >/dev/null
-# shellcheck disable=SC2016
-if grep -F -- '--argjson results "${results}"' "${runner}" >/dev/null; then
-    echo "qualification-matrix-test: accumulated results returned to argv" >&2
-    exit 1
-fi
-# shellcheck disable=SC2016
-grep -F 'jq -cs --slurpfile matrix "${matrix}"' "${runner}" >/dev/null
-
-# Background workers inherit the scheduler's EXIT trap. Each worker must clear
-# it before executing a cell so that completion cannot delete the shared result
-# directory while sibling cells are still running. Cell execution stays in a
-# subshell so per-cell shell state cannot leak into the worker wrapper.
-grep -F 'trap - EXIT INT TERM' "${runner}" >/dev/null
-grep -F 'trap '\''cleanup_qualification_scheduler'\'' EXIT' "${runner}" >/dev/null
-# shellcheck disable=SC2016
-grep -F '(run_qualification_cell "${cell}" "${result_path}")' "${runner}" >/dev/null
 
 echo "Qualification matrix focused tests passed"

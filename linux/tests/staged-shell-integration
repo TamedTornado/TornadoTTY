@@ -76,11 +76,8 @@ common_environment=(
 )
 mkdir -p "${fixture}/home" "${fixture}/user-zdotdir"
 mkdir -p "${fixture}/late-real-bin"
-cat >"${fixture}/late-real-bin/codex" <<'LATE_CODEX'
-#!/usr/bin/env bash
-exit 0
-LATE_CODEX
-chmod 0700 "${fixture}/late-real-bin/codex"
+ln -s "${repo_root}/linux/tests/fixtures/controlled-agent" \
+    "${fixture}/late-real-bin/codex"
 
 case "${shell_name}" in
     bash)

@@ -328,3 +328,120 @@ weakening its acceptance criteria.
 - No product matrix or aggregate local qualification was run. This slice proves
   the capture/verification/publication contracts with focused fixtures; it
   does not manufacture a new qualification result for code that was not run.
+
+## 2026-09-04 — aggregate and retry simplification (GH-169)
+
+### Before: actual execution graph
+
+- `linux/tests/qualify-local` was the intended complete local entry point, but
+  its expanded support list contained 45 invocations representing only 44
+  unique paths. `qualification-failure-ledger-test` appeared in both the PR
+  support manifest and the local literal list.
+- `qualification-matrix-test`, itself a local support test, synchronously ran
+  eight other focused support tests. Two of those,
+  `qualification-capacity-test` and `valgrind-evidence-lock-test`, also appeared
+  directly in the local list. The effective local support graph therefore made
+  53 invocations for 50 unique paths and executed three paths twice.
+- The PR subset declared 12 support tests and 20 selected product/dependency
+  cells. One support entry was `run-pr-subset-test`, a self-test of the same
+  aggregate runner currently executing the list. Its fixture did not recurse
+  infinitely, but it nested another runner validation and obscured the graph.
+- The authoritative product matrix contained 207 cells: 203 PASS, two XFAIL,
+  and two NOT_IMPLEMENTED. Of those, 205 have executable commands. No matrix
+  cell invoked an aggregate qualification command.
+- A baseline focused `qualification-matrix-test` run took 14.49 seconds. The
+  important defect was not that one timing alone, but that independently useful
+  tests were hidden inside it and could not be scheduled or reported honestly
+  by the local aggregate.
+
+### Matrix-runner self-test classification
+
+The retained negative fixtures protect externally meaningful correctness:
+
+- schema shape, status vocabulary, required cells, and graph dependencies;
+- invalid job/resource limits, unknown resources, and dependency cycles;
+- unexpected skips and deferred-status tracking/reason governance;
+- installed-package and agent executable/version closure;
+- unique Valgrind evidence paths and suppression-review dependencies;
+- stale scheduler scratch safety and evidence ownership; and
+- rejection of a false full-Linux qualification claim.
+
+The following checks were implementation-detail assertions and were removed:
+
+- source greps for the exact scheduler sort expression, duration field,
+  classifier/helper function names, worker counters, trap text, subshell shape,
+  JSON-lines append expression, and final `jq` command;
+- source-line ordering that required support work to overlap matrix work;
+- source greps for Ghostty timing-field names and display-worker internals; and
+- a negative file-existence check for an already retired package runner.
+
+The eight nested focused tests were not deleted. They are now explicit,
+independently runnable local support entries. This retains their real negative
+coverage while removing the hidden aggregate-within-aggregate call graph.
+
+### Retry inventory and decision
+
+- `qualification-matrix`, `qualify-local`, and `run-pr-subset` invoke every
+  selected cell/support command once. The shared bounded-batch focused test now
+  asserts that successful and failing callbacks each start exactly once, as
+  well as asserting that a failure survives the batch.
+- Most shell loops repeatedly inspect a receipt, process, window, mount, or
+  file-size transition. They are bounded asynchronous readiness polling and do
+  not execute the failed test command again.
+- The visual helper samples frames until two adjacent captures are stable. Its
+  focused negative still rejects permanently alternating frames; it does not
+  rerun a failed visual assertion.
+- Bookmark and command-palette setup can repeat a harmless physical key action
+  only while the required focus/mapping receipt is absent. Bookmark modal
+  activation explicitly stops being repeatable once the dialog is mapped, so a
+  repeated Return cannot submit an empty dialog. The orchestration contract's
+  description was corrected to say that it guards this boundary rather than
+  the previous inverted wording.
+- Diagnostic-upload and pane-recovery “Retry” actions are user-visible product
+  behavior being tested after a deliberate first failure. They are not harness
+  recovery. A rollback test separately asserts that the product does not retry
+  a failed agent update automatically.
+- `apt-get` acquisition retries recover downloads before tests, and the nested
+  X11 teardown retry removes only the wrapper-owned transient FUSE mount/root.
+  Neither changes a test outcome.
+
+No broad test retry capable of laundering an intermittent failed invocation
+into PASS was found. The policy now forbids adding one without a tracked defect
+and requires the original failure to remain in the result.
+
+### Repair and after graph
+
+- The local support graph is flat: 50 declared invocations, 50 unique paths,
+  zero nested focused-test calls from `qualification-matrix-test`, and a runtime
+  duplicate-list rejection before any support work begins.
+- The PR subset is 11 support tests plus the same 20 selected cells. Its runner
+  self-test remains independently executable and is scheduled once by
+  `qualify-local`, not by the runner under test.
+- The product matrix remains unchanged at 207 cells/205 executable commands.
+  No product journey, assertion, real compositor, PTY, GTK process, or Ghostty
+  boundary was removed or replaced by a mock.
+- `qualification-matrix-test` decreased from 465 to 378 lines and took 14.20
+  seconds after the repair. The 0.29-second difference is measurement noise,
+  not a claimed speedup. The gain is an honest flat graph and independent
+  scheduling/reporting; product coverage and cell count were deliberately held
+  constant.
+- The staged-shell journey had an unrelated inline fake Codex program that the
+  existing orchestration contract correctly rejected. It now symlinks the one
+  reviewed real controlled-agent actor used by the other agent journeys. Bash,
+  zsh, fish, and Nushell staged-product cases all passed with that actor.
+
+### Focused evidence and remaining limits
+
+- Passed: matrix schema/semantic validation, `qualification-matrix-test`,
+  `qualification-boundary-contract-test`, outcome/capacity/gap/provenance,
+  bounded-batch, inline-audit, qualified-package-source, Valgrind evidence-lock,
+  PR-policy validation and negatives, PR-runner self-test, orchestration
+  contract, and all four staged-shell cases.
+- Warning-level ShellCheck and `git diff --check` passed.
+- No complete local/product matrix run was performed for this harness-only
+  audit, and this record makes no new local, release, or full-Linux
+  qualification claim.
+- Real GUI journeys still contain many bounded receipt polls because GTK,
+  compositors, PTYs, portals, and child processes are asynchronous. This audit
+  classifies rather than deletes those waits. Any future intermittent failure
+  must become a concrete defect; a blanket rerun is not an acceptable repair.

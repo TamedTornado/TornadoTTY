@@ -47,6 +47,12 @@ if zentty_run_bounded_batch 2 run_item slow fast third fail; then
     echo "bounded-batch-test: callback failure was lost" >&2
     exit 1
 fi
+for item in slow fast third fail; do
+    [[ "$(grep -c "^start:${item}$" "${temp_dir}/events")" == 1 ]] || {
+        echo "bounded-batch-test: ${item} was invoked more than once" >&2
+        exit 1
+    }
+done
 [[ "$(cat "${temp_dir}/maximum")" == 2 ]] || {
     echo "bounded-batch-test: concurrency was not bounded at two" >&2
     exit 1

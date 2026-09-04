@@ -58,4 +58,33 @@ Complete local support gate followed by one matrix execution:
 linux/tests/qualify-local
 ```
 
-No aggregate command may invoke either of those aggregate entry points.
+`qualify-local` is the only complete local aggregate. Its focused support tests
+are unique, top-level entries that can also be run independently; the product
+matrix is executed exactly once. No support test or matrix cell may invoke an
+execution aggregate. A runner may call the matrix's `--validate-only` mode
+because that mode executes no cell.
+
+`linux/ci/run-pr-subset` is an advisory CI selection, not another local or
+release qualification path. It runs the reviewed PR support list and selected
+matrix cells once and cannot make local, release, or full-qualification claims.
+
+Release qualification is a deliberate `qualify-local` run against the exact
+release candidate revision before its tag is published. The release workflow
+only accepts an existing `v<version>` tag and packages that revision; ordinary
+pushes and pull requests do not run or claim release qualification.
+
+## Polling and retries
+
+Aggregate runners invoke each selected support test or matrix cell once. A
+failed invocation remains failed; it is never rerun into PASS. The bounded
+batch helper has a focused exactly-once failure test.
+
+Real GUI journeys may repeatedly observe a receipt while waiting for an
+asynchronous compositor, GTK, process, or filesystem transition. A small
+number of input-readiness probes may repeat the same harmless physical action
+only while the expected transition is explicitly absent. These loops establish
+or observe readiness; they do not rerun a failed journey or discard an original
+failure. Other uses of retry are product behavior under test, teardown of an
+owned transient resource, or package-manager download recovery. New command or
+test retries require a tracked defect and must preserve the original failure in
+the result.
