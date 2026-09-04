@@ -50,6 +50,7 @@ mod source_ui;
 mod status_notifier;
 mod task_manager;
 mod terminal_pointer;
+mod test_receipts;
 mod theme_catalog;
 mod theme_preview;
 mod tmux_compat;
@@ -211,6 +212,10 @@ fn run_lifecycle_cycle(
         };
         let tick_result = application.borrow_mut().tick();
         if let Err(error) = tick_result {
+            crate::test_receipts::failure(
+                tornadotty_test_receipts::FailureCode::ApplicationTick,
+                None,
+            );
             eprintln!("{}: {error}", zentty_core::COMPACT_PRODUCT_NAME);
             application.borrow_mut().record_terminal_error(error);
             tick_loop.quit();
@@ -285,6 +290,7 @@ fn run() -> Result<(), String> {
             return Ok(());
         }
     };
+    test_receipts::initialize()?;
     let config = ConfigStore::load_default()?;
     if let Some(warning) = config.warning.as_deref() {
         eprintln!("zentty-linux: {warning}");
@@ -358,6 +364,7 @@ fn run() -> Result<(), String> {
         &default_working_directory,
         reference_timestamp(),
     )?;
+    test_receipts::finish()?;
     Ok(())
 }
 

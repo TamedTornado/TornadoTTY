@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+
+tornadotty_product_receipt_prepare() {
+    local product="$1" receipt="$2" driver
+    driver="${TORNADOTTY_JOURNEY_DRIVER:-${product%/*}/tornadotty-journey-driver}"
+    [[ -x "${driver}" ]] || {
+        echo "product-receipts: staged journey driver is missing: ${driver}" >&2
+        return 1
+    }
+    [[ "${receipt}" == /* && ! -e "${receipt}" ]] || {
+        echo "product-receipts: receipt target must be an absent absolute path" >&2
+        return 1
+    }
+    [[ -d "${receipt%/*}" && ! -L "${receipt%/*}" ]] || {
+        echo "product-receipts: receipt parent must be a real directory" >&2
+        return 1
+    }
+    [[ "$(stat -c %a -- "${receipt%/*}")" == 700 ]] || {
+        echo "product-receipts: receipt parent must have mode 0700" >&2
+        return 1
+    }
+    export TORNADOTTY_JOURNEY_DRIVER="${driver}"
+    export TORNADOTTY_TEST_RECEIPT_FILE="${receipt}"
+}
+
+tornadotty_product_receipt_wait() {
+    local receipt="$1" timeout_ms="$2" minimum="$3"
+    shift 3
+    "${TORNADOTTY_JOURNEY_DRIVER:?receipt driver is not prepared}" \
+        wait "${receipt}" "${timeout_ms}" "${minimum}" "$@"
+}
+
+tornadotty_product_receipt_validate() {
+    local receipt="$1"
+    shift
+    "${TORNADOTTY_JOURNEY_DRIVER:?receipt driver is not prepared}" \
+        validate "${receipt}" "$@"
+}

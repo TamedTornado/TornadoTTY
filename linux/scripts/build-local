@@ -92,6 +92,7 @@ else
         --package zentty-linux --bin zentty-linux
         --package zentty-agent-ipc --bin zentty
         --package zentty-test-support --bin zentty-focus-steal-helper
+        --package tornadotty-test-receipts --bin tornadotty-journey-driver
     )
 fi
 
@@ -192,6 +193,8 @@ cp "${cargo_target_dir}/${cargo_profile}/zentty" \
     "${output_dir}/bin/zentty"
 cp "${cargo_target_dir}/${cargo_profile}/zentty-focus-steal-helper" \
     "${output_dir}/bin/zentty-focus-steal-helper"
+cp "${cargo_target_dir}/${cargo_profile}/tornadotty-journey-driver" \
+    "${output_dir}/bin/tornadotty-journey-driver"
 wrapper_root="${output_dir}/libexec/zentty/agent-wrappers"
 rm -rf "${wrapper_root}"
 mkdir -p "${wrapper_root}/shared"

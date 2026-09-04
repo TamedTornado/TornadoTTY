@@ -48,7 +48,7 @@ mkdir -p "${state_directory}/working-directory"
 (
     cd "${state_directory}/working-directory"
     exec env GDK_SCALE=1 GDK_DPI_SCALE=1 \
-    ZENTTY_TEST_RECEIPTS="${state_directory}" \
+    TORNADOTTY_CONTROLLED_CHILD_RECEIPT_DIR="${state_directory}" \
     LD_LIBRARY_PATH="${bundle_lib}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" \
     "${product}" \
         --command "printf '%s\\n' \\
@@ -58,7 +58,7 @@ mkdir -p "${state_directory}/working-directory"
             \"ZENTTY_WINDOW_ID=\$ZENTTY_WINDOW_ID\" \\
             \"ZENTTY_WORKLANE_ID=\$ZENTTY_WORKLANE_ID\" \\
             \"ZENTTY_PANE_ID=\$ZENTTY_PANE_ID\" \\
-            >\"\$ZENTTY_TEST_RECEIPTS/\$ZENTTY_PANE_ID.env\"; \\
+            >\"\$TORNADOTTY_CONTROLLED_CHILD_RECEIPT_DIR/\$ZENTTY_PANE_ID.env\"; \\
             while IFS= read -r line; do printf '\033]2;%s\a' \"\$line\"; done" \
     --state-directory "${state_directory}" \
         --no-session-restore

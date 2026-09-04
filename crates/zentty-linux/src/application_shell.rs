@@ -3334,6 +3334,19 @@ impl ApplicationShell {
         eprintln!("zentty-linux: action={action} pane={pane_id}");
         shell_ref.render();
         shell_ref.focus_selected_surface();
+        match action {
+            ACTION_SPLIT_PANE_RIGHT => crate::test_receipts::action(
+                tornadotty_test_receipts::ActionName::SplitPaneRight,
+                tornadotty_test_receipts::ActionOutcome::Completed,
+                Some(&pane_id),
+            ),
+            ACTION_SPLIT_PANE_BELOW => crate::test_receipts::action(
+                tornadotty_test_receipts::ActionName::SplitPaneBelow,
+                tornadotty_test_receipts::ActionOutcome::Completed,
+                Some(&pane_id),
+            ),
+            _ => {}
+        }
         Ok(())
     }
 
@@ -3885,6 +3898,7 @@ impl ApplicationShell {
         self.refresh_pane_layout_action_availability();
         eprintln!("zentty-linux: topology={}", self.topology_receipt());
         eprintln!("zentty-linux: geometry={}", self.geometry_receipt());
+        crate::test_receipts::workspace(&self.window_template.id, &self.state);
     }
 
     fn build_column_overlay(

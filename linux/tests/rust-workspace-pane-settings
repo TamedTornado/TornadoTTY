@@ -9,11 +9,14 @@ state_directory="${run_root}/state"
 log="${run_root}/product.log"
 config="${XDG_CONFIG_HOME}/zentty/config.toml"
 product_pid=""
+event_receipt="${run_root}/product-events-1.ndjson"
 
 # shellcheck disable=SC1091
 source "${repo_root}/linux/tests/lib/product-input"
 # shellcheck source=linux/tests/lib/product-bundle
 source "${repo_root}/linux/tests/lib/product-bundle"
+# shellcheck source=linux/tests/lib/product-receipts
+source "${repo_root}/linux/tests/lib/product-receipts"
 
 fail() {
     [[ ! -f "${log}" ]] || cat "${log}" >&2
@@ -45,11 +48,17 @@ esac
 zentty_product_bundle_resolve "${product}" || fail "staged product bundle is invalid"
 product="${ZENTTY_PRODUCT_BINARY}"
 bundle_lib="${ZENTTY_PRODUCT_BUNDLE_LIB}"
+tornadotty_product_receipt_prepare "${product}" "${event_receipt}" ||
+    fail "typed product receipt could not be prepared"
 mkdir -p "${state_directory}" "$(dirname "${config}")"
 cat >"${config}" <<'EOF'
 # workspace settings integration receipt
 [worklanes]
 new_worklane_placement = "top"
+[confirmations]
+confirm_before_closing_pane = false
+confirm_before_closing_window = false
+confirm_before_quitting = false
 [pane_layout]
 right_split_behavior = "alwaysSplit"
 visible_split_window_width = 1200
@@ -85,10 +94,12 @@ latest_topology="$(grep -F 'zentty-linux: topology=' "${log}" | tail -1)"
 # The normal Add Pane Right chord must resolve through the configured
 # Always Split policy and create two real visible Ghostty columns.
 zentty_product_ctrl_key "${backend}" d
-zentty_product_wait_for_log "${log}" 'action=split-pane-right pane=pane-3' \
-    "configured right-pane behavior did not split" || fail "right split missing"
-zentty_product_wait_for_log "${log}" 'geometry=worklane-2:column-pane-2[pane-2],column-pane-3[pane-3]' \
-    "real two-column geometry was not projected" || fail "split geometry missing"
+tornadotty_product_receipt_wait "${event_receipt}" 10000 1 \
+    action split-pane-right completed pane-3 >/dev/null || fail "right split receipt missing"
+tornadotty_product_receipt_wait "${event_receipt}" 10000 1 \
+    pane-layout window-1 worklane-2 \
+    'column-pane-2=pane-2;column-pane-3=pane-3' >/dev/null ||
+    fail "typed two-column geometry was not projected"
 
 # Enter the right pane and then the left pane through the compositor-owned
 # pointer. Immediate focus-follow must select the actual left surface.
@@ -423,20 +434,39 @@ if [[ "${backend}" == x11 ]]; then
 fi
 
 # Restart from the authoritative document and prove every normalized setting is
-# loaded. The first process is deliberately terminated only after continuity
-# checks, so restart cannot masquerade as a successful live update.
-kill -TERM "${product_pid}"
-wait "${product_pid}" 2>/dev/null || true
+# loaded. The first process closes through the ordinary product shortcut only
+# after continuity checks, so restart cannot masquerade as a successful update.
+zentty_product_close_window "${backend}"
+set +e
+wait "${product_pid}"
+status=$?
+set -e
 product_pid=""
+[[ "${status}" -eq 0 ]] || fail "first product did not close cleanly"
+tornadotty_product_receipt_validate "${event_receipt}" --complete >/dev/null ||
+    fail "first typed product lifecycle did not close cleanly"
 restart_log="${run_root}/restart.log"
+event_receipt="${run_root}/product-events-2.ndjson"
+tornadotty_product_receipt_prepare "${product}" "${event_receipt}" ||
+    fail "restart typed product receipt could not be prepared"
 GDK_SCALE=1 GDK_DPI_SCALE=1 \
 LD_LIBRARY_PATH="${bundle_lib}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" \
     "${product}" --command 'sleep 30' --state-directory "${state_directory}" \
     --no-session-restore >"${restart_log}" 2>&1 &
 product_pid=$!
-zentty_product_wait_for_log "${restart_log}" 'zentty-linux: terminal-ready' \
-    "restarted staged product did not become ready" || fail "restart failed"
+tornadotty_product_receipt_wait "${event_receipt}" 10000 1 terminal-ready pane-1 >/dev/null ||
+    fail "restarted staged product did not publish typed readiness"
 grep -Fq 'config-loaded path=' "${restart_log}" || fail "restart did not load authoritative config"
+
+zentty_product_close_window "${backend}"
+set +e
+wait "${product_pid}"
+status=$?
+set -e
+product_pid=""
+[[ "${status}" -eq 0 ]] || fail "restarted product did not close cleanly"
+tornadotty_product_receipt_validate "${event_receipt}" --complete >/dev/null ||
+    fail "restarted typed product lifecycle did not close cleanly"
 
 if [[ "${backend}" == x11 ]]; then
     control_evidence="all-physical-controls multi-window shell-continuity threshold-boundaries"

@@ -313,6 +313,13 @@ fn apply_selection(state: &Rc<RefCell<State>>, section: SettingsSection, record:
     back.set_sensitive(can_back);
     forward.set_sensitive(can_forward);
     eprintln!("zentty-linux: settings-section selected={}", section.id());
+    if section == SettingsSection::Notifications {
+        crate::test_receipts::action(
+            tornadotty_test_receipts::ActionName::SelectNotificationsSettings,
+            tornadotty_test_receipts::ActionOutcome::Completed,
+            None,
+        );
+    }
 }
 
 fn navigate_back(state: &Rc<RefCell<State>>) {

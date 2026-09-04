@@ -24,6 +24,8 @@ remote_paste_evidence="file+png+batch-rollback"
 cancel_remote_pattern=""
 batch_remote_pattern=""
 product_args=()
+launch_count=0
+event_receipt=""
 
 # shellcheck source=linux/tests/lib/product-input
 source "${repo_root}/linux/tests/lib/product-input"
@@ -33,6 +35,8 @@ source "${repo_root}/linux/tests/lib/product-bundle"
 source "${repo_root}/linux/tests/lib/disposable-sshd"
 # shellcheck source=linux/tests/lib/visual-evidence
 source "${repo_root}/linux/tests/lib/visual-evidence"
+# shellcheck source=linux/tests/lib/product-receipts
+source "${repo_root}/linux/tests/lib/product-receipts"
 
 fail() {
     [[ -z "${log}" || ! -f "${log}" ]] || cat "${log}" >&2
@@ -185,6 +189,10 @@ jq '
 ' "${fixture}" >"${state_dir}/restore-snapshot.json"
 
 start_product() {
+    launch_count=$((launch_count + 1))
+    event_receipt="${state_dir}/product-events-${launch_count}.ndjson"
+    tornadotty_product_receipt_prepare "${product}" "${event_receipt}" ||
+        fail "typed product receipt could not be prepared for launch ${launch_count}"
     : >"${log}"
     env \
         PATH="${fake_bin}:${PATH}" \
@@ -227,6 +235,8 @@ wait_for_product_exit() {
     set -e
     product_pid=""
     ((status == 0)) || fail "product window close exited ${status}"
+    tornadotty_product_receipt_validate "${event_receipt}" --complete >/dev/null ||
+        fail "typed product lifecycle did not close cleanly"
 }
 
 assert_background_start() {
@@ -251,10 +261,12 @@ assert_background_start() {
         fail "restored task completion missing"
     grep -Fq '|worklane-active[title=Active shell,color=none]:pane-shell-active*' "${log}" ||
         fail "background startup changed the active worklane"
-    [[ "$(grep -Fxc 'zentty-linux: terminal-ready-pane=pane-agent' "${log}" || true)" -eq 1 ]] ||
-        fail "first inactive agent surface did not initialize exactly once"
-    [[ "$(grep -Fxc 'zentty-linux: terminal-ready-pane=pane-agent-two' "${log}" || true)" -eq 1 ]] ||
-        fail "second inactive agent surface did not initialize exactly once"
+    tornadotty_product_receipt_wait "${event_receipt}" 10000 1 \
+        terminal-ready pane-agent >/dev/null ||
+        fail "first inactive agent surface lacked typed readiness"
+    tornadotty_product_receipt_wait "${event_receipt}" 10000 1 \
+        terminal-ready pane-agent-two >/dev/null ||
+        fail "second inactive agent surface lacked typed readiness"
     for pane_id in pane-agent pane-agent-two pane-shell-active; do
         grep -Fq "zentty-linux: surface-config pane=${pane_id} cwd=/tmp" "${log}" ||
             fail "restored pane ${pane_id} did not pass its stored CWD to the real Ghostty surface"

@@ -17,6 +17,9 @@ The normative execution plan is
 - `mutation-autonomy-v1.json` defines the protected Rust mutation cohorts,
   owning tests, mutation genres, exclusions, reviewed compiler-unviable
   dispositions, resource limits, and receipt lifetime.
+- `product-observability-v1.json` is the inventory and single-authority policy
+  for typed product receipts, remaining machine consumers of human log prose,
+  and non-product receipt channels owned by controlled actors or qualification.
 
 ## Test layers
 

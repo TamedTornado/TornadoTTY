@@ -101,12 +101,25 @@ fn notification_row(state: &Rc<RefCell<NotificationsConfig>>) -> gtk::Widget {
             "This is a test notification.",
             &state_for_send.borrow(),
         ) {
-            Ok(id) => eprintln!(
-                "zentty-linux: notification-settings action=send-test result=sent id={id}"
-            ),
-            Err(error) => eprintln!(
-                "zentty-linux: notification-settings action=send-test result=error detail={error}"
-            ),
+            Ok(id) => {
+                eprintln!(
+                    "zentty-linux: notification-settings action=send-test result=sent id={id}"
+                );
+                crate::test_receipts::action(
+                    tornadotty_test_receipts::ActionName::SendTestNotification,
+                    tornadotty_test_receipts::ActionOutcome::Completed,
+                    None,
+                );
+            }
+            Err(error) => {
+                eprintln!(
+                    "zentty-linux: notification-settings action=send-test result=error detail={error}"
+                );
+                crate::test_receipts::failure(
+                    tornadotty_test_receipts::FailureCode::SettingsAction,
+                    None,
+                );
+            }
         }
     });
     row.append(&send);

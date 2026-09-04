@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+runner="${repo_root}/linux/tests/product-observability-contract"
+policy="${repo_root}/linux/test-policy/product-observability-v1.json"
+temp_dir="$(mktemp -d)"
+trap 'rm -rf -- "${temp_dir}"' EXIT
+
+expect_failure() {
+    local name="$1" filter="$2" expected="$3" fixture output status
+    fixture="${temp_dir}/${name}.json"
+    jq "${filter}" "${policy}" >"${fixture}"
+    set +e
+    output="$(${runner} "${fixture}" 2>&1)"
+    status=$?
+    set -e
+    [[ "${status}" -ne 0 ]] || {
+        echo "product-observability-contract-test: ${name} unexpectedly passed" >&2
+        exit 1
+    }
+    grep -Fq "${expected}" <<<"${output}" || {
+        echo "product-observability-contract-test: ${name} produced wrong failure: ${output}" >&2
+        exit 1
+    }
+}
+
+"${runner}" >/dev/null
+expect_failure unknown-owner \
+    '(.receipt_channels[0].owner) = "ambient_magic"' \
+    'policy invariants failed'
+expect_failure missing-channel \
+    'del(.receipt_channels[] | select(.name == "ZENTTY_SCALE_RECEIPT"))' \
+    'receipt channel inventory drifted'
+expect_failure missing-log-consumer \
+    'del(.legacy_human_log_consumers[] | select(.path == "linux/tests/rust-product-smoke"))' \
+    'machine-consumed human log inventory drifted'
+expect_failure untracked-partial \
+    '(.migrated_journeys[] | select(.migration_status == "PARTIAL")) |= del(.remaining_issue)' \
+    'policy invariants failed'
+expect_failure false-migrated \
+    '(.migrated_journeys[] | select(.path == "linux/tests/rust-session-restore")) |= (.migration_status = "MIGRATED" | del(.remaining_issue))' \
+    'policy invariants failed'
+expect_failure duplicate-channel \
+    '.receipt_channels += [.receipt_channels[0]]' \
+    'policy invariants failed'
+
+echo "Product observability contract negative tests passed"

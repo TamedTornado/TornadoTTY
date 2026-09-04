@@ -1,0 +1,165 @@
+{
+  "schema_version": 1,
+  "owner_issue": 148,
+  "authority": {
+    "crate": "crates/tornadotty-test-receipts",
+    "event_definition": "crates/tornadotty-test-receipts/src/event.rs",
+    "parser": "crates/tornadotty-test-receipts/src/parser.rs",
+    "writer": "crates/tornadotty-test-receipts/src/writer.rs",
+    "driver": "crates/tornadotty-test-receipts/src/bin/tornadotty-journey-driver.rs",
+    "product_adapter": "crates/zentty-linux/src/test_receipts.rs",
+    "environment_variable": "TORNADOTTY_TEST_RECEIPT_FILE",
+    "activation_sites": [
+      "crates/tornadotty-test-receipts/src/writer.rs",
+      "linux/tests/lib/product-receipts"
+    ]
+  },
+  "bounds": {
+    "file_bytes": 8388608,
+    "record_bytes": 8192,
+    "records": 8192,
+    "identifier_bytes": 96
+  },
+  "event_families": [
+    "lifecycle",
+    "topology",
+    "focus",
+    "geometry",
+    "action_completion",
+    "failure"
+  ],
+  "migrated_journeys": [
+    {
+      "path": "linux/tests/desktop-window-identity",
+      "coverage": ["process_started", "terminal_ready"],
+      "migration_status": "MIGRATED"
+    },
+    {
+      "path": "linux/tests/rust-workspace-pane-settings",
+      "coverage": ["split_pane_right", "pane_layout", "terminal_ready"],
+      "migration_status": "PARTIAL",
+      "remaining_issue": 149
+    },
+    {
+      "path": "linux/tests/rust-session-restore",
+      "coverage": ["terminal_ready"],
+      "migration_status": "PARTIAL",
+      "remaining_issue": 149
+    },
+    {
+      "path": "linux/tests/rust-notifications-settings",
+      "coverage": ["select_notifications_settings", "settings_window_focus", "send_test_notification"],
+      "migration_status": "PARTIAL",
+      "remaining_issue": 149
+    }
+  ],
+  "retired_literal_assertions": [
+    {
+      "path": "linux/tests/desktop-window-identity",
+      "literal": "zentty-linux: terminal-ready-pane=pane-1"
+    },
+    {
+      "path": "linux/tests/rust-workspace-pane-settings",
+      "literal": "zentty-linux: action=split-pane-right"
+    },
+    {
+      "path": "linux/tests/rust-workspace-pane-settings",
+      "literal": "zentty-linux: pane-columns worklane=worklane-1 columns=column-pane-2=pane-2;column-pane-3=pane-3"
+    },
+    {
+      "path": "linux/tests/rust-notifications-settings",
+      "literal": "zentty-linux: settings-section selected=notifications"
+    },
+    {
+      "path": "linux/tests/rust-notifications-settings",
+      "literal": "zentty-linux: settings-active window=window-1"
+    },
+    {
+      "path": "linux/tests/rust-notifications-settings",
+      "literal": "zentty-linux: settings-action id=send-test-notification state=completed"
+    }
+  ],
+  "legacy_human_log_consumers": [
+    {"path":"linux/tests/debian-package-installed-product","status":"UNMIGRATED","remaining_issue":149},
+    {"path":"linux/tests/installed-claude-agent-team","status":"UNMIGRATED","remaining_issue":149},
+    {"path":"linux/tests/installed-codex-integration","status":"UNMIGRATED","remaining_issue":149},
+    {"path":"linux/tests/lib/cli-shell-scenario","status":"UNMIGRATED","remaining_issue":149},
+    {"path":"linux/tests/lib/product-input","status":"UNMIGRATED","remaining_issue":149},
+    {"path":"linux/tests/lib/product-input-test","status":"UNMIGRATED","remaining_issue":149},
+    {"path":"linux/tests/rust-about-licenses","status":"UNMIGRATED","remaining_issue":149},
+    {"path":"linux/tests/rust-agent-ipc","status":"UNMIGRATED","remaining_issue":149},
+    {"path":"linux/tests/rust-agent-settings-runtime","status":"UNMIGRATED","remaining_issue":149},
+    {"path":"linux/tests/rust-application-shell-construction-failure","status":"UNMIGRATED","remaining_issue":149},
+    {"path":"linux/tests/rust-attention-inbox","status":"UNMIGRATED","remaining_issue":149},
+    {"path":"linux/tests/rust-bookmarks-presets","status":"UNMIGRATED","remaining_issue":149},
+    {"path":"linux/tests/rust-closed-pane-restore","status":"UNMIGRATED","remaining_issue":149},
+    {"path":"linux/tests/rust-config-reload","status":"UNMIGRATED","remaining_issue":149},
+    {"path":"linux/tests/rust-development-servers","status":"UNMIGRATED","remaining_issue":149},
+    {"path":"linux/tests/rust-git-review-context","status":"UNMIGRATED","remaining_issue":149},
+    {"path":"linux/tests/rust-keyboard-compose","status":"UNMIGRATED","remaining_issue":149},
+    {"path":"linux/tests/rust-multi-window","status":"UNMIGRATED","remaining_issue":149},
+    {"path":"linux/tests/rust-notifications-settings","status":"PARTIAL","remaining_issue":149},
+    {"path":"linux/tests/rust-open-with","status":"UNMIGRATED","remaining_issue":149},
+    {"path":"linux/tests/rust-pane-search","status":"UNMIGRATED","remaining_issue":149},
+    {"path":"linux/tests/rust-product-smoke","status":"UNMIGRATED","remaining_issue":149},
+    {"path":"linux/tests/rust-project-icons","status":"UNMIGRATED","remaining_issue":149},
+    {"path":"linux/tests/rust-session-restore","status":"PARTIAL","remaining_issue":149},
+    {"path":"linux/tests/rust-shortcuts-settings","status":"UNMIGRATED","remaining_issue":149},
+    {"path":"linux/tests/rust-sidebar-management-x11","status":"UNMIGRATED","remaining_issue":149},
+    {"path":"linux/tests/rust-source-ux-x11","status":"UNMIGRATED","remaining_issue":149},
+    {"path":"linux/tests/rust-task-manager","status":"UNMIGRATED","remaining_issue":149},
+    {"path":"linux/tests/rust-task-runners","status":"UNMIGRATED","remaining_issue":149},
+    {"path":"linux/tests/rust-tmux-compat-product","status":"UNMIGRATED","remaining_issue":149},
+    {"path":"linux/tests/rust-updates-privacy-settings","status":"UNMIGRATED","remaining_issue":149},
+    {"path":"linux/tests/rust-workspace-pane-settings","status":"PARTIAL","remaining_issue":149},
+    {"path":"linux/tests/visual-parity-test","status":"UNMIGRATED","remaining_issue":149}
+  ],
+  "receipt_channels": [
+    {"name":"TORNADOTTY_CONTROLLED_CHILD_RECEIPT_DIR","owner":"controlled_child"},
+    {"name":"TORNADOTTY_TEST_RECEIPT_FILE","owner":"product_typed_contract"},
+    {"name":"ZENTTY_ADDITIONAL_RECEIPT","owner":"controlled_actor"},
+    {"name":"ZENTTY_AGENT_EVENT_COALESCING_RECEIPT","owner":"controlled_actor"},
+    {"name":"ZENTTY_AMP_AUDIT_RECEIPT","owner":"controlled_actor"},
+    {"name":"ZENTTY_ARCH_LIFECYCLE_RECEIPT","owner":"package_evidence"},
+    {"name":"ZENTTY_CARGO_AGE_RECEIPT","owner":"supply_chain_evidence"},
+    {"name":"ZENTTY_CLI_CONTRACT_RECEIPTS","owner":"controlled_actor"},
+    {"name":"ZENTTY_CODEX_NOTIFY_RECEIPT","owner":"controlled_actor"},
+    {"name":"ZENTTY_CONTROLLED_AGENT_BURST_RECEIPT","owner":"controlled_actor"},
+    {"name":"ZENTTY_CONTROLLED_AGENT_RECEIPT","owner":"controlled_actor"},
+    {"name":"ZENTTY_CONTROLLED_AGENT_START_RECEIPT","owner":"controlled_actor"},
+    {"name":"ZENTTY_CONTROLLED_ATTENTION_RECEIPT","owner":"controlled_actor"},
+    {"name":"ZENTTY_CONTROLLED_CLAUDE_RECEIPT","owner":"controlled_actor"},
+    {"name":"ZENTTY_CONTROLLED_OPENCODE_THEME_RECEIPT","owner":"controlled_actor"},
+    {"name":"ZENTTY_CUSTOM_RECEIPT","owner":"controlled_actor"},
+    {"name":"ZENTTY_CWD_RECEIPT","owner":"controlled_actor"},
+    {"name":"ZENTTY_DESKTOP_RECEIPT","owner":"controlled_actor"},
+    {"name":"ZENTTY_GH_RECEIPT","owner":"controlled_actor"},
+    {"name":"ZENTTY_GRID_COMMAND_RECEIPT","owner":"controlled_actor"},
+    {"name":"ZENTTY_GRID_RESIZE_RECEIPT","owner":"controlled_actor"},
+    {"name":"ZENTTY_IME_RECEIPT","owner":"input_probe"},
+    {"name":"ZENTTY_INSTALLED_RECEIPTS","owner":"package_evidence"},
+    {"name":"ZENTTY_KEY_RECEIPT","owner":"input_probe"},
+    {"name":"ZENTTY_LAYOUT_RECEIPT","owner":"input_probe"},
+    {"name":"ZENTTY_MUTATION_LIMIT_RECEIPT","owner":"mutation_evidence"},
+    {"name":"ZENTTY_MUTATION_RECEIPT","owner":"mutation_evidence"},
+    {"name":"ZENTTY_MUTATION_SCOPE_RECEIPT","owner":"mutation_evidence"},
+    {"name":"ZENTTY_NOTIFICATION_CLI_RECEIPT","owner":"controlled_actor"},
+    {"name":"ZENTTY_OPEN_RECEIPT","owner":"controlled_actor"},
+    {"name":"ZENTTY_PREFILL_LINES_RECEIPT","owner":"controlled_actor"},
+    {"name":"ZENTTY_REFRESH_RECEIPT","owner":"controlled_actor"},
+    {"name":"ZENTTY_REPEAT_RECEIPT","owner":"input_probe"},
+    {"name":"ZENTTY_SCALE_RECEIPT","owner":"display_probe"},
+    {"name":"ZENTTY_SECOND_RECEIPTS","owner":"controlled_actor"},
+    {"name":"ZENTTY_SHELL_AGENT_RECEIPT","owner":"controlled_actor"},
+    {"name":"ZENTTY_SHELL_CLI_RECEIPT","owner":"controlled_actor"},
+    {"name":"ZENTTY_SHELL_NESTED_RECEIPT","owner":"controlled_actor"},
+    {"name":"ZENTTY_SHELL_RECEIPT","owner":"controlled_actor"},
+    {"name":"ZENTTY_SHELL_VERSION_RECEIPT","owner":"controlled_actor"},
+    {"name":"ZENTTY_TASK_SOURCE_RECEIPT","owner":"controlled_actor"},
+    {"name":"ZENTTY_TERMINAL_RECEIPT","owner":"controlled_actor"},
+    {"name":"ZENTTY_TEST_RECEIPT","owner":"controlled_actor"},
+    {"name":"ZENTTY_TMUX_ENDPOINT_RECEIPT","owner":"controlled_actor"},
+    {"name":"ZENTTY_TOPOLOGY_RECEIPT","owner":"controlled_actor"},
+    {"name":"ZENTTY_VISUAL_RECEIPT_ROOT","owner":"visual_evidence"}
+  ]
+}

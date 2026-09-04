@@ -109,6 +109,7 @@ pub(crate) fn show(
             |widget| widget.widget_name().to_string(),
         );
         eprintln!("zentty-linux: settings-focus widget={name}");
+        crate::test_receipts::widget_focus(&name);
     });
     let root = gtk::Box::new(gtk::Orientation::Vertical, 12);
     root.set_margin_top(24);
@@ -357,8 +358,12 @@ pub(crate) fn show(
             initial_focus.clone()
         };
         gtk::prelude::GtkWindowExt::set_focus(window, Some(&focus));
+        let mapped_window = window.clone();
         glib::idle_add_local_once(move || {
-            focus.grab_focus();
+            let current_focus = gtk::prelude::GtkWindowExt::focus(&mapped_window);
+            if current_focus.is_none() || focus.has_focus() {
+                focus.grab_focus();
+            }
             eprintln!(
                 "zentty-linux: shortcut-settings initial-focus value={}",
                 focus.has_focus()
@@ -377,6 +382,7 @@ pub(crate) fn show(
             active_search.has_focus(),
             section.id()
         );
+        crate::test_receipts::settings_focus();
         if section == crate::settings_navigation::SettingsSection::Shortcuts {
             gtk::prelude::GtkWindowExt::set_focus(window, Some(&active_search));
             let search = active_search.clone();

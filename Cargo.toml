@@ -9,6 +9,7 @@ members = [
     "crates/zentty-linux",
     "crates/zentty-test-support",
     "crates/zentty-tmux-compat",
+    "crates/tornadotty-test-receipts",
 ]
 
 [workspace.package]

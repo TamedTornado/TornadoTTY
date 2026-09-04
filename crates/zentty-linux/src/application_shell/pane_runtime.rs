@@ -584,6 +584,10 @@ impl PaneRuntimeCoordinator {
         surface.on_initialized(move || {
             eprintln!("zentty-linux: terminal-ready");
             eprintln!("zentty-linux: terminal-ready-pane={ready_id}");
+            crate::test_receipts::lifecycle(
+                tornadotty_test_receipts::LifecycleState::TerminalReady,
+                Some(&ready_id),
+            );
             let weak = weak.clone();
             let ready_id = ready_id.clone();
             glib::idle_add_local_once(move || {
@@ -602,6 +606,7 @@ impl PaneRuntimeCoordinator {
                     }
                     shell.focus_selected_surface_unchecked();
                     eprintln!("zentty-linux: focus-pane pane={ready_id}");
+                    crate::test_receipts::pane_focus(&ready_id);
                 }
                 if let Some(surface) = shell.pane_runtime.surface(&ready_id) {
                     observe_ghostty_search_state(
@@ -701,6 +706,10 @@ impl PaneRuntimeCoordinator {
         surface.on_child_exited(move || {
             eprintln!("zentty-linux: child-exited");
             eprintln!("zentty-linux: child-exited-pane={exited_id}");
+            crate::test_receipts::lifecycle(
+                tornadotty_test_receipts::LifecycleState::ChildExited,
+                Some(&exited_id),
+            );
             let weak = weak.clone();
             let exited_id = exited_id.clone();
             // A child exit owns pane teardown. Do not queue it at idle
@@ -831,6 +840,7 @@ impl PaneRuntimeCoordinator {
                 let changed = shell.borrow_mut().state.select_pane(&focus_id);
                 if changed {
                     eprintln!("zentty-linux: focus-pane pane={focus_id}");
+                    crate::test_receipts::pane_focus(&focus_id);
                     shell.borrow().refresh_sidebar_metadata();
                 }
             });

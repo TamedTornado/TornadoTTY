@@ -9,6 +9,11 @@ desktop_entry="${repo_root}/linux/packaging/com.tamedtornado.tornadotty.desktop"
 state_directory=""
 log=""
 product_pid=""
+event_receipt=""
+exit_fifo=""
+
+# shellcheck source=linux/tests/lib/product-receipts
+source "${repo_root}/linux/tests/lib/product-receipts"
 
 fail() {
     [[ -z "${log}" || ! -f "${log}" ]] || tail -n 120 "${log}" >&2
@@ -47,10 +52,20 @@ esac
 
 state_directory="$(mktemp -d)"
 log="$(mktemp)"
+event_receipt="${state_directory}/product-events.ndjson"
+exit_fifo="${state_directory}/exit.fifo"
+mkfifo "${exit_fifo}"
+tornadotty_product_receipt_prepare "${product}" "${event_receipt}" ||
+    fail "typed product receipt could not be prepared"
 env WAYLAND_DEBUG="$([[ "${backend}" == wayland ]] && printf client || printf 0)" \
     "${product}" --state-directory "${state_directory}" \
-    --command 'sleep 60' --no-session-restore >"${log}" 2>&1 &
+    --command "IFS= read -r _ < '${exit_fifo}'" \
+    --no-session-restore >"${log}" 2>&1 &
 product_pid=$!
+tornadotty_product_receipt_wait "${event_receipt}" 10000 1 process-started >/dev/null ||
+    fail "typed process-started receipt was not observed"
+tornadotty_product_receipt_wait "${event_receipt}" 10000 1 terminal-ready pane-1 >/dev/null ||
+    fail "typed terminal readiness receipt was not observed"
 
 if [[ "${backend}" == wayland ]]; then
     expected="set_app_id(\"${application_id}\")"
@@ -74,7 +89,13 @@ else
         fail "X11 WM_CLASS instance differs: ${wm_class}"
 fi
 
-kill -TERM "${product_pid}"
-wait "${product_pid}" 2>/dev/null || true
+printf 'exit\n' >"${exit_fifo}"
+set +e
+wait "${product_pid}"
+status=$?
+set -e
 product_pid=""
+[[ "${status}" -eq 0 ]] || fail "product did not exit cleanly after its real PTY child"
+tornadotty_product_receipt_validate "${event_receipt}" --complete >/dev/null ||
+    fail "typed product lifecycle did not close cleanly"
 echo "desktop-window-identity: PASS backend=${backend} application-id=${application_id}"

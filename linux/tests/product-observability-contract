@@ -1,0 +1,116 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+policy="${1:-${repo_root}/linux/test-policy/product-observability-v1.json}"
+temp_dir="$(mktemp -d)"
+trap 'rm -rf -- "${temp_dir}"' EXIT
+
+fail() {
+    echo "product-observability-contract: $*" >&2
+    exit 1
+}
+
+jq -e '
+    .schema_version == 1 and
+    .owner_issue == 148 and
+    .authority.crate == "crates/tornadotty-test-receipts" and
+    .authority.environment_variable == "TORNADOTTY_TEST_RECEIPT_FILE" and
+    (.authority.activation_sites | type == "array" and length == 2 and length == (unique | length)) and
+    .bounds == {file_bytes:8388608,record_bytes:8192,records:8192,identifier_bytes:96} and
+    (.event_families | sort == ["action_completion","failure","focus","geometry","lifecycle","topology"]) and
+    ([.migrated_journeys[].path] | length == (unique | length)) and
+    ([.migrated_journeys[].migration_status] | all(. == "MIGRATED" or . == "PARTIAL")) and
+    ([.migrated_journeys[]] | all(
+        (.path | type == "string" and length > 0) and
+        (.coverage | type == "array" and length > 0 and length == (unique | length)) and
+        (if .migration_status == "PARTIAL" then .remaining_issue == 149 else true end)
+    )) and
+    ([.legacy_human_log_consumers[].path] as $legacy |
+        [.migrated_journeys[] | select(.migration_status == "MIGRATED") | .path] |
+        all(. as $path | ($legacy | index($path)) == null)) and
+    ([.legacy_human_log_consumers[].path] | length == (unique | length)) and
+    ([.legacy_human_log_consumers[]] | all(
+        (.status == "PARTIAL" or .status == "UNMIGRATED") and .remaining_issue == 149
+    )) and
+    ([.receipt_channels[].name] | length == (unique | length)) and
+    ([.receipt_channels[].owner] | all(
+        . == "product_typed_contract" or . == "controlled_child" or
+        . == "controlled_actor" or . == "package_evidence" or
+        . == "supply_chain_evidence" or . == "input_probe" or
+        . == "mutation_evidence" or . == "display_probe" or
+        . == "visual_evidence"
+    )) and
+    ([.receipt_channels[] | select(.owner == "product_typed_contract") | .name] ==
+        ["TORNADOTTY_TEST_RECEIPT_FILE"])
+' "${policy}" >/dev/null || fail "policy invariants failed"
+
+for key in crate event_definition parser writer driver product_adapter; do
+    path="$(jq -r --arg key "${key}" '.authority[$key]' "${policy}")"
+    [[ -e "${repo_root}/${path}" ]] || fail "authority path is missing: ${path}"
+done
+
+jq -r '.authority.activation_sites[]' "${policy}" | sort >"${temp_dir}/declared-activation"
+rg -l 'TORNADOTTY_TEST_RECEIPT_FILE' \
+    --glob '!product-observability-contract' --glob '!product-observability-contract-test' \
+    "${repo_root}/crates" "${repo_root}/linux/tests" "${repo_root}/linux/scripts" |
+    sed "s#^${repo_root}/##" | sort >"${temp_dir}/actual-activation"
+cmp -s "${temp_dir}/declared-activation" "${temp_dir}/actual-activation" || {
+    diff -u "${temp_dir}/declared-activation" "${temp_dir}/actual-activation" >&2 || true
+    fail "typed product receipt activation escaped its declared authority"
+}
+
+jq -r '.legacy_human_log_consumers[].path' "${policy}" | sort >"${temp_dir}/declared-logs"
+rg -l 'zentty-linux:' --glob '!product-observability-contract' \
+    --glob '!product-observability-contract-test' "${repo_root}/linux/tests" |
+    sed "s#^${repo_root}/##" | sort >"${temp_dir}/actual-logs"
+cmp -s "${temp_dir}/declared-logs" "${temp_dir}/actual-logs" || {
+    diff -u "${temp_dir}/declared-logs" "${temp_dir}/actual-logs" >&2 || true
+    fail "machine-consumed human log inventory drifted"
+}
+
+jq -r '.receipt_channels[].name' "${policy}" | sort >"${temp_dir}/declared-channels"
+rg -o '(ZENTTY|TORNADOTTY)_[A-Z0-9_]*RECEIPT[A-Z0-9_]*' \
+    --glob '!product-observability-contract' --glob '!product-observability-contract-test' \
+    "${repo_root}/crates" "${repo_root}/linux/tests" "${repo_root}/linux/scripts" |
+    sed 's/.*://' | sort -u >"${temp_dir}/actual-channels"
+cmp -s "${temp_dir}/declared-channels" "${temp_dir}/actual-channels" || {
+    diff -u "${temp_dir}/declared-channels" "${temp_dir}/actual-channels" >&2 || true
+    fail "receipt channel inventory drifted"
+}
+
+while IFS= read -r path; do
+    [[ -f "${repo_root}/${path}" ]] || fail "tracked journey is missing: ${path}"
+    grep -Fq 'product-receipts' "${repo_root}/${path}" ||
+        fail "migrated journey does not consume the typed driver: ${path}"
+done < <(jq -r '.migrated_journeys[].path' "${policy}")
+
+while IFS=$'\t' read -r path literal; do
+    if grep -Fq -- "${literal}" "${repo_root}/${path}"; then
+        fail "retired literal assertion returned to ${path}: ${literal}"
+    fi
+done < <(jq -r '.retired_literal_assertions[] | [.path,.literal] | @tsv' "${policy}")
+
+grep -Fq 'tornadotty_test_receipts' \
+    "${repo_root}/crates/zentty-linux/src/test_receipts.rs" ||
+    fail "product adapter does not use the authoritative Rust contract"
+grep -Fq 'tornadotty_test_receipts' \
+    "${repo_root}/crates/tornadotty-test-receipts/src/bin/tornadotty-journey-driver.rs" ||
+    fail "journey driver does not use the authoritative Rust parser"
+
+if rg -q 'ZENTTY_TEST_RECEIPTS' \
+    --glob '!product-observability-contract' --glob '!product-observability-contract-test' \
+    "${repo_root}/crates" "${repo_root}/linux/tests" "${repo_root}/linux/scripts"; then
+    fail "retired ambiguous product receipt channel returned"
+fi
+
+grep -Fq 'pub const MAX_FILE_BYTES: usize = 8 * 1024 * 1024;' \
+    "${repo_root}/crates/tornadotty-test-receipts/src/lib.rs" || fail "file bound drifted"
+grep -Fq 'pub const MAX_RECORD_BYTES: usize = 8 * 1024;' \
+    "${repo_root}/crates/tornadotty-test-receipts/src/lib.rs" || fail "record bound drifted"
+grep -Fq 'pub const MAX_RECORDS: usize = 8_192;' \
+    "${repo_root}/crates/tornadotty-test-receipts/src/lib.rs" || fail "record-count bound drifted"
+grep -Fq 'const MAX_ID_BYTES: usize = 96;' \
+    "${repo_root}/crates/tornadotty-test-receipts/src/event.rs" || fail "identifier bound drifted"
+
+echo "Product observability authority and inventories are coherent"

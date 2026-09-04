@@ -1296,6 +1296,7 @@ impl ApplicationCoordinator {
                     "zentty-linux: window-size={}x{}",
                     window_size.0, window_size.1
                 );
+                crate::test_receipts::window_geometry(id, window_size.0, window_size.1);
                 self.last_window_sizes.insert(id.clone(), window_size);
             }
             if sidebar_width > 0 && self.last_sidebar_widths.get(id) != Some(&sidebar_width) {

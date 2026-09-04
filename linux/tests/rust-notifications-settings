@@ -15,6 +15,7 @@ daemon_log="${run_root}/notification-daemon.log"
 log=""
 launch_count=0
 product_pid=""
+event_receipt=""
 daemon_pid=""
 monitor_pid=""
 wm_pid=""
@@ -23,6 +24,8 @@ wm_pid=""
 source "${repo_root}/linux/tests/lib/product-input"
 # shellcheck source=linux/tests/lib/product-bundle
 source "${repo_root}/linux/tests/lib/product-bundle"
+# shellcheck source=linux/tests/lib/product-receipts
+source "${repo_root}/linux/tests/lib/product-receipts"
 
 fail() {
     [[ ! -f "${daemon_log}" ]] || cat "${daemon_log}" >&2
@@ -135,6 +138,9 @@ sleep 0.05
 start_product() {
     launch_count=$((launch_count + 1))
     log="${run_root}/product-${launch_count}.log"
+    event_receipt="${run_root}/product-events-${launch_count}.ndjson"
+    tornadotty_product_receipt_prepare "${product}" "${event_receipt}" ||
+        fail "typed product receipt could not be prepared for launch ${launch_count}"
     rm -f -- "${cli_receipt}"
     GDK_SCALE=1 \
     GDK_DPI_SCALE=1 \
@@ -206,10 +212,12 @@ open_notification_settings() {
         "Notifications Settings did not resolve uniquely" || fail "notification palette route failed"
     main_key Down
     main_key Return
-    zentty_product_wait_for_log "${log}" 'zentty-linux: settings-section selected=notifications' \
-        "palette did not deep-link to Notifications" || fail "notification deep-link failed"
-    zentty_product_wait_for_log "${log}" 'zentty-linux: shortcut-settings active' \
-        "notification settings did not receive compositor activation" || fail "settings activation failed"
+    tornadotty_product_receipt_wait "${event_receipt}" 10000 1 \
+        action select-notifications-settings completed - >/dev/null ||
+        fail "notification deep-link lacked typed completion"
+    tornadotty_product_receipt_wait "${event_receipt}" 10000 1 \
+        focus-widget settings-window >/dev/null ||
+        fail "notification settings lacked typed activation"
     settings_window=""
     if [[ "${backend}" == x11 ]]; then
         for _ in {1..100}; do
@@ -238,8 +246,9 @@ grep -Fq 'notify_when_pane_visible = false' "${config}" ||
     fail "visible-pane notification preference is absent from durable config"
 
 settings_key alt+t
-zentty_product_wait_for_log "${log}" 'notification-settings action=send-test result=sent id=1' \
-    "Send Test did not cross the freedesktop service boundary" || fail "test notification failed"
+tornadotty_product_receipt_wait "${event_receipt}" 10000 1 \
+    action send-test-notification completed - >/dev/null ||
+    fail "Send Test lacked typed completion"
 for _ in {1..100}; do [[ -s "${receipt}" ]] && break; sleep 0.02; done
 grep -Fq 'string "Tornado TTY"' "${receipt}" ||
     fail "D-Bus monitor did not receive the source test payload"
