@@ -86,6 +86,7 @@ struct PendingAttention {
     location_text: Option<String>,
     created_at_ms: u64,
     commit_at_ms: u64,
+    acknowledged_at_ms: Option<u64>,
     desktop_allowed: bool,
 }
 
@@ -187,6 +188,7 @@ impl AttentionInbox {
             } else {
                 0
             }),
+            acknowledged_at_ms: is_actively_viewed.then_some(now_ms),
             desktop_allowed: !is_actively_viewed,
         };
         if pending.commit_at_ms > now_ms {
@@ -291,7 +293,7 @@ impl AttentionInbox {
             primary_text: pending.primary_text,
             location_text: pending.location_text,
             created_at_ms: pending.created_at_ms,
-            resolved_at_ms: None,
+            resolved_at_ms: pending.acknowledged_at_ms,
             origin: AttentionOrigin::Agent,
         };
         self.items.insert(0, item.clone());

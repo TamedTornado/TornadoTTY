@@ -531,3 +531,47 @@ pathname, pointing to the canonical CLI, until those sessions are restarted.
 This is one executable rather than two independently deployable copies; new
 builds and packages do not contain the compatibility path. No broad
 qualification run was performed for this packaging-focused correction.
+
+## Attention arriving in an already-focused pane
+
+### Field discovery
+
+During live dogfooding, a normal Codex turn completed while its pane was
+already being viewed. Codex was waiting for the next ordinary user prompt,
+not presenting a permission request, but the attention marker did not clear
+after the pane remained focused. The authenticated event history contained an
+`agent.idle` transition, and later sidebar projections for the affected live
+panes reported `phase=Running`, `interaction=None`, and `attention=false`.
+This ruled out a current actionable approval and exposed a separate inbox
+acknowledgement defect.
+
+`AttentionInbox::observe_with_context` remembered that the pane was already
+active and correctly prohibited a desktop notification. It nevertheless
+committed the new item with `resolved_at_ms=None`. Its only automatic
+resolution path required a later inactive-to-active transition. A user who
+continued looking at the pane could therefore retain an unresolved badge
+indefinitely. An existing test explicitly expected that incorrect result.
+
+### Repair and focused evidence
+
+Pending agent attention now carries an explicit acknowledgement timestamp when
+it arrives in an actively viewed pane. Commit preserves the item as resolved
+history while leaving desktop-delivery policy independent. This applies to an
+immediate Ready/Idle item and to a debounced NeedsInput item that was already
+visible when first observed. Attention first observed outside the active pane
+remains unresolved until the user focuses it.
+
+Two new assertions failed before the implementation change: both the immediate
+completion and deterministic debounced-attention fixtures were committed as
+unresolved. After the repair:
+
+- all 15 focused attention-inbox tests pass;
+- the complete `zentty-core` suite passes;
+- both generated mutants for `AttentionInbox::commit` are caught by the
+  resource-isolated mutation runner in 21 seconds;
+- Rustfmt for the two changed files and `git diff --check` pass.
+
+No sleep, retry, text inference, terminal-title inference, or new test harness
+was added. The currently running installed client does not contain this repair;
+activation requires a later coordinated client restart. Switching away from
+and back to the affected pane remains the workaround for that running build.

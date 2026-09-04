@@ -247,18 +247,48 @@ fn ready_text_enriches_one_completion_but_a_new_running_cycle_delivers_again() {
 }
 
 #[test]
-fn focused_pane_keeps_inbox_history_but_suppresses_desktop_and_focus_resolves_existing() {
+fn attention_arriving_in_a_focused_pane_is_already_acknowledged() {
     let mut inbox = AttentionInbox::default();
     let ready = phase_status(AgentPhase::Idle, AgentInteractionKind::None, None, 1);
     assert!(inbox.observe_with_context(target("pane-1"), Some(&ready), true, None, 10,));
     let deliveries = inbox.drain_deliveries();
     assert_eq!(deliveries.len(), 1);
     assert!(!deliveries[0].desktop_allowed);
+    assert_eq!(inbox.items().len(), 1);
+    assert!(inbox.items()[0].is_resolved());
+    assert_eq!(inbox.unresolved_count(), 0);
+}
+
+#[test]
+fn focusing_a_previously_unseen_attention_item_resolves_it() {
+    let mut inbox = AttentionInbox::default();
+    let ready = phase_status(AgentPhase::Idle, AgentInteractionKind::None, None, 1);
+    assert!(inbox.observe_with_context(target("pane-1"), Some(&ready), false, None, 10,));
     assert_eq!(inbox.unresolved_count(), 1);
 
-    assert!(!inbox.observe_with_context(target("pane-1"), Some(&ready), false, None, 11,));
-    assert!(inbox.observe_with_context(target("pane-1"), Some(&ready), true, None, 12,));
+    assert!(inbox.observe_with_context(target("pane-1"), Some(&ready), true, None, 11,));
     assert_eq!(inbox.unresolved_count(), 0);
+}
+
+#[test]
+fn debounced_attention_already_visible_at_arrival_cannot_create_a_stale_badge() {
+    let mut inbox = AttentionInbox::default();
+    let waiting = status(
+        AgentInteractionKind::Approval,
+        Some("Approve deployment?"),
+        1,
+    );
+    assert!(!inbox.observe_with_context(target("pane-1"), Some(&waiting), true, None, 10,));
+    assert_eq!(inbox.pending_count(), 1);
+
+    assert!(inbox.advance(3_010));
+    assert_eq!(inbox.pending_count(), 0);
+    assert_eq!(inbox.items().len(), 1);
+    assert!(inbox.items()[0].is_resolved());
+    assert_eq!(inbox.unresolved_count(), 0);
+    let deliveries = inbox.drain_deliveries();
+    assert_eq!(deliveries.len(), 1);
+    assert!(!deliveries[0].desktop_allowed);
 }
 
 #[test]
@@ -348,13 +378,14 @@ fn stale_cleanup_is_scoped_to_missing_targets_in_one_window() {
             .unwrap()
             .is_resolved()
     );
-    assert!(
-        !inbox
+    assert_eq!(
+        inbox
             .items()
             .iter()
             .find(|item| item.target == other)
             .unwrap()
-            .is_resolved()
+            .resolved_at_ms,
+        Some(12)
     );
 
     // State for live targets in this and other windows must survive pruning.
