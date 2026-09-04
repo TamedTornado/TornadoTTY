@@ -6,6 +6,7 @@ policy="${1:-${repo_root}/linux/packaging/policy-v1.json}"
 manifest="${2:-${repo_root}/linux/packaging/install-manifest-v1.json}"
 build_script="${3:-${repo_root}/linux/scripts/build-local}"
 fixture="${4:-${repo_root}/linux/packaging/upgrade-fixture-v1.json}"
+copyright="${5:-${repo_root}/linux/packaging/copyright}"
 
 fail() {
     echo "packaging-policy: error: $*" >&2
@@ -17,6 +18,7 @@ command -v dpkg >/dev/null || fail "dpkg is required"
 jq empty "${policy}" 2>/dev/null || fail "policy is not valid JSON"
 jq empty "${manifest}" 2>/dev/null || fail "manifest is not valid JSON"
 jq empty "${fixture}" 2>/dev/null || fail "upgrade fixture is not valid JSON"
+[[ -f "${copyright}" ]] || fail "copyright metadata is missing"
 
 jq -e '
   (keys | sort) == [
@@ -224,6 +226,18 @@ while IFS= read -r source; do
     [[ -f "${repo_root}/${source}" ]] || fail "manifest source file is missing: ${source}"
 done < <(jq -r '.entries[] | select(.kind == "file") |
     select(.source | startswith("build/linux/") | not) | .source' "${manifest}")
+
+grep -Fxq 'Upstream-Name: TornadoTTY' "${copyright}" ||
+    fail "copyright metadata has the wrong public upstream name"
+if grep -Eq '^Files: usr/(bin/zentty|lib/zentty)(/|$)' "${copyright}"; then
+    fail "copyright metadata contains a legacy Zentty install path"
+fi
+for installed_library in \
+    'Files: usr/lib/tornadotty/lib/libghostty-gtk-embed.so' \
+    'Files: usr/lib/tornadotty/lib/libgtk4-layer-shell.so'; do
+    grep -Fxq "${installed_library}" "${copyright}" ||
+        fail "copyright metadata does not match the TornadoTTY package root"
+done
 
 [[ -f "${build_script}" ]] || fail "build-local contract source is missing"
 # These are deliberately literal shell fragments owned by build-local.

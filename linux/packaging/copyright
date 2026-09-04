@@ -1,5 +1,5 @@
 Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
-Upstream-Name: Zentty
+Upstream-Name: TornadoTTY
 Source: https://github.com/TamedTornado/TornadoTTY
 Comment: Machine-readable dependency license metadata and the corresponding
  source-shipped notice texts are installed under
@@ -11,7 +11,7 @@ License: GPL-3.0-only
  On Debian systems, the complete GNU General Public License version 3 text is
  available at /usr/share/common-licenses/GPL-3.
 
-Files: usr/lib/zentty/lib/libghostty-gtk-embed.so
+Files: usr/lib/tornadotty/lib/libghostty-gtk-embed.so
 Copyright: 2024 Mitchell Hashimoto, Ghostty contributors
 License: MIT-Ghostty
  Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -32,7 +32,7 @@ License: MIT-Ghostty
  OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
  SOFTWARE.
 
-Files: usr/lib/zentty/lib/libgtk4-layer-shell.so
+Files: usr/lib/tornadotty/lib/libgtk4-layer-shell.so
 Copyright: 2023 Sophie Winter
 License: MIT-gtk4-layer-shell
  Permission is hereby granted, free of charge, to any person obtaining a copy

@@ -6,6 +6,7 @@ runner="${repo_root}/linux/tests/packaging-policy"
 source_policy="${repo_root}/linux/packaging/policy-v1.json"
 source_manifest="${repo_root}/linux/packaging/install-manifest-v1.json"
 source_fixture="${repo_root}/linux/packaging/upgrade-fixture-v1.json"
+source_copyright="${repo_root}/linux/packaging/copyright"
 temporary="$(mktemp -d)"
 trap 'rm -rf -- "${temporary}"' EXIT
 
@@ -67,6 +68,22 @@ expect_fixture_rejected() {
     }
 }
 
+expect_copyright_rejected() {
+    local name="$1"
+    local expected="$2"
+    if "${runner}" "${source_policy}" "${source_manifest}" \
+        "${repo_root}/linux/scripts/build-local" "${source_fixture}" \
+        "${temporary}/${name}" >"${temporary}/${name}.log" 2>&1; then
+        echo "packaging-policy-test: ${name} unexpectedly passed" >&2
+        exit 1
+    fi
+    grep -Fq "${expected}" "${temporary}/${name}.log" || {
+        cat "${temporary}/${name}.log" >&2
+        echo "packaging-policy-test: ${name} lacked expected failure" >&2
+        exit 1
+    }
+}
+
 "${runner}" >/dev/null
 
 jq '.entries |= map(select(.id != "terminfo-ghostty"))' \
@@ -116,6 +133,11 @@ expect_manifest_rejected legacy-private-root "manifest destinations or required 
 jq '.entries |= map(select(.id != "copyright"))' \
     "${source_manifest}" >"${temporary}/missing-license.json"
 expect_manifest_rejected missing-license "manifest schema or path safety failed"
+
+sed 's#usr/lib/tornadotty#usr/lib/zentty#g' \
+    "${source_copyright}" >"${temporary}/legacy-copyright-path"
+expect_copyright_rejected legacy-copyright-path \
+    "copyright metadata contains a legacy Zentty install path"
 
 jq '.entries[] |= if .id == "application-icon" then .source = "linux/packaging/missing.png" else . end' \
     "${source_manifest}" >"${temporary}/missing-source-file.json"

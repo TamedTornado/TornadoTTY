@@ -244,3 +244,10 @@
   24-case launch process suite with only that ambient marker removed satisfied
   the cases' documented outside-agent precondition and passed. No assertion or
   production behavior was changed to hide the environmental mismatch.
+- Final GH-166 reconciliation found one installed-layout contradiction outside
+  the manifest: Debian copyright metadata still named the old
+  `usr/lib/zentty` paths and identified the public upstream name as Zentty.
+  The metadata now names TornadoTTY and the actual
+  `usr/lib/tornadotty/lib` payload. The existing packaging-policy runner owns
+  this contract, accepts an injectable copyright fixture, and has a negative
+  case proving that either legacy library path is rejected.
