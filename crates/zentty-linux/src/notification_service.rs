@@ -1,6 +1,8 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::process::{Command, Stdio};
-use std::sync::mpsc::{self, Receiver};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::mpsc::{self, Receiver, SyncSender, TrySendError};
 
 use gtk::gio;
 use gtk::gio::prelude::{DBusProxyExt, DBusProxyExtManual};
@@ -15,6 +17,8 @@ const OBJECT_PATH: &str = "/org/freedesktop/Notifications";
 const INTERFACE: &str = "org.freedesktop.Notifications";
 const CALL_TIMEOUT_MS: i32 = 2_000;
 const MAX_ACTIVATION_TOKEN_BYTES: usize = 4 * 1024;
+const MAX_TRACKED_DESKTOP_NOTIFICATIONS: usize = 128;
+const MAX_PENDING_DESKTOP_SIGNALS: usize = 256;
 
 pub(crate) const SOUND_CHOICES: &[(&str, &str)] = &[
     ("", "Default"),
@@ -59,6 +63,91 @@ enum DesktopSignal {
     Closed { id: u32 },
 }
 
+struct DesktopNotificationEntry {
+    id: u32,
+    target: AttentionTarget,
+    activation_token: Option<String>,
+}
+
+#[derive(Default)]
+struct DesktopNotificationRegistry {
+    entries: VecDeque<DesktopNotificationEntry>,
+    evicted_total: u64,
+}
+
+impl DesktopNotificationRegistry {
+    fn track(&mut self, id: u32, target: AttentionTarget) -> Option<(u32, u64)> {
+        if let Some(position) = self.entries.iter().position(|entry| entry.id == id) {
+            self.entries.remove(position);
+        }
+        self.entries.push_back(DesktopNotificationEntry {
+            id,
+            target,
+            activation_token: None,
+        });
+        if self.entries.len() <= MAX_TRACKED_DESKTOP_NOTIFICATIONS {
+            return None;
+        }
+        let evicted = self
+            .entries
+            .pop_front()
+            .expect("capacity overflow requires an oldest notification");
+        self.evicted_total = self.evicted_total.saturating_add(1);
+        Some((evicted.id, self.evicted_total))
+    }
+
+    #[cfg(test)]
+    fn contains(&self, id: u32) -> bool {
+        self.entries.iter().any(|entry| entry.id == id)
+    }
+
+    #[cfg(test)]
+    fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    #[cfg(test)]
+    fn activation_token(&self, id: u32) -> Option<&str> {
+        self.entries
+            .iter()
+            .find(|entry| entry.id == id)?
+            .activation_token
+            .as_deref()
+    }
+
+    fn store_activation_token(&mut self, id: u32, token: String) -> bool {
+        let Some(entry) = self.entries.iter_mut().find(|entry| entry.id == id) else {
+            return false;
+        };
+        entry.activation_token = Some(token);
+        true
+    }
+
+    fn take(&mut self, id: u32) -> Option<DesktopNotificationEntry> {
+        let position = self.entries.iter().position(|entry| entry.id == id)?;
+        self.entries.remove(position)
+    }
+
+    fn remove(&mut self, id: u32) -> bool {
+        self.take(id).is_some()
+    }
+}
+
+fn enqueue_desktop_signal(
+    sender: &SyncSender<DesktopSignal>,
+    dropped_total: &AtomicU64,
+    signal: DesktopSignal,
+) -> bool {
+    match sender.try_send(signal) {
+        Ok(()) => true,
+        Err(TrySendError::Full(_)) => {
+            dropped_total.fetch_add(1, Ordering::Relaxed);
+            false
+        }
+        Err(TrySendError::Disconnected(_)) => false,
+    }
+}
+
 pub(crate) struct DesktopAttentionActivation {
     pub(crate) target: AttentionTarget,
     pub(crate) service_id: u32,
@@ -68,16 +157,19 @@ pub(crate) struct DesktopAttentionActivation {
 
 pub(crate) struct AttentionNotificationService {
     proxy: Option<gio::DBusProxy>,
-    targets: HashMap<u32, AttentionTarget>,
-    activation_tokens: HashMap<u32, String>,
+    registry: DesktopNotificationRegistry,
     signals: Receiver<DesktopSignal>,
+    dropped_signals: Arc<AtomicU64>,
+    next_drop_report_at: u64,
 }
 
 impl AttentionNotificationService {
     pub(crate) fn new() -> Self {
         let proxy = notification_proxy().ok();
-        let (sender, signals) = mpsc::channel();
+        let (sender, signals) = mpsc::sync_channel(MAX_PENDING_DESKTOP_SIGNALS);
+        let dropped_signals = Arc::new(AtomicU64::new(0));
         if let Some(proxy) = &proxy {
+            let dropped_signals = Arc::clone(&dropped_signals);
             proxy.connect_g_signal(move |_, _, signal_name, parameters| {
                 let signal = match signal_name {
                     "ActivationToken" => parameters
@@ -92,15 +184,16 @@ impl AttentionNotificationService {
                     _ => None,
                 };
                 if let Some(signal) = signal {
-                    let _ = sender.send(signal);
+                    enqueue_desktop_signal(&sender, &dropped_signals, signal);
                 }
             });
         }
         Self {
             proxy,
-            targets: HashMap::new(),
-            activation_tokens: HashMap::new(),
+            registry: DesktopNotificationRegistry::default(),
             signals,
+            dropped_signals,
+            next_drop_report_at: 1,
         }
     }
 
@@ -124,36 +217,48 @@ impl AttentionNotificationService {
         };
         let actions = vec!["default".to_owned(), "Jump to Pane".to_owned()];
         let id = send_with_proxy(proxy, &title, &body, &actions, config, false)?;
-        self.targets.insert(id, item.target.clone());
+        if let Some((evicted_id, evicted_total)) = self.registry.track(id, item.target.clone())
+            && evicted_total.is_power_of_two()
+        {
+            eprintln!(
+                "zentty-linux: desktop-attention-routing result=evicted service-id={evicted_id} capacity={MAX_TRACKED_DESKTOP_NOTIFICATIONS} evicted-total={evicted_total}"
+            );
+        }
         Ok(id)
     }
 
     pub(crate) fn drain_activations(&mut self) -> Vec<DesktopAttentionActivation> {
         let mut activations = Vec::new();
         while let Ok(signal) = self.signals.try_recv() {
-            if let Some(activation) =
-                apply_desktop_signal(&mut self.targets, &mut self.activation_tokens, signal)
-            {
+            if let Some(activation) = apply_desktop_signal(&mut self.registry, signal) {
                 activations.push(activation);
             }
+        }
+        let dropped_total = self.dropped_signals.load(Ordering::Relaxed);
+        if dropped_total >= self.next_drop_report_at {
+            eprintln!(
+                "zentty-linux: desktop-attention-signals result=dropped capacity={MAX_PENDING_DESKTOP_SIGNALS} dropped-total={dropped_total}"
+            );
+            self.next_drop_report_at = dropped_total
+                .checked_next_power_of_two()
+                .unwrap_or(u64::MAX)
+                .max(dropped_total.saturating_add(1));
         }
         activations
     }
 }
 
 fn apply_desktop_signal(
-    targets: &mut HashMap<u32, AttentionTarget>,
-    activation_tokens: &mut HashMap<u32, String>,
+    registry: &mut DesktopNotificationRegistry,
     signal: DesktopSignal,
 ) -> Option<DesktopAttentionActivation> {
     match signal {
         DesktopSignal::ActivationToken { id, token } => {
-            if targets.contains_key(&id)
-                && !token.is_empty()
+            if !token.is_empty()
                 && token.len() <= MAX_ACTIVATION_TOKEN_BYTES
                 && !token.contains('\0')
+                && registry.store_activation_token(id, token)
             {
-                activation_tokens.insert(id, token);
                 eprintln!(
                     "zentty-linux: desktop-attention-signal service-id={id} kind=activation-token result=stored"
                 );
@@ -165,8 +270,7 @@ fn apply_desktop_signal(
             None
         }
         DesktopSignal::ActionInvoked { id, action } => {
-            let activation_token = activation_tokens.remove(&id);
-            let target = targets.remove(&id);
+            let entry = registry.take(id);
             let action = match action.as_str() {
                 "default" => "default",
                 "jump" => "jump",
@@ -174,23 +278,26 @@ fn apply_desktop_signal(
             };
             eprintln!(
                 "zentty-linux: desktop-attention-signal service-id={id} kind=action action={action} target={} credential={}",
-                if target.is_some() { "found" } else { "stale" },
-                if activation_token.is_some() {
+                if entry.is_some() { "found" } else { "stale" },
+                if entry
+                    .as_ref()
+                    .is_some_and(|entry| entry.activation_token.is_some())
+                {
                     "token"
                 } else {
                     "none"
                 },
             );
+            let entry = entry?;
             (action != "unsupported").then_some(DesktopAttentionActivation {
-                target: target?,
+                target: entry.target,
                 service_id: id,
                 action: action.to_owned(),
-                activation_token,
+                activation_token: entry.activation_token,
             })
         }
         DesktopSignal::Closed { id } => {
-            targets.remove(&id);
-            activation_tokens.remove(&id);
+            registry.remove(id);
             eprintln!("zentty-linux: desktop-attention-signal service-id={id} kind=closed");
             None
         }
@@ -368,13 +475,15 @@ fn settings_launcher(desktop: Option<&str>) -> SettingsLauncher {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::sync::mpsc;
 
     use zentty_core::AttentionTarget;
 
     use super::{
-        DesktopAttentionDecision, DesktopSignal, SettingsLauncher, apply_desktop_signal,
-        desktop_attention_decision, settings_launcher,
+        DesktopAttentionDecision, DesktopNotificationRegistry, DesktopSignal,
+        MAX_TRACKED_DESKTOP_NOTIFICATIONS, SettingsLauncher, apply_desktop_signal,
+        desktop_attention_decision, enqueue_desktop_signal, settings_launcher,
     };
 
     #[test]
@@ -415,12 +524,11 @@ mod tests {
     #[test]
     fn activation_token_is_single_use_and_bound_to_the_exact_notification() {
         let target = AttentionTarget::new("window-1", "worklane-1", "pane-1");
-        let mut targets = HashMap::from([(7, target.clone())]);
-        let mut tokens = HashMap::new();
+        let mut registry = DesktopNotificationRegistry::default();
+        registry.track(7, target.clone());
         assert!(
             apply_desktop_signal(
-                &mut targets,
-                &mut tokens,
+                &mut registry,
                 DesktopSignal::ActivationToken {
                     id: 7,
                     token: "valid-token".to_owned(),
@@ -429,8 +537,7 @@ mod tests {
             .is_none()
         );
         let activation = apply_desktop_signal(
-            &mut targets,
-            &mut tokens,
+            &mut registry,
             DesktopSignal::ActionInvoked {
                 id: 7,
                 action: "default".to_owned(),
@@ -439,12 +546,10 @@ mod tests {
         .expect("known default action must activate");
         assert_eq!(activation.target, target);
         assert_eq!(activation.activation_token.as_deref(), Some("valid-token"));
-        assert!(!targets.contains_key(&7));
-        assert!(!tokens.contains_key(&7));
+        assert_eq!(registry.len(), 0);
         assert!(
             apply_desktop_signal(
-                &mut targets,
-                &mut tokens,
+                &mut registry,
                 DesktopSignal::ActionInvoked {
                     id: 7,
                     action: "default".to_owned(),
@@ -457,12 +562,12 @@ mod tests {
     #[test]
     fn closed_stale_and_invalid_notification_signals_cannot_route() {
         let target = AttentionTarget::new("window-1", "worklane-1", "pane-1");
-        let mut targets = HashMap::from([(9, target.clone()), (10, target)]);
-        let mut tokens = HashMap::new();
+        let mut registry = DesktopNotificationRegistry::default();
+        registry.track(9, target.clone());
+        registry.track(10, target);
         assert!(
             apply_desktop_signal(
-                &mut targets,
-                &mut tokens,
+                &mut registry,
                 DesktopSignal::ActivationToken {
                     id: 8,
                     token: "stale".to_owned(),
@@ -470,11 +575,10 @@ mod tests {
             )
             .is_none()
         );
-        assert!(tokens.is_empty());
+        assert!(registry.activation_token(8).is_none());
         assert!(
             apply_desktop_signal(
-                &mut targets,
-                &mut tokens,
+                &mut registry,
                 DesktopSignal::ActionInvoked {
                     id: 10,
                     action: "unsupported".to_owned(),
@@ -482,11 +586,10 @@ mod tests {
             )
             .is_none()
         );
-        assert!(!targets.contains_key(&10));
+        assert!(!registry.contains(10));
         assert!(
             apply_desktop_signal(
-                &mut targets,
-                &mut tokens,
+                &mut registry,
                 DesktopSignal::ActivationToken {
                     id: 9,
                     token: "bad\0token".to_owned(),
@@ -494,11 +597,10 @@ mod tests {
             )
             .is_none()
         );
-        assert!(tokens.is_empty());
+        assert!(registry.activation_token(9).is_none());
         assert!(
             apply_desktop_signal(
-                &mut targets,
-                &mut tokens,
+                &mut registry,
                 DesktopSignal::ActivationToken {
                     id: 9,
                     token: "x".repeat(super::MAX_ACTIVATION_TOKEN_BYTES + 1),
@@ -506,11 +608,97 @@ mod tests {
             )
             .is_none()
         );
-        assert!(tokens.is_empty());
+        assert!(registry.activation_token(9).is_none());
+        assert!(apply_desktop_signal(&mut registry, DesktopSignal::Closed { id: 9 }).is_none());
+        assert_eq!(registry.len(), 0);
+    }
+
+    #[test]
+    fn notification_routing_is_bounded_and_evicts_the_oldest_complete_record() {
+        let mut registry = DesktopNotificationRegistry::default();
+        for id in 1..=u32::try_from(MAX_TRACKED_DESKTOP_NOTIFICATIONS + 1).unwrap() {
+            registry.track(
+                id,
+                AttentionTarget::new("window-1", "worklane-1", format!("pane-{id}")),
+            );
+        }
+
+        assert_eq!(registry.len(), MAX_TRACKED_DESKTOP_NOTIFICATIONS);
+        assert!(!registry.contains(1));
+        assert!(registry.contains(2));
         assert!(
-            apply_desktop_signal(&mut targets, &mut tokens, DesktopSignal::Closed { id: 9 },)
-                .is_none()
+            apply_desktop_signal(
+                &mut registry,
+                DesktopSignal::ActionInvoked {
+                    id: 1,
+                    action: "default".to_owned(),
+                },
+            )
+            .is_none()
         );
-        assert!(targets.is_empty());
+        let newest = apply_desktop_signal(
+            &mut registry,
+            DesktopSignal::ActionInvoked {
+                id: u32::try_from(MAX_TRACKED_DESKTOP_NOTIFICATIONS + 1).unwrap(),
+                action: "default".to_owned(),
+            },
+        )
+        .expect("newest retained notification must route");
+        assert_eq!(
+            newest.target.pane_id,
+            format!("pane-{}", MAX_TRACKED_DESKTOP_NOTIFICATIONS + 1)
+        );
+    }
+
+    #[test]
+    fn reused_service_id_replaces_target_and_discards_the_old_token() {
+        let mut registry = DesktopNotificationRegistry::default();
+        registry.track(
+            7,
+            AttentionTarget::new("window-1", "worklane-1", "old-pane"),
+        );
+        apply_desktop_signal(
+            &mut registry,
+            DesktopSignal::ActivationToken {
+                id: 7,
+                token: "old-token".to_owned(),
+            },
+        );
+
+        registry.track(
+            7,
+            AttentionTarget::new("window-1", "worklane-2", "new-pane"),
+        );
+        let activation = apply_desktop_signal(
+            &mut registry,
+            DesktopSignal::ActionInvoked {
+                id: 7,
+                action: "jump".to_owned(),
+            },
+        )
+        .expect("reused notification identity must route to its replacement");
+        assert_eq!(activation.target.pane_id, "new-pane");
+        assert_eq!(activation.activation_token, None);
+    }
+
+    #[test]
+    fn desktop_signal_ingress_is_nonblocking_and_bounded() {
+        let (sender, receiver) = mpsc::sync_channel(1);
+        let dropped = AtomicU64::new(0);
+        assert!(enqueue_desktop_signal(
+            &sender,
+            &dropped,
+            DesktopSignal::Closed { id: 1 },
+        ));
+        assert!(!enqueue_desktop_signal(
+            &sender,
+            &dropped,
+            DesktopSignal::Closed { id: 2 },
+        ));
+        assert_eq!(dropped.load(Ordering::Relaxed), 1);
+        assert!(matches!(
+            receiver.try_recv().unwrap(),
+            DesktopSignal::Closed { id: 1 }
+        ));
     }
 }

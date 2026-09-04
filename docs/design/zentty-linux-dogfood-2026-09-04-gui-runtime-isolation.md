@@ -285,3 +285,83 @@ application survives real dogfooding without renewed monotonic heap growth or
 event storms. Raw transport channel bounding and pane process/cgroup isolation
 remain explicitly owned by GH-163 and GH-162 respectively; they were not
 smuggled into this repair.
+
+## Desktop-notification routing bound
+
+### Discovery
+
+The desktop-notification adapter still retained two unbounded parallel maps:
+one from freedesktop notification IDs to pane targets and another from those
+IDs to activation tokens. Entries disappeared only if the desktop notification
+service eventually emitted `ActionInvoked` or `NotificationClosed`. A server
+that omitted those callbacks, or a long-lived event storm, could therefore
+grow application-owned state without limit. Reuse of a service ID also risked
+combining a replacement target with an earlier activation token. The D-Bus
+signal callback additionally fed an unbounded Rust channel on GTK's process
+boundary.
+
+The installed package was inspected before this repair and is still
+`tornadotty 0.1.1+gite064dd1151e8`. That source predates the original
+event-coalescing repair at `c9e5c9d63980e2085a1882cb47f2401fd163585a` as
+well as this notification repair. It was not replaced or restarted while the
+user was working.
+
+### Repair
+
+The parallel maps are replaced by one owning notification record and an
+insertion-ordered registry. Reusing an ID replaces the complete old record,
+including its token. The registry retains at most 128 notification records and
+evicts the oldest complete record on overflow. This is greater than the UI's
+50-item attention-history bound while still providing a hard process-memory
+limit when a desktop service never closes notifications.
+
+The D-Bus callback now uses nonblocking `try_send` into a 256-entry bounded
+channel. A full queue drops the new signal rather than blocking the D-Bus/GTK
+callback or allocating indefinitely. Cumulative eviction and drop diagnostics
+are emitted at powers of two, preserving evidence without recreating a log
+storm. Disconnection remains a normal shutdown condition rather than a drop.
+
+Tests were written against the missing registry API before implementation; the
+expected compile failure established the red state. Seven focused unit tests
+now prove exact-token single use, stale/invalid signal rejection, oldest-record
+eviction, complete ID replacement, and bounded nonblocking ingress. The
+reused-ID test specifically proves that a token from the previous record cannot
+authorize the replacement target.
+
+### Focused evidence
+
+- `cargo test -p zentty-linux notification_service::tests --no-fail-fast`:
+  **7 passed, 0 failed**.
+- A direct strict Clippy run exposed five already-present lint classes in
+  unrelated GTK files (`assigning_clones`, `too_many_lines`, `map_unwrap_or`,
+  `cast_precision_loss`, and `unused_self`). Repeating strict Clippy while
+  allowing exactly those five existing classes passed the changed binary. No
+  new lint was waived in the changed module.
+- The isolated ReleaseSafe product build completed successfully in 22.60
+  seconds with dependency-age and notice checks enabled. It was written under
+  `build/linux-profiles/release-safe`; the installed product was untouched.
+- The first real notification/settings journey attempt failed before product
+  startup because sandbox isolation prevented Xvfb from acquiring its display
+  socket. Environmental absence was not converted into a pass. The corrected
+  run used the existing `nested-x11` harness outside that sandbox, a private
+  D-Bus session, Xvfb, llvmpipe, the real ReleaseSafe TornadoTTY binary,
+  Ghostty, GTK, and the real desktop-notification/settings path. It exited 0
+  after eight seconds. Session
+  `fc7e808daf5d0d6d944636d8fdf6843da984e6c6168b4fee824d20fdd09ecbb0`
+  reports ambient display/D-Bus sanitization, removed run root, unreachable
+  display after exit, and no remaining controlled processes. Environment
+  receipt SHA-256:
+  `3f013615e9ce0c2d5de3595ddf6e8370fe65815514f797fa2896979f13be1cad`.
+- The governed mutation wrapper selected only
+  `DesktopNotificationRegistry`, `enqueue_desktop_signal`, and
+  `apply_desktop_signal`. Four workers ran in a dedicated systemd scope with a
+  12 GiB aggregate memory cap, 6 GiB per-process virtual-memory cap,
+  `gitignore = true`, and `copy_target = false`. Of 28 generated mutants, **26
+  were caught, 2 were compiler-unviable, 0 survived, and 0 timed out** in about
+  two minutes. Machine outcome SHA-256:
+  `7ec42ea2e1af3253b610a1b00e077fdf4f1013f111994cc1a39efcb3de29f636`.
+
+This closes an additional application-owned unbounded collection and queue;
+it does not claim the installed client is repaired. Installed field validation
+still waits for the user's coordinated restart. Broader PTY/IPC backpressure
+and process-group isolation remain GH-163 and GH-162 work respectively.
