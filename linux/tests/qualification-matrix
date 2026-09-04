@@ -3,6 +3,7 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 matrix="${ZENTTY_QUALIFICATION_MATRIX:-${repo_root}/linux/qualification-matrix.json}"
+matrix_schema="${repo_root}/linux/test-policy/qualification-matrix.schema.json"
 default_summary="${repo_root}/build/linux/qualification-summary.json"
 summary="${ZENTTY_QUALIFICATION_SUMMARY:-${default_summary}}"
 # shellcheck source=linux/tests/lib/valgrind-report
@@ -23,12 +24,6 @@ qualification_display_jobs="${ZENTTY_QUALIFICATION_DISPLAY_JOBS:-$(zentty_qualif
 qualification_interactive_jobs="${ZENTTY_QUALIFICATION_INTERACTIVE_JOBS:-$(zentty_qualification_interactive_jobs)}"
 qualification_work_cpu_set="${ZENTTY_QUALIFICATION_WORK_CPU_SET:-$(zentty_qualification_cpu_set work)}"
 qualification_display_cpu_set="${ZENTTY_QUALIFICATION_DISPLAY_CPU_SET:-$(zentty_qualification_cpu_set display)}"
-
-allowed_tiers='["local","release","full"]'
-allowed_displays='["none","wayland","x11","both"]'
-allowed_optimizations='["n/a","ReleaseSafe","Debug","both"]'
-allowed_async_backends='["n/a","default","epoll","io_uring","all"]'
-allowed_terminal_counts='["n/a","single","multi","all"]'
 
 if [[ "${1:-}" == "--validate-only" ]]; then
     validate_only=true
@@ -105,6 +100,7 @@ if ! "${validate_only}"; then
 fi
 
 command -v jq >/dev/null || fail "jq is required"
+command -v jsonschema >/dev/null || fail "jsonschema is required"
 command -v sha256sum >/dev/null || fail "sha256sum is required"
 command -v stat >/dev/null || fail "stat is required"
 command -v mktemp >/dev/null || fail "mktemp is required"
@@ -115,21 +111,11 @@ command -v find >/dev/null || fail "find is required"
 command -v taskset >/dev/null || fail "taskset is required"
 command -v lscpu >/dev/null || fail "lscpu is required"
 
-jq -e '.schema_version == 1 and (.cells | type == "array")' \
-    "${matrix}" >/dev/null || fail "invalid matrix schema"
+if ! jsonschema -V Draft202012Validator "${matrix_schema}" -i "${matrix}"; then
+    fail "matrix does not conform to qualification-matrix.schema.json"
+fi
 
 jq -e '
-    (keys | sort) == ["axes","cells","claims","execution_graph","required_capabilities","schema_version"] and
-    (.axes | keys | sort) == ["async_backend","display","optimize","status","terminals","tier"] and
-    (.claims | keys | sort) == [
-        "full_linux_qualification_passed",
-        "implemented_local_suite_passed",
-        "product_boundary_qualification_passed",
-        "qualification_host_retired",
-        "release_qualification_passed"
-    ] and
-    all(.claims[]; type == "boolean") and
-    (.execution_graph | keys | sort) == ["profile_prerequisites","resources","root_prerequisite"] and
     (.execution_graph.root_prerequisite == "prepare-ghostty") and
     (.execution_graph.profile_prerequisites == {
       "Debug":"build-debug","ReleaseSafe":"build-release"
@@ -137,21 +123,7 @@ jq -e '
     (.execution_graph.resources == [
       "abi-mismatch-fixture","compiler-load","consolidated-session-journey","development-server-visual","fcitx5-gtk-source","ghostty-source","system-sleep-inhibitor"
     ])
-' "${matrix}" >/dev/null || fail "matrix root, axes, or claims are not closed-world"
-
-jq -e '
-    .axes.display == {
-        "none":"No display server is exercised",
-        "wayland":"GTK Wayland backend",
-        "x11":"GTK X11 backend on native X11, Xvfb, or Xwayland as identified by the cell harness",
-        "both":"Separate Wayland and X11 evidence is required or aggregated"
-    } and
-    .axes.optimize == ["n/a","ReleaseSafe","Debug","both"] and
-    .axes.async_backend == ["n/a","default","epoll","io_uring","all"] and
-    .axes.terminals == ["n/a","single","multi","all"] and
-    .axes.status == ["PASS","FAIL","BLOCKED","XFAIL","NOT_IMPLEMENTED"] and
-    .axes.tier == ["local","release","full"]
-' "${matrix}" >/dev/null || fail "matrix axis declarations differ from the closed-world contract"
+' "${matrix}" >/dev/null || fail "matrix execution graph differs from the qualification policy"
 
 duplicate_ids="$(jq -r '[.cells[].id] | group_by(.)[] | select(length > 1) | .[0]' "${matrix}")"
 [[ -z "${duplicate_ids}" ]] || fail "duplicate cell IDs: ${duplicate_ids}"
@@ -169,45 +141,8 @@ if ! jq -e '
     fail "execution graph prerequisite cells are missing or malformed"
 fi
 
-unknown_status="$(jq -r '.cells[] | select(.status != "PASS" and .status != "FAIL" and .status != "BLOCKED" and .status != "XFAIL" and .status != "NOT_IMPLEMENTED") | .id + "=" + (.status | tostring)' "${matrix}")"
-[[ -z "${unknown_status}" ]] || fail "unknown statuses: ${unknown_status}"
-
-missing_fields="$(jq -r '.cells[] | select((.id | type) != "string" or (.order | type) != "number" or (.capability | type) != "string" or (.display | type) != "string" or (.optimize | type) != "string" or (.async_backend | type) != "string" or (.terminals | type) != "string" or (.status | type) != "string" or (.tier | type) != "string") | .id // "<missing-id>"' "${matrix}")"
-[[ -z "${missing_fields}" ]] || fail "cells with missing fields: ${missing_fields}"
-
-invalid_orders="$(jq -r '.cells[] | select((.order | type) != "number" or .order < 0 or (.order | floor) != .order) | .id // "<missing-id>"' "${matrix}")"
-[[ -z "${invalid_orders}" ]] || fail "cells with invalid order: ${invalid_orders}"
-invalid_schedule_priorities="$(jq -r '.cells[] | select(
-    (.schedule_priority? | type) != "null" and
-    ((.schedule_priority | type) != "number" or .schedule_priority < 0 or
-     (.schedule_priority | floor) != .schedule_priority)
-) | .id' "${matrix}")"
-[[ -z "${invalid_schedule_priorities}" ]] ||
-    fail "cells with invalid schedule priority: ${invalid_schedule_priorities}"
-invalid_display_blockers="$(jq -r '.cells[] | select(
-    (.blocks_display? != null) and (.blocks_display | type) != "boolean"
-) | .id' "${matrix}")"
-[[ -z "${invalid_display_blockers}" ]] ||
-    fail "cells with invalid display-blocking policy: ${invalid_display_blockers}"
-
-unknown_tiers="$(jq -r --argjson allowed "${allowed_tiers}" '.cells[] | select(.tier as $value | $allowed | index($value) == null) | .id + "=" + (.tier | tostring)' "${matrix}")"
-[[ -z "${unknown_tiers}" ]] || fail "unknown tiers: ${unknown_tiers}"
-unknown_displays="$(jq -r --argjson allowed "${allowed_displays}" '.cells[] | select(.display as $value | $allowed | index($value) == null) | .id + "=" + (.display | tostring)' "${matrix}")"
-[[ -z "${unknown_displays}" ]] || fail "unknown displays: ${unknown_displays}"
-unknown_optimizations="$(jq -r --argjson allowed "${allowed_optimizations}" '.cells[] | select(.optimize as $value | $allowed | index($value) == null) | .id + "=" + (.optimize | tostring)' "${matrix}")"
-[[ -z "${unknown_optimizations}" ]] || fail "unknown optimizations: ${unknown_optimizations}"
-unknown_async_backends="$(jq -r --argjson allowed "${allowed_async_backends}" '.cells[] | select(.async_backend as $value | $allowed | index($value) == null) | .id + "=" + (.async_backend | tostring)' "${matrix}")"
-[[ -z "${unknown_async_backends}" ]] || fail "unknown async backends: ${unknown_async_backends}"
-unknown_terminal_counts="$(jq -r --argjson allowed "${allowed_terminal_counts}" '.cells[] | select(.terminals as $value | $allowed | index($value) == null) | .id + "=" + (.terminals | tostring)' "${matrix}")"
-[[ -z "${unknown_terminal_counts}" ]] || fail "unknown terminal counts: ${unknown_terminal_counts}"
-
-duplicate_capabilities="$(jq -r '.required_capabilities | group_by(.)[] | select(length > 1) | .[0]' "${matrix}")"
-[[ -z "${duplicate_capabilities}" ]] || fail "duplicate required capabilities: ${duplicate_capabilities}"
 unknown_capabilities="$(jq -r '. as $matrix | .cells[] | select(.capability as $capability | $matrix.required_capabilities | index($capability) == null) | .id + "=" + .capability' "${matrix}")"
 [[ -z "${unknown_capabilities}" ]] || fail "cells with undeclared capabilities: ${unknown_capabilities}"
-
-invalid_ids="$(jq -r '.cells[] | select((.id | type) != "string" or (.id | test("^[a-z0-9][a-z0-9-]*$") | not)) | .id // "<missing-id>"' "${matrix}")"
-[[ -z "${invalid_ids}" ]] || fail "cells with unsafe IDs: ${invalid_ids}"
 
 invalid_deferred_tracking="$(jq -r '
     def nonblank: type == "string" and test("\\S");
@@ -259,33 +194,24 @@ invalid_profile_prerequisite_skips="$(jq -r '.cells[] | select(
 invalid_dependencies="$(jq -r '
     . as $matrix | .cells[] |
     select(
-      ((.depends_on? | type) != "null" and (.depends_on | type) != "array") or
-      ((.depends_on? | type) == "array" and any(.depends_on[];
-        (type != "string") or (. as $id | $matrix.cells | any(.id == $id) | not)))
+      any((.depends_on // [])[];
+        . as $id | $matrix.cells | any(.id == $id) | not)
     ) | .id
 ' "${matrix}")"
 [[ -z "${invalid_dependencies}" ]] ||
-    fail "cells with malformed or unknown dependencies: ${invalid_dependencies}"
-duplicate_dependencies="$(jq -r '.cells[] | select(
-    ((.depends_on // []) | length) != ((.depends_on // []) | unique | length)
-) | .id' "${matrix}")"
-[[ -z "${duplicate_dependencies}" ]] ||
-    fail "cells with duplicate dependencies: ${duplicate_dependencies}"
+    fail "cells with unknown dependencies: ${invalid_dependencies}"
 self_dependencies="$(jq -r '.cells[] | select(.id as $id | (.depends_on // []) | index($id)) | .id' "${matrix}")"
 [[ -z "${self_dependencies}" ]] || fail "self-dependent cells: ${self_dependencies}"
 
 invalid_resources="$(jq -r '
     . as $matrix | .cells[] |
     select(
-      ((.resources? | type) != "null" and (.resources | type) != "array") or
-      ((.resources? | type) == "array" and any(.resources[];
-        (type != "string") or (. as $resource |
-          $matrix.execution_graph.resources | index($resource) == null))) or
-      ((.resources // []) | length) != ((.resources // []) | unique | length)
+      any((.resources // [])[];
+        . as $resource | $matrix.execution_graph.resources | index($resource) == null)
     ) | .id
 ' "${matrix}")"
 [[ -z "${invalid_resources}" ]] ||
-    fail "cells with malformed, unknown, or duplicate resources: ${invalid_resources}"
+    fail "cells with unknown resources: ${invalid_resources}"
 unsafe_resource_cells="$(jq -r '.cells[] | select(
     (.status == "PASS" or .status == "XFAIL") and
     (if ((.command // "") | contains("linux/scripts/prepare-ghostty-source")) then

@@ -206,3 +206,56 @@ The resulting open list contains three explicitly deferred enhancements, the
 stable-Cargo follow-up, the enhancement register, two real product bugs, and
 the testing epic with its three unfinished children. No issue was closed by
 weakening its acceptance criteria.
+
+## 2026-09-04 — qualification schema authority (GH-167)
+
+### Discovery
+
+- The checked-in Draft 2020-12 matrix schema described itself as authoritative,
+  but rejected the live matrix. It omitted the entire `execution_graph` and
+  the cell-level dependency, resource, scheduling, always-run, prerequisite-
+  bypass, and display-blocking fields that the Bash runner validated itself.
+- Consequently, changing an enum or a structural field required maintaining
+  parallel validators, while direct schema validation could not protect the
+  repository artifact consumed by the runner.
+- Enabling the schema in the real runner exposed a contradictory focused-test
+  fixture: it converted a PASS cell to BLOCKED but retained the PASS-only
+  `environment_profile`. The fixture had passed only because the authoritative
+  schema was never executed.
+- The same focused test run honestly stopped on a separate baseline drift:
+  five inline tests had landed after the classification audit. Four are
+  behavioral tests and one is an ignored GTK widget-smoke test; none is being
+  represented as mutation-proven merely because its category is recorded.
+
+### Repair
+
+- Extended the existing JSON Schema rather than introducing Zod, TypeScript,
+  code generation, or another validation layer. It now closes the live root,
+  execution-graph, profile-prerequisite, resource, dependency, and scheduler
+  shapes and rejects unknown properties.
+- Made `linux/tests/qualification-matrix` invoke that schema before semantic
+  policy validation. Removed the duplicate Bash shape, primitive-type, enum,
+  ID-pattern, order, scheduler-priority, and collection-uniqueness checks now
+  owned by JSON Schema.
+- Retained semantic checks for referenced-cell/resource membership, cycles,
+  resource ownership, environment compatibility, deferred-status governance,
+  required capability coverage, and qualification claims.
+- Added focused negative fixtures for a missing execution graph, a missing
+  required cell field, a negative scheduler priority, duplicate dependencies,
+  an unknown scheduler property, an invalid status, and a mistyped display
+  blocker. The fixtures assert rejection through the schema boundary without
+  depending on validator-version-specific prose.
+- Reconciled the inline-test audit to 369 tests: 335 behavioral, 29
+  contract/snapshot, zero formatter-mirroring, and five widget smoke.
+
+### Evidence and limitations
+
+- Direct Draft 2020-12 validation of the live matrix: passed.
+- `linux/tests/qualification-matrix --validate-only`: passed, including all
+  retained semantic and coverage policy.
+- `linux/tests/qualification-matrix-test`: passed.
+- `linux/tests/lib/inline-test-audit-test`: passed.
+- ShellCheck at warning severity and `git diff --check`: passed.
+- This slice does not claim stronger unit assertions or a mutation kill rate.
+  Those remain GH-146. Source/input identity in full-run receipts remains
+  GH-168, and aggregate/retry simplification remains GH-169.

@@ -19,13 +19,13 @@ green after tests silently appear or disappear.
 
 | Primary classification | Count | Meaning |
 | --- | ---: | --- |
-| Behavioral | 331 | Exercises state, branching, boundaries, parsing, persistence, or side effects. Strength remains subject to mutation. |
+| Behavioral | 335 | Exercises state, branching, boundaries, parsing, persistence, or side effects. Strength remains subject to mutation. |
 | Contract/snapshot | 29 | Pins an intentional source-parity, UI-copy, protocol, action, or accessibility contract. |
 | Formatter-mirroring | 0 | No remaining test was classified as merely reconstructing an internal formatter. The pane-divider example was removed and replaced by semantic integration tests. |
-| Widget smoke | 4 | Requires GTK initialization and establishes widget/accessibility construction, not product behavior. |
-| **Total** | **364** | Inline tests only. |
+| Widget smoke | 5 | Requires GTK initialization and establishes widget/accessibility construction, not product behavior. |
+| **Total** | **369** | Inline tests only. |
 
-Zero confirmed formatter-mirroring tests is not a claim that the other 364
+Zero confirmed formatter-mirroring tests is not a claim that the other 369
 tests have strong assertions. Several presentation tests contain exact output;
 they are classified as contracts because changing the output is externally
 observable. GH-146 must still prove protected behavioral and contract cohorts
@@ -74,6 +74,7 @@ crates/zentty-linux/src/sidebar.rs::active_worklane_reveal_only_scrolls_when_the
 crates/zentty-linux/src/activity_title.rs::activity_changes_only_the_fixed_width_spinner_label
 crates/zentty-linux/src/application_shell/pane_runtime.rs::actual_terminal_widget_exposes_terminal_accessibility_semantics
 crates/zentty-linux/src/sidebar.rs::actual_worklane_widgets_expose_the_accessibility_contract
+crates/zentty-linux/src/sidebar.rs::detached_pane_context_menu_releases_its_widget_tree
 crates/zentty-linux/src/worklane_peek.rs::actual_worklane_peek_widgets_expose_the_accessibility_contract
 ```
 <!-- category:widget-smoke:end -->
