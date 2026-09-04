@@ -20,15 +20,43 @@ install_root="${work}/installed"
 uninstalled_root="${work}/uninstalled"
 package="${work}/tornadotty.deb"
 manifest="${work}/manifest.json"
+host_usr="${work}/host-usr"
+overlay_root="${work}/host-overlay"
 mkdir -p \
     "${package_root}/DEBIAN" \
     "${package_root}/usr/lib/tornadotty/bin" \
     "${package_root}/usr/bin" \
     "${install_root}/var/lib/dpkg" \
     "${install_root}/var/log" \
-    "${uninstalled_root}/var/lib/dpkg"
+    "${uninstalled_root}/var/lib/dpkg" \
+    "${host_usr}/bin" \
+    "${host_usr}/lib/zentty" \
+    "${host_usr}/lib/tornadotty" \
+    "${host_usr}/lib/unrelated-runtime" \
+    "${host_usr}/lib64" \
+    "${host_usr}/share/icons/hicolor"
 : >"${install_root}/var/lib/dpkg/status"
 : >"${uninstalled_root}/var/lib/dpkg/status"
+
+touch "${host_usr}/bin/tornadotty" "${host_usr}/bin/tornadotty-cli" \
+    "${host_usr}/bin/zentty" "${host_usr}/bin/zentty-linux" \
+    "${host_usr}/bin/unrelated-tool"
+# shellcheck disable=SC1090
+source "${helper}"
+link_host_runtime "${host_usr}" "${overlay_root}" /controlled-host/usr
+for forbidden in \
+    usr/bin/tornadotty usr/bin/tornadotty-cli \
+    usr/bin/zentty usr/bin/zentty-linux \
+    usr/lib/tornadotty usr/lib/zentty; do
+    [[ ! -e "${overlay_root}/${forbidden}" && ! -L "${overlay_root}/${forbidden}" ]] ||
+        fail "host fallback exposed package-owned path: /${forbidden}"
+done
+[[ "$(readlink "${overlay_root}/usr/bin/unrelated-tool")" == \
+    /controlled-host/usr/bin/unrelated-tool ]] ||
+    fail "host fallback did not expose an unrelated runtime command"
+[[ "$(readlink "${overlay_root}/usr/lib/unrelated-runtime")" == \
+    /controlled-host/usr/lib/unrelated-runtime ]] ||
+    fail "host fallback did not expose an unrelated runtime library root"
 
 cat >"${package_root}/DEBIAN/control" <<'EOF'
 Package: tornadotty

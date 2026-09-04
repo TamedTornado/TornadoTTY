@@ -251,3 +251,30 @@
   `usr/lib/tornadotty/lib` payload. The existing packaging-policy runner owns
   this contract, accepts an injectable copyright fixture, and has a negative
   case proving that either legacy library path is rejected.
+- The first current-artifact installed-product run failed at bootstrap before
+  creating its controlled namespace because the journey expanded an unset
+  `TMPDIR` under `set -u`. Requiring callers to manufacture that optional
+  variable would hide the portability defect. The journey now uses `/tmp` when
+  `TMPDIR` is absent and continues to propagate an explicitly supplied value
+  into its clean product environment.
+- The next invocation omitted the matrix cell's declared `nested-x11-v1`
+  environment and correctly failed instead of treating the developer desktop
+  as controlled evidence. This was an operator invocation error; no code or
+  prerequisite status changed to make it pass.
+- The correctly wrapped X11 rerun proved the `.deb` archive was clean but the
+  prepared runtime root was not: `installed-product-root` linked every missing
+  host `/usr/bin` and `/usr/lib` child into the disposable namespace. Because
+  the workstation still has the withdrawn package, this reintroduced
+  `/usr/bin/zentty`, `/usr/bin/zentty-linux`, and `/usr/lib/zentty`; the same
+  mechanism could let a host TornadoTTY command mask a missing package entry.
+  Host fallback linking now excludes both canonical package-owned commands and
+  roots and all legacy aliases while retaining unrelated runtime tools and
+  libraries. A synthetic host-tree test proves both sides without depending on
+  the CI host's installed packages.
+- With the helper repaired, the focused installed-package X11 journey passed
+  against Debian artifact SHA-256
+  `ac7ff32dac1037fce0e66cdf22cf315f097f201e3e371e8435a01bed042c4d75`.
+  It exercised the packaged GUI and CLI, real PTYs, controlled agent launch,
+  clipboard, Open With, About/notices, injected crash and topology restore,
+  canonical desktop-entry launch, and final diagnostics. The controlled X11
+  session was `4988d13132b2e2d82846dec4565664c4582d98fdee5d50afeff8603e6a25309e`.

@@ -31,6 +31,23 @@ link_missing_children() {
     done < <(find "${source}" -mindepth 1 -maxdepth 1 -print0)
 }
 
+link_host_runtime() {
+    local source_usr="$1" root="$2" namespace_usr="$3"
+
+    link_missing_children "${source_usr}/bin" "${root}/usr/bin" \
+        "${namespace_usr}/bin" 'tornadotty tornadotty-cli zentty zentty-linux'
+    link_missing_children "${source_usr}/lib" "${root}/usr/lib" \
+        "${namespace_usr}/lib" 'tornadotty zentty'
+    link_missing_children "${source_usr}/lib64" "${root}/usr/lib64" \
+        "${namespace_usr}/lib64"
+    link_missing_children "${source_usr}/share" "${root}/usr/share" \
+        "${namespace_usr}/share" icons
+    link_missing_children "${source_usr}/share/icons" "${root}/usr/share/icons" \
+        "${namespace_usr}/share/icons" hicolor
+    link_missing_children "${source_usr}/share/icons/hicolor" \
+        "${root}/usr/share/icons/hicolor" "${namespace_usr}/share/icons/hicolor"
+}
+
 validate_package_identity() {
     local root="$1" package="$2" manifest="$3"
     local package_version manifest_version package_architecture revision status
@@ -84,13 +101,7 @@ prepare_root() {
         "${root}/usr/bin" "${root}/usr/lib" "${root}/usr/lib64" \
         "${root}/usr/share" "${root}/var/cache"
 
-    link_missing_children /usr/bin "${root}/usr/bin" /.zentty-host/usr/bin
-    link_missing_children /usr/lib "${root}/usr/lib" /.zentty-host/usr/lib
-    link_missing_children /usr/lib64 "${root}/usr/lib64" /.zentty-host/usr/lib64
-    link_missing_children /usr/share "${root}/usr/share" /.zentty-host/usr/share icons
-    link_missing_children /usr/share/icons "${root}/usr/share/icons" /.zentty-host/usr/share/icons hicolor
-    link_missing_children /usr/share/icons/hicolor "${root}/usr/share/icons/hicolor" \
-        /.zentty-host/usr/share/icons/hicolor
+    link_host_runtime /usr "${root}" /.zentty-host/usr
 
     [[ -e "${root}/bin" || -L "${root}/bin" ]] || ln -s usr/bin "${root}/bin"
     [[ -e "${root}/lib" || -L "${root}/lib" ]] || ln -s usr/lib "${root}/lib"
@@ -211,20 +222,28 @@ exec_root() {
     exec bwrap "${bwrap_args[@]}" -- "$@"
 }
 
-for dependency in bwrap dirname dpkg-deb dpkg-query find jq ln mkdir readlink sha256sum awk; do
-    command -v "${dependency}" >/dev/null || fail "${dependency} is required"
-done
+main() {
+    local dependency root
 
-case "${1:-}" in
-    prepare)
-        (( $# == 4 )) || usage
-        prepare_root "$2" "$3" "$4"
-        ;;
-    exec)
-        (( $# >= 4 )) || usage
-        root="$2"
-        shift 2
-        exec_root "${root}" "$@"
-        ;;
-    *) usage ;;
-esac
+    for dependency in bwrap dirname dpkg-deb dpkg-query find jq ln mkdir readlink sha256sum awk; do
+        command -v "${dependency}" >/dev/null || fail "${dependency} is required"
+    done
+
+    case "${1:-}" in
+        prepare)
+            (( $# == 4 )) || usage
+            prepare_root "$2" "$3" "$4"
+            ;;
+        exec)
+            (( $# >= 4 )) || usage
+            root="$2"
+            shift 2
+            exec_root "${root}" "$@"
+            ;;
+        *) usage ;;
+    esac
+}
+
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+    main "$@"
+fi
