@@ -278,3 +278,20 @@
   clipboard, Open With, About/notices, injected crash and topology restore,
   canonical desktop-entry launch, and final diagnostics. The controlled X11
   session was `4988d13132b2e2d82846dec4565664c4582d98fdee5d50afeff8603e6a25309e`.
+- After committing the helper repair, the final exact package source was
+  `db2361b904f7d0710e1317c77357560144bffd5c`. Its Debian artifact again passed
+  the 1,306-file structural audit and all nine disposable lifecycle
+  transitions. The artifact SHA-256 is
+  `c05bd54d4f1145f7998e5186928c2cbc5f56f54a14ec9cd0d75706cea9d277c2`;
+  the lifecycle summary SHA-256 is
+  `f19b255ed7abad82046538be66f88c778a3e4e4a29fac9fd1710555fe9942f1f`.
+- The final exact-revision installed-product X11 journey also passed in
+  controlled session
+  `6003330521bd7e435772c47f771e3f0262b1c5fe84e9e9dc96193070bc5d7f3b`.
+  Its receipt SHA-256 is
+  `c88dd43d221c62e75f17e409c30da1c9890b199d2b38bd872941a85675b20836`.
+- The configured real Omarchy host `jason@omarchy-laptop.local` was not
+  reachable for the remaining Arch artifact/lifecycle run: mDNS returned
+  `No appropriate name servers or networks for name found`. No Arch or
+  Omarchy pass is claimed from environmental absence, and GH-166 remains open
+  until that prerequisite is available.
