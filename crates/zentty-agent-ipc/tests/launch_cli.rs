@@ -11,6 +11,31 @@ use zentty_core::{AgentTarget, PaneTokenRegistry};
 
 static NEXT_FAKE_TOOL: AtomicU64 = AtomicU64::new(1);
 
+const PRODUCT_OWNED_AGENT_ENVIRONMENT: &[&str] = &[
+    "ZENTTY_AGENT_CANONICAL_NAME",
+    "ZENTTY_AGENT_TOOL",
+    "ZENTTY_AGY_PID",
+    "ZENTTY_AMP_PID",
+    "ZENTTY_CLAUDE_PID",
+    "ZENTTY_CODEX_PID",
+    "ZENTTY_COPILOT_PID",
+    "ZENTTY_CURSOR_PID",
+    "ZENTTY_DROID_PID",
+    "ZENTTY_GEMINI_PID",
+    "ZENTTY_GROK_PID",
+    "ZENTTY_HERMES_PID",
+    "ZENTTY_INSTANCE_ID",
+    "ZENTTY_INSTANCE_SOCKET",
+    "ZENTTY_KIMI_PID",
+    "ZENTTY_PANE_CREDENTIAL",
+    "ZENTTY_PANE_ID",
+    "ZENTTY_PANE_TOKEN",
+    "ZENTTY_SMALL_HARNESS_PID",
+    "ZENTTY_VIBE_PID",
+    "ZENTTY_WINDOW_ID",
+    "ZENTTY_WORKLANE_ID",
+];
+
 struct FakeTool {
     directory: std::path::PathBuf,
     receipt: std::path::PathBuf,
@@ -30,7 +55,7 @@ impl FakeTool {
         let binary = directory.join(name);
         fs::write(
             &binary,
-            "#!/bin/sh\nif [ \"${1:-}\" = --help ] && [ -n \"${ZENTTY_TEST_KIMI_HELP:-}\" ]; then printf '%b\\n' \"$ZENTTY_TEST_KIMI_HELP\"; exit \"${ZENTTY_TEST_KIMI_HELP_STATUS:-0}\"; fi\nprintf '%s\\n' \"$@\" >\"$ZENTTY_TEST_RECEIPT\"\nprintf 'AGENT=%s\\n' \"${ZENTTY_AGENT_TOOL:-}\" >>\"$ZENTTY_TEST_RECEIPT\"\nprintf 'CANONICAL=%s\\n' \"${ZENTTY_AGENT_CANONICAL_NAME:-}\" >>\"$ZENTTY_TEST_RECEIPT\"\nprintf 'CLAUDECODE=%s\\n' \"${CLAUDECODE:-}\" >>\"$ZENTTY_TEST_RECEIPT\"\nprintf 'GEMINI_SETTINGS=%s\\n' \"${GEMINI_CLI_SYSTEM_SETTINGS_PATH:-}\" >>\"$ZENTTY_TEST_RECEIPT\"\nprintf 'COPILOT_HOME=%s\\n' \"${COPILOT_HOME:-}\" >>\"$ZENTTY_TEST_RECEIPT\"\nprintf 'CURSOR_CONFIG=%s\\n' \"${CURSOR_CONFIG_DIR:-}\" >>\"$ZENTTY_TEST_RECEIPT\"\nprintf 'OPENCODE_CONFIG=%s\\n' \"${OPENCODE_CONFIG_DIR:-}\" >>\"$ZENTTY_TEST_RECEIPT\"\nprintf 'SMALL_HOOKS=%s\\n' \"${SMALL_HARNESS_MANAGED_HOOKS_FILE:-}\" >>\"$ZENTTY_TEST_RECEIPT\"\nprintf 'CURSOR_PID=%s DROID_PID=%s KIMI_PID=%s GROK_PID=%s AGY_PID=%s HERMES_PID=%s VIBE_PID=%s COPILOT_PID=%s SMALL_PID=%s\\n' \"${ZENTTY_CURSOR_PID:-}\" \"${ZENTTY_DROID_PID:-}\" \"${ZENTTY_KIMI_PID:-}\" \"${ZENTTY_GROK_PID:-}\" \"${ZENTTY_AGY_PID:-}\" \"${ZENTTY_HERMES_PID:-}\" \"${ZENTTY_VIBE_PID:-}\" \"${ZENTTY_COPILOT_PID:-}\" \"${ZENTTY_SMALL_HARNESS_PID:-}\" >>\"$ZENTTY_TEST_RECEIPT\"\nprintf 'VIBE_HOOKS=%s\\n' \"${VIBE_ENABLE_EXPERIMENTAL_HOOKS:-}\" >>\"$ZENTTY_TEST_RECEIPT\"\nif [ -n \"${GEMINI_CLI_SYSTEM_SETTINGS_PATH:-}\" ]; then cp \"$GEMINI_CLI_SYSTEM_SETTINGS_PATH\" \"$ZENTTY_TEST_RECEIPT.settings\"; stat -c 'MODE=%a' \"$GEMINI_CLI_SYSTEM_SETTINGS_PATH\" >>\"$ZENTTY_TEST_RECEIPT\"; fi\nif [ -n \"${COPILOT_HOME:-}\" ]; then cp \"$COPILOT_HOME/config.json\" \"$ZENTTY_TEST_RECEIPT.copilot\"; stat -c 'COPILOT_MODE=%a' \"$COPILOT_HOME/config.json\" >>\"$ZENTTY_TEST_RECEIPT\"; fi\nif [ -n \"${CURSOR_CONFIG_DIR:-}\" ]; then cp \"$CURSOR_CONFIG_DIR/hooks.json\" \"$ZENTTY_TEST_RECEIPT.cursor\"; stat -c 'CURSOR_MODE=%a' \"$CURSOR_CONFIG_DIR/hooks.json\" >>\"$ZENTTY_TEST_RECEIPT\"; fi\nif [ -n \"${OPENCODE_CONFIG_DIR:-}\" ]; then cp \"$OPENCODE_CONFIG_DIR/plugins/zentty-opencode-zentty.js\" \"$ZENTTY_TEST_RECEIPT.opencode\"; stat -c 'OPENCODE_MODE=%a' \"$OPENCODE_CONFIG_DIR/plugins/zentty-opencode-zentty.js\" >>\"$ZENTTY_TEST_RECEIPT\"; fi\nif [ -n \"${SMALL_HARNESS_MANAGED_HOOKS_FILE:-}\" ]; then cp \"$SMALL_HARNESS_MANAGED_HOOKS_FILE\" \"$ZENTTY_TEST_RECEIPT.small\"; stat -c 'SMALL_MODE=%a' \"$SMALL_HARNESS_MANAGED_HOOKS_FILE\" >>\"$ZENTTY_TEST_RECEIPT\"; fi\n",
+            "#!/bin/sh\nif [ \"${1:-}\" = --help ] && [ -n \"${ZENTTY_TEST_KIMI_HELP:-}\" ]; then printf '%b\\n' \"$ZENTTY_TEST_KIMI_HELP\"; exit \"${ZENTTY_TEST_KIMI_HELP_STATUS:-0}\"; fi\nprintf '%s\\n' \"$@\" >\"$ZENTTY_TEST_RECEIPT\"\nprintf 'AGENT=%s\\n' \"${ZENTTY_AGENT_TOOL:-}\" >>\"$ZENTTY_TEST_RECEIPT\"\nprintf 'CANONICAL=%s\\n' \"${ZENTTY_AGENT_CANONICAL_NAME:-}\" >>\"$ZENTTY_TEST_RECEIPT\"\nprintf 'CLAUDECODE=%s\\n' \"${CLAUDECODE:-}\" >>\"$ZENTTY_TEST_RECEIPT\"\nprintf 'GEMINI_SETTINGS=%s\\n' \"${GEMINI_CLI_SYSTEM_SETTINGS_PATH:-}\" >>\"$ZENTTY_TEST_RECEIPT\"\nprintf 'COPILOT_HOME=%s\\n' \"${COPILOT_HOME:-}\" >>\"$ZENTTY_TEST_RECEIPT\"\nprintf 'CURSOR_CONFIG=%s\\n' \"${CURSOR_CONFIG_DIR:-}\" >>\"$ZENTTY_TEST_RECEIPT\"\nprintf 'OPENCODE_CONFIG=%s\\n' \"${OPENCODE_CONFIG_DIR:-}\" >>\"$ZENTTY_TEST_RECEIPT\"\nprintf 'SMALL_HOOKS=%s\\n' \"${SMALL_HARNESS_MANAGED_HOOKS_FILE:-}\" >>\"$ZENTTY_TEST_RECEIPT\"\nprintf 'AMP_PID=%s CLAUDE_PID=%s CODEX_PID=%s COPILOT_PID=%s CURSOR_PID=%s DROID_PID=%s GEMINI_PID=%s KIMI_PID=%s GROK_PID=%s AGY_PID=%s HERMES_PID=%s VIBE_PID=%s SMALL_PID=%s\\n' \"${ZENTTY_AMP_PID:-}\" \"${ZENTTY_CLAUDE_PID:-}\" \"${ZENTTY_CODEX_PID:-}\" \"${ZENTTY_COPILOT_PID:-}\" \"${ZENTTY_CURSOR_PID:-}\" \"${ZENTTY_DROID_PID:-}\" \"${ZENTTY_GEMINI_PID:-}\" \"${ZENTTY_KIMI_PID:-}\" \"${ZENTTY_GROK_PID:-}\" \"${ZENTTY_AGY_PID:-}\" \"${ZENTTY_HERMES_PID:-}\" \"${ZENTTY_VIBE_PID:-}\" \"${ZENTTY_SMALL_HARNESS_PID:-}\" >>\"$ZENTTY_TEST_RECEIPT\"\nprintf 'VIBE_HOOKS=%s\\n' \"${VIBE_ENABLE_EXPERIMENTAL_HOOKS:-}\" >>\"$ZENTTY_TEST_RECEIPT\"\nif [ -n \"${GEMINI_CLI_SYSTEM_SETTINGS_PATH:-}\" ]; then cp \"$GEMINI_CLI_SYSTEM_SETTINGS_PATH\" \"$ZENTTY_TEST_RECEIPT.settings\"; stat -c 'MODE=%a' \"$GEMINI_CLI_SYSTEM_SETTINGS_PATH\" >>\"$ZENTTY_TEST_RECEIPT\"; fi\nif [ -n \"${COPILOT_HOME:-}\" ]; then cp \"$COPILOT_HOME/config.json\" \"$ZENTTY_TEST_RECEIPT.copilot\"; stat -c 'COPILOT_MODE=%a' \"$COPILOT_HOME/config.json\" >>\"$ZENTTY_TEST_RECEIPT\"; fi\nif [ -n \"${CURSOR_CONFIG_DIR:-}\" ]; then cp \"$CURSOR_CONFIG_DIR/hooks.json\" \"$ZENTTY_TEST_RECEIPT.cursor\"; stat -c 'CURSOR_MODE=%a' \"$CURSOR_CONFIG_DIR/hooks.json\" >>\"$ZENTTY_TEST_RECEIPT\"; fi\nif [ -n \"${OPENCODE_CONFIG_DIR:-}\" ]; then cp \"$OPENCODE_CONFIG_DIR/plugins/zentty-opencode-zentty.js\" \"$ZENTTY_TEST_RECEIPT.opencode\"; stat -c 'OPENCODE_MODE=%a' \"$OPENCODE_CONFIG_DIR/plugins/zentty-opencode-zentty.js\" >>\"$ZENTTY_TEST_RECEIPT\"; fi\nif [ -n \"${SMALL_HARNESS_MANAGED_HOOKS_FILE:-}\" ]; then cp \"$SMALL_HARNESS_MANAGED_HOOKS_FILE\" \"$ZENTTY_TEST_RECEIPT.small\"; stat -c 'SMALL_MODE=%a' \"$SMALL_HARNESS_MANAGED_HOOKS_FILE\" >>\"$ZENTTY_TEST_RECEIPT\"; fi\n",
         )
         .unwrap();
         fs::set_permissions(&binary, fs::Permissions::from_mode(0o700)).unwrap();
@@ -42,7 +67,19 @@ impl FakeTool {
     }
 
     fn command(&self, tool: &str) -> Command {
+        self.command_with_ambient_environment(tool, &[])
+    }
+
+    fn command_with_ambient_environment(
+        &self,
+        tool: &str,
+        ambient_environment: &[(&str, &str)],
+    ) -> Command {
         let mut command = Command::new(env!("CARGO_BIN_EXE_zentty"));
+        command.envs(ambient_environment.iter().copied());
+        for name in PRODUCT_OWNED_AGENT_ENVIRONMENT {
+            command.env_remove(name);
+        }
         command
             .arg("launch")
             .arg(tool)
@@ -77,6 +114,24 @@ impl FakeTool {
 impl Drop for FakeTool {
     fn drop(&mut self) {
         let _ = fs::remove_dir_all(&self.directory);
+    }
+}
+
+#[derive(Debug, Eq, PartialEq)]
+enum EnvironmentChange<'a> {
+    Inherit,
+    Remove,
+    Set(&'a std::ffi::OsStr),
+}
+
+fn command_environment<'a>(command: &'a Command, name: &str) -> EnvironmentChange<'a> {
+    match command
+        .get_envs()
+        .find(|(key, _)| key == &std::ffi::OsStr::new(name))
+    {
+        None => EnvironmentChange::Inherit,
+        Some((_, None)) => EnvironmentChange::Remove,
+        Some((_, Some(value))) => EnvironmentChange::Set(value),
     }
 }
 
@@ -324,6 +379,60 @@ fn persistent_agent_passthrough_does_not_install_or_emit_status_environment() {
     assert!(receipt.contains("AGENT=\n"));
     assert!(receipt.contains("KIMI_PID= "));
     assert!(!tool.directory.join(".kimi-code/config.toml").exists());
+}
+
+#[test]
+fn fake_tool_boundary_rejects_hostile_managed_pane_environment() {
+    let tool = FakeTool::new("kimi");
+    let ambient_environment = PRODUCT_OWNED_AGENT_ENVIRONMENT
+        .iter()
+        .copied()
+        .map(|name| (name, "hostile-parent-value"))
+        .collect::<Vec<_>>();
+    let mut command = tool.command_with_ambient_environment("kimi", &ambient_environment);
+    let expected_socket = tool.directory.join("instance.sock");
+    assert_eq!(
+        command_environment(&command, "ZENTTY_INSTANCE_SOCKET"),
+        EnvironmentChange::Set(expected_socket.as_os_str())
+    );
+    assert_eq!(
+        command_environment(&command, "ZENTTY_PANE_TOKEN"),
+        EnvironmentChange::Set(std::ffi::OsStr::new(
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        ))
+    );
+    assert_eq!(
+        command_environment(&command, "ZENTTY_WORKLANE_ID"),
+        EnvironmentChange::Set(std::ffi::OsStr::new("test-lane"))
+    );
+    assert_eq!(
+        command_environment(&command, "ZENTTY_PANE_ID"),
+        EnvironmentChange::Set(std::ffi::OsStr::new("test-pane"))
+    );
+    for removed in [
+        "ZENTTY_INSTANCE_ID",
+        "ZENTTY_WINDOW_ID",
+        "ZENTTY_PANE_CREDENTIAL",
+    ] {
+        assert_eq!(command_environment(&command, removed), EnvironmentChange::Remove);
+    }
+    let output = command.arg("login").output().unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let receipt = fs::read_to_string(&tool.receipt).unwrap();
+    assert!(receipt.starts_with("login\n"), "{receipt}");
+    assert!(receipt.contains("AGENT=\n"), "{receipt}");
+    assert!(receipt.contains("CANONICAL=\n"), "{receipt}");
+    assert!(
+        receipt.contains(
+            "AMP_PID= CLAUDE_PID= CODEX_PID= COPILOT_PID= CURSOR_PID= DROID_PID= \
+             GEMINI_PID= KIMI_PID= GROK_PID= AGY_PID= HERMES_PID= VIBE_PID= SMALL_PID=\n"
+        ),
+        "{receipt}"
+    );
 }
 
 #[test]

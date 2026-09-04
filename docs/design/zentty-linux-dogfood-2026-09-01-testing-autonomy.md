@@ -739,9 +739,10 @@ the diagnostic mutation campaign.
 
 - Divider/layout, session restore, and notification/settings now use the Rust
   supervisor, typed receipts, verified input, and resource declarations, and
-  focused real-system runs have passed during the migration. Their scenario
-  decisions and some human-log assertions still live in Bash, so the policy
-  keeps them `PARTIAL` and GH-149 remains open.
+  focused real-system runs have passed during the migration. GH-149 closed
+  after all four representative scenarios met its acceptance criteria. The
+  broader legacy journeys retain additional assertions and therefore remain
+  `PARTIAL`; their explicit follow-up owner is GH-170.
 - No assertion has been removed merely to make a port smaller. Each remaining
   literal must either become a typed product expectation, remain native
   boundary evidence, or be explicitly shown redundant before its Bash scenario
@@ -836,3 +837,32 @@ the diagnostic mutation campaign.
   audio and restart cases. Those residual assertions and all other policy
   entries still marked `PARTIAL` or `UNMIGRATED` are now tracked by GH-170, not
   left pointing at completed representative-migration work.
+
+### Managed-pane contamination in agent-launch tests (GH-165)
+
+- **Observed behavior and impact:** running the `zentty-agent-ipc`
+  `launch_cli` integration target from a real managed Codex pane made direct
+  passthrough cases inherit `ZENTTY_AGENT_TOOL=codex` and agent PID markers.
+  The fake executable therefore reported a managed Codex launch even when the
+  test expected no status environment. The test oracle depended on which
+  terminal launched Cargo.
+- **Focused reproduction:** with hostile parent values for agent identity,
+  canonical name, and several per-agent PID variables, the
+  `persistent_agent_passthrough_does_not_install_or_emit_status_environment`
+  case failed because its receipt did not contain an empty `AGENT` field.
+- **Diagnosis and repair:** `FakeTool::command` installed known pane routing
+  values but did not first remove inherited TornadoTTY runtime state. The one
+  existing fixture now clears an explicit list containing only product-owned
+  routing, identity, canonical-name, credential, and per-agent PID variables,
+  then opts into the fixture's controlled pane values. It does not clear the
+  arbitrary user/tool environment.
+- **Regression coverage:** a parallel-safe child-process test injects a
+  hostile value for every variable in that list before applying the fixture
+  boundary. It proves passthrough execution receives empty agent identity,
+  canonical name, and all supported PID fields. The original three affected
+  cases also pass under a hostile managed-pane parent.
+- **Validation discovery:** the complete target initially reported one
+  unrelated `EPERM` while binding its real authenticated Unix socket inside
+  the command sandbox. The socket test failed identically in isolation before
+  product launch. Running the unchanged target with the required local-socket
+  capability passed **25/25**; no skip or assertion weakening was introduced.
