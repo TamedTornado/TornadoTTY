@@ -393,6 +393,8 @@ fn parse_widget(value: &str) -> Result<WidgetName, String> {
 fn parse_action(value: &str) -> Result<ActionName, String> {
     match value {
         "open-settings" => Ok(ActionName::OpenSettings),
+        "close-settings-window" => Ok(ActionName::CloseSettingsWindow),
+        "resolve-command-palette" => Ok(ActionName::ResolveCommandPalette),
         "select-notifications-settings" => Ok(ActionName::SelectNotificationsSettings),
         "send-test-notification" => Ok(ActionName::SendTestNotification),
         "import-notification-sound" => Ok(ActionName::ImportNotificationSound),

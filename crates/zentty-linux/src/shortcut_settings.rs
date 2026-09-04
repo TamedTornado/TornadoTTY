@@ -416,6 +416,11 @@ pub(crate) fn show(
         parent_window.present();
         restore_focus();
         eprintln!("zentty-linux: shortcut-settings hidden parent-presented=true");
+        crate::test_receipts::action(
+            tornadotty_test_receipts::ActionName::CloseSettingsWindow,
+            tornadotty_test_receipts::ActionOutcome::Completed,
+            None,
+        );
         glib::Propagation::Stop
     });
     SettingsWindow {

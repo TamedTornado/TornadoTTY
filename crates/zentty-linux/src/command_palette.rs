@@ -203,6 +203,15 @@ impl CommandPaletteView {
             .iter()
             .map(|section| section.items.len())
             .sum::<usize>();
+        if result_count == 1
+            && let Some(CommandPaletteTarget::ParameterizedAction { action, parameter }) = sections
+                .iter()
+                .flat_map(|section| &section.items)
+                .next()
+                .map(|item| &item.target)
+        {
+            crate::test_receipts::command_palette_resolution(action, parameter);
+        }
         for section in sections {
             let heading = gtk::Label::new(Some(section.kind.title()));
             heading.add_css_class("command-palette-section-heading");

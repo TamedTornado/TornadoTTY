@@ -38,6 +38,9 @@ expect_failure missing-log-consumer \
 expect_failure untracked-partial \
     '(.migrated_journeys[] | select(.migration_status == "PARTIAL")) |= del(.remaining_issue)' \
     'policy invariants failed'
+expect_failure stale-residual-issue \
+    '(.legacy_human_log_consumers[0].remaining_issue) = 149' \
+    'policy invariants failed'
 expect_failure false-migrated \
     '(.migrated_journeys[] | select(.path == "linux/tests/rust-session-restore")) |= (.migration_status = "MIGRATED" | del(.remaining_issue))' \
     'policy invariants failed'

@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Environment-only wrapper for the Rust-owned notification/settings scenario.
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+product="${ZENTTY_LINUX_BINARY:-${repo_root}/build/linux/bin/zentty-linux}"
+driver="${TORNADOTTY_JOURNEY_DRIVER:-${product%/*}/tornadotty-journey-driver}"
+daemon="/usr/lib/notification-daemon/notification-daemon"
+backend="${GDK_BACKEND:-}"
+
+fail() {
+    echo "rust-notifications-settings-driver: error: $*" >&2
+    exit 1
+}
+
+case "${backend}" in
+    x11)
+        [[ "${ZENTTY_NESTED_X11_SESSION_ID:-}" =~ ^[0-9a-f]{64}$ ]] ||
+            fail "X11 scenario must run through linux/tests/nested-x11"
+        command -v xdotool >/dev/null || fail "xdotool is required"
+        ;;
+    wayland)
+        [[ "${ZENTTY_NESTED_WAYLAND_INPUT_SESSION_ID:-}" =~ ^[0-9a-f]{64}$ ]] ||
+            fail "Wayland scenario must run through linux/tests/nested-wayland-input"
+        command -v wtype >/dev/null || fail "wtype is required"
+        ;;
+    *) fail "GDK_BACKEND must be x11 or wayland" ;;
+esac
+[[ -n "${DBUS_SESSION_BUS_ADDRESS:-}" ]] || fail "a private session bus is required"
+[[ -n "${XDG_CONFIG_HOME:-}" ]] || fail "isolated XDG_CONFIG_HOME is required"
+command -v gdbus >/dev/null || fail "gdbus is required"
+[[ -x "${product}" ]] || fail "product is not executable: ${product}"
+[[ -x "${driver}" ]] || fail "staged Rust journey driver is not executable: ${driver}"
+[[ -x "${daemon}" ]] || fail "Ubuntu notification daemon is missing: ${daemon}"
+
+exec "${driver}" scenario notification-settings \
+    "$(realpath -- "${product}")" "${backend}" "${daemon}"

@@ -71,13 +71,27 @@ resume` command, the restored working directory, physical compositor input,
 clean product exit, and valid product and supervisor evidence. The broader
 `rust-session-restore` journey remains `PARTIAL`; this representative does not
 replace or discard its crash, corrupt-state, remote-transfer, and multi-agent
-assertions.
+assertions. General migration of those residual assertions is tracked by
+[GH-170](https://github.com/TamedTornado/TornadoTTY/issues/170).
 
-The notification/settings journey has already adopted Rust process ownership,
-typed product receipts, verified input, deadlines, resource leases, and cleanup,
-but its remaining scenario logic is still Bash. It remains `PARTIAL`; GH-149
-must not close until that named representative workflow is Rust-owned and the
-old assertions are accounted for rather than silently deleted.
+`rust-notifications-settings-driver` is the fourth. Its own scenario module
+supervises both the real Ubuntu notification daemon and the staged product,
+waits for the private D-Bus name, opens Notifications through the real command
+palette, sends a test notification, closes Settings, and exits the product.
+Typed palette resolution, section selection, settings focus, notification
+completion, and settings close events replace the old human-log timing gates.
+The broader `rust-notifications-settings` journey remains `PARTIAL`; custom
+audio import, preview, restart persistence, removal, and unavailable-service
+assertions have not been discarded and remain tracked by GH-170.
+
+## Focused runtime
+
+On the 2026-09-04 qualification host, the existing broad X11 notification
+journey completed in 7.59 seconds. The Rust-owned notification/settings
+representative completed in 3.21 seconds under the same nested-X11 wrapper.
+That is a focused-orchestration comparison, not an assertion-equivalence claim:
+the broad custom-audio and restart assertions remain executable and explicitly
+tracked rather than being counted as a speed improvement.
 
 ## Focused verification
 

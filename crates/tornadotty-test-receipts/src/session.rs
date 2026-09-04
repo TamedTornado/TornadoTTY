@@ -480,8 +480,8 @@ fn wait_for_phase(session: &Path, timeout: Duration, expected: SessionPhase) -> 
         timeout.as_millis()
     );
     loop {
-        match read_state(&paths.state) {
-            Ok(state) if state.phase == expected => {
+        match read_state_if_present(&paths.state) {
+            Ok(Some(state)) if state.phase == expected => {
                 println!(
                     "{}",
                     serde_json::to_string(&state)
@@ -489,16 +489,15 @@ fn wait_for_phase(session: &Path, timeout: Duration, expected: SessionPhase) -> 
                 );
                 return Ok(());
             }
-            Ok(state) if state.phase == SessionPhase::Failed => {
+            Ok(Some(state)) if state.phase == SessionPhase::Failed => {
                 return Err("session entered failed phase".to_owned());
             }
-            Ok(state)
+            Ok(Some(state))
                 if state.phase == SessionPhase::Exited && expected != SessionPhase::Exited =>
             {
                 return Err(format!("product exited before phase {expected:?}"));
             }
-            Ok(_) => {}
-            Err(_error) if !paths.state.exists() => {}
+            Ok(Some(_) | None) => {}
             Err(error) => return Err(error),
         }
         if Instant::now() >= deadline {
@@ -511,12 +510,13 @@ fn wait_for_phase(session: &Path, timeout: Duration, expected: SessionPhase) -> 
 fn wait_until_exited(state_path: &Path, timeout: Duration) -> Result<bool, String> {
     let deadline = Instant::now() + timeout;
     loop {
-        match read_state(state_path) {
-            Ok(state) if matches!(state.phase, SessionPhase::Exited | SessionPhase::Failed) => {
+        match read_state_if_present(state_path) {
+            Ok(Some(state))
+                if matches!(state.phase, SessionPhase::Exited | SessionPhase::Failed) =>
+            {
                 return Ok(true);
             }
-            Ok(_) => {}
-            Err(_error) if !state_path.exists() => {}
+            Ok(Some(_) | None) => {}
             Err(error) => return Err(error),
         }
         if Instant::now() >= deadline {
@@ -865,6 +865,19 @@ fn write_failed_state(
 fn read_state(path: &Path) -> Result<SessionState, String> {
     let metadata = fs::symlink_metadata(path)
         .map_err(|error| format!("could not inspect session state: {error}"))?;
+    read_state_with_metadata(path, &metadata)
+}
+
+fn read_state_if_present(path: &Path) -> Result<Option<SessionState>, String> {
+    let metadata = match fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(format!("could not inspect session state: {error}")),
+    };
+    read_state_with_metadata(path, &metadata).map(Some)
+}
+
+fn read_state_with_metadata(path: &Path, metadata: &fs::Metadata) -> Result<SessionState, String> {
     if metadata.file_type().is_symlink()
         || !metadata.is_file()
         || metadata.uid() != rustix::process::getuid().as_raw()

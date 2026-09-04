@@ -14,9 +14,10 @@ fail() {
 jq -e '
     .schema_version == 1 and
     .owner_issue == 148 and
+    .residual_migration_issue == 170 and
     .authority.crate == "crates/tornadotty-test-receipts" and
     .authority.environment_variable == "TORNADOTTY_TEST_RECEIPT_FILE" and
-    (.authority.activation_sites | type == "array" and length == 3 and length == (unique | length)) and
+    (.authority.activation_sites | type == "array" and length == 4 and length == (unique | length)) and
     .bounds == {file_bytes:8388608,record_bytes:8192,records:8192,identifier_bytes:96} and
     (.event_families | sort == ["action_completion","failure","focus","geometry","lifecycle","topology"]) and
     ([.migrated_journeys[].path] | length == (unique | length)) and
@@ -24,14 +25,14 @@ jq -e '
     ([.migrated_journeys[]] | all(
         (.path | type == "string" and length > 0) and
         (.coverage | type == "array" and length > 0 and length == (unique | length)) and
-        (if .migration_status == "PARTIAL" then .remaining_issue == 149 else true end)
+        (if .migration_status == "PARTIAL" then .remaining_issue == 170 else true end)
     )) and
     ([.legacy_human_log_consumers[].path] as $legacy |
         [.migrated_journeys[] | select(.migration_status == "MIGRATED") | .path] |
         all(. as $path | ($legacy | index($path)) == null)) and
     ([.legacy_human_log_consumers[].path] | length == (unique | length)) and
     ([.legacy_human_log_consumers[]] | all(
-        (.status == "PARTIAL" or .status == "UNMIGRATED") and .remaining_issue == 149
+        (.status == "PARTIAL" or .status == "UNMIGRATED") and .remaining_issue == 170
     )) and
     ([.receipt_channels[].name] | length == (unique | length)) and
     ([.receipt_channels[].owner] | all(

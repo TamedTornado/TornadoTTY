@@ -794,3 +794,45 @@ the diagnostic mutation campaign.
   broad legacy restore journey remains `PARTIAL` because its additional crash,
   corruption, remote-transfer, and multi-agent coverage has not silently been
   discarded. No aggregate qualification was run or claimed.
+
+### Notification/settings Rust scenario discovery
+
+- The first Rust-owned notification run reached the real command palette, but
+  Return executed the initial New Worklane entry because GTK had not yet
+  processed the typed query. The legacy Bash journey hid this synchronization
+  contract in a human-log grep. A bounded typed
+  `resolve_command_palette` action now identifies the unique settings target;
+  the driver waits for that semantic event instead of adding a sleep or
+  restoring the log assertion.
+- With that gate, the next X11 run selected Notifications and sent a real test
+  notification through the private D-Bus service. It then exposed that Ctrl+Q
+  delivered to the separate Settings window is not an application quit. The
+  workflow now sends the Settings Escape shortcut, waits for a typed
+  `close_settings_window` completion after the parent is presented, and only
+  then sends Ctrl+Q to the main product window.
+- The corrected representative passed in private Xvfb/X11 in about 7 seconds
+  and private Cage/Wayland in about 10 seconds. Both runs supervised the real
+  Ubuntu notification daemon as a separate owned process group, observed its
+  D-Bus name, drove the real GTK UI with physical compositor input, received
+  typed notification success, exited TornadoTTY normally, stopped the daemon,
+  and validated all product and supervisor evidence.
+- Two explicit PASS cells now name this representative. The broad legacy
+  notification journey remains `PARTIAL`; custom sound import, playback,
+  permissions, restart persistence, removal, and explicit unavailable-service
+  assertions remain present rather than being silently dropped. The recurring
+  controlled-Wayland GNOME portal helper crashes remain visible environmental
+  diagnostics and are not counted as TornadoTTY success evidence.
+- A final driver-suite rerun exposed a startup race in the supervisor itself:
+  `session wait` could observe an absent state file, then see it appear before
+  its separate existence check and incorrectly convert that transient into an
+  immediate failure. State reads now classify absence from the same metadata
+  operation that performs validation, eliminating the time-of-check/time-of-use
+  gap. The isolated failing test and the complete 18-test driver suite passed
+  after the repair; this was fixed rather than retried green.
+- The explicit runtime comparison used the same private X11 wrapper and staged
+  ReleaseSafe product. The retained broad notification journey passed in 7.59
+  seconds; the Rust-owned representative passed in 3.21 seconds. This is not
+  presented as assertion-equivalent because the broad journey also owns custom
+  audio and restart cases. Those residual assertions and all other policy
+  entries still marked `PARTIAL` or `UNMIGRATED` are now tracked by GH-170, not
+  left pointing at completed representative-migration work.

@@ -112,6 +112,8 @@ pub enum GeometrySnapshot {
 #[serde(rename_all = "snake_case")]
 pub enum ActionName {
     OpenSettings,
+    CloseSettingsWindow,
+    ResolveCommandPalette,
     SelectNotificationsSettings,
     SendTestNotification,
     ImportNotificationSound,

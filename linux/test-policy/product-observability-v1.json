@@ -1,6 +1,7 @@
 {
   "schema_version": 1,
   "owner_issue": 148,
+  "residual_migration_issue": 170,
   "authority": {
     "crate": "crates/tornadotty-test-receipts",
     "event_definition": "crates/tornadotty-test-receipts/src/event.rs",
@@ -15,6 +16,7 @@
     "activation_sites": [
       "crates/tornadotty-test-receipts/src/writer.rs",
       "crates/tornadotty-test-receipts/src/scenario.rs",
+      "crates/tornadotty-test-receipts/src/scenario/notification_settings.rs",
       "linux/tests/lib/product-receipts"
     ]
   },
@@ -49,22 +51,27 @@
       "migration_status": "MIGRATED"
     },
     {
+      "path": "linux/tests/rust-notifications-settings-driver",
+      "coverage": ["resolve_command_palette", "select_notifications_settings", "settings_window_focus", "send_test_notification", "close_settings_window"],
+      "migration_status": "MIGRATED"
+    },
+    {
       "path": "linux/tests/rust-workspace-pane-settings",
       "coverage": ["split_pane_right", "pane_layout", "terminal_ready"],
       "migration_status": "PARTIAL",
-      "remaining_issue": 149
+      "remaining_issue": 170
     },
     {
       "path": "linux/tests/rust-session-restore",
       "coverage": ["terminal_ready"],
       "migration_status": "PARTIAL",
-      "remaining_issue": 149
+      "remaining_issue": 170
     },
     {
       "path": "linux/tests/rust-notifications-settings",
       "coverage": ["select_notifications_settings", "settings_window_focus", "send_test_notification"],
       "migration_status": "PARTIAL",
-      "remaining_issue": 149
+      "remaining_issue": 170
     }
   ],
   "retired_literal_assertions": [
@@ -94,39 +101,39 @@
     }
   ],
   "legacy_human_log_consumers": [
-    {"path":"linux/tests/debian-package-installed-product","status":"UNMIGRATED","remaining_issue":149},
-    {"path":"linux/tests/installed-claude-agent-team","status":"UNMIGRATED","remaining_issue":149},
-    {"path":"linux/tests/installed-codex-integration","status":"UNMIGRATED","remaining_issue":149},
-    {"path":"linux/tests/lib/cli-shell-scenario","status":"UNMIGRATED","remaining_issue":149},
-    {"path":"linux/tests/lib/product-input","status":"UNMIGRATED","remaining_issue":149},
-    {"path":"linux/tests/lib/product-input-test","status":"UNMIGRATED","remaining_issue":149},
-    {"path":"linux/tests/rust-about-licenses","status":"UNMIGRATED","remaining_issue":149},
-    {"path":"linux/tests/rust-agent-ipc","status":"UNMIGRATED","remaining_issue":149},
-    {"path":"linux/tests/rust-agent-settings-runtime","status":"UNMIGRATED","remaining_issue":149},
-    {"path":"linux/tests/rust-application-shell-construction-failure","status":"UNMIGRATED","remaining_issue":149},
-    {"path":"linux/tests/rust-attention-inbox","status":"UNMIGRATED","remaining_issue":149},
-    {"path":"linux/tests/rust-bookmarks-presets","status":"UNMIGRATED","remaining_issue":149},
-    {"path":"linux/tests/rust-closed-pane-restore","status":"UNMIGRATED","remaining_issue":149},
-    {"path":"linux/tests/rust-config-reload","status":"UNMIGRATED","remaining_issue":149},
-    {"path":"linux/tests/rust-development-servers","status":"UNMIGRATED","remaining_issue":149},
-    {"path":"linux/tests/rust-git-review-context","status":"UNMIGRATED","remaining_issue":149},
-    {"path":"linux/tests/rust-keyboard-compose","status":"UNMIGRATED","remaining_issue":149},
-    {"path":"linux/tests/rust-multi-window","status":"UNMIGRATED","remaining_issue":149},
-    {"path":"linux/tests/rust-notifications-settings","status":"PARTIAL","remaining_issue":149},
-    {"path":"linux/tests/rust-open-with","status":"UNMIGRATED","remaining_issue":149},
-    {"path":"linux/tests/rust-pane-search","status":"UNMIGRATED","remaining_issue":149},
-    {"path":"linux/tests/rust-product-smoke","status":"UNMIGRATED","remaining_issue":149},
-    {"path":"linux/tests/rust-project-icons","status":"UNMIGRATED","remaining_issue":149},
-    {"path":"linux/tests/rust-session-restore","status":"PARTIAL","remaining_issue":149},
-    {"path":"linux/tests/rust-shortcuts-settings","status":"UNMIGRATED","remaining_issue":149},
-    {"path":"linux/tests/rust-sidebar-management-x11","status":"UNMIGRATED","remaining_issue":149},
-    {"path":"linux/tests/rust-source-ux-x11","status":"UNMIGRATED","remaining_issue":149},
-    {"path":"linux/tests/rust-task-manager","status":"UNMIGRATED","remaining_issue":149},
-    {"path":"linux/tests/rust-task-runners","status":"UNMIGRATED","remaining_issue":149},
-    {"path":"linux/tests/rust-tmux-compat-product","status":"UNMIGRATED","remaining_issue":149},
-    {"path":"linux/tests/rust-updates-privacy-settings","status":"UNMIGRATED","remaining_issue":149},
-    {"path":"linux/tests/rust-workspace-pane-settings","status":"PARTIAL","remaining_issue":149},
-    {"path":"linux/tests/visual-parity-test","status":"UNMIGRATED","remaining_issue":149}
+    {"path":"linux/tests/debian-package-installed-product","status":"UNMIGRATED","remaining_issue":170},
+    {"path":"linux/tests/installed-claude-agent-team","status":"UNMIGRATED","remaining_issue":170},
+    {"path":"linux/tests/installed-codex-integration","status":"UNMIGRATED","remaining_issue":170},
+    {"path":"linux/tests/lib/cli-shell-scenario","status":"UNMIGRATED","remaining_issue":170},
+    {"path":"linux/tests/lib/product-input","status":"UNMIGRATED","remaining_issue":170},
+    {"path":"linux/tests/lib/product-input-test","status":"UNMIGRATED","remaining_issue":170},
+    {"path":"linux/tests/rust-about-licenses","status":"UNMIGRATED","remaining_issue":170},
+    {"path":"linux/tests/rust-agent-ipc","status":"UNMIGRATED","remaining_issue":170},
+    {"path":"linux/tests/rust-agent-settings-runtime","status":"UNMIGRATED","remaining_issue":170},
+    {"path":"linux/tests/rust-application-shell-construction-failure","status":"UNMIGRATED","remaining_issue":170},
+    {"path":"linux/tests/rust-attention-inbox","status":"UNMIGRATED","remaining_issue":170},
+    {"path":"linux/tests/rust-bookmarks-presets","status":"UNMIGRATED","remaining_issue":170},
+    {"path":"linux/tests/rust-closed-pane-restore","status":"UNMIGRATED","remaining_issue":170},
+    {"path":"linux/tests/rust-config-reload","status":"UNMIGRATED","remaining_issue":170},
+    {"path":"linux/tests/rust-development-servers","status":"UNMIGRATED","remaining_issue":170},
+    {"path":"linux/tests/rust-git-review-context","status":"UNMIGRATED","remaining_issue":170},
+    {"path":"linux/tests/rust-keyboard-compose","status":"UNMIGRATED","remaining_issue":170},
+    {"path":"linux/tests/rust-multi-window","status":"UNMIGRATED","remaining_issue":170},
+    {"path":"linux/tests/rust-notifications-settings","status":"PARTIAL","remaining_issue":170},
+    {"path":"linux/tests/rust-open-with","status":"UNMIGRATED","remaining_issue":170},
+    {"path":"linux/tests/rust-pane-search","status":"UNMIGRATED","remaining_issue":170},
+    {"path":"linux/tests/rust-product-smoke","status":"UNMIGRATED","remaining_issue":170},
+    {"path":"linux/tests/rust-project-icons","status":"UNMIGRATED","remaining_issue":170},
+    {"path":"linux/tests/rust-session-restore","status":"PARTIAL","remaining_issue":170},
+    {"path":"linux/tests/rust-shortcuts-settings","status":"UNMIGRATED","remaining_issue":170},
+    {"path":"linux/tests/rust-sidebar-management-x11","status":"UNMIGRATED","remaining_issue":170},
+    {"path":"linux/tests/rust-source-ux-x11","status":"UNMIGRATED","remaining_issue":170},
+    {"path":"linux/tests/rust-task-manager","status":"UNMIGRATED","remaining_issue":170},
+    {"path":"linux/tests/rust-task-runners","status":"UNMIGRATED","remaining_issue":170},
+    {"path":"linux/tests/rust-tmux-compat-product","status":"UNMIGRATED","remaining_issue":170},
+    {"path":"linux/tests/rust-updates-privacy-settings","status":"UNMIGRATED","remaining_issue":170},
+    {"path":"linux/tests/rust-workspace-pane-settings","status":"PARTIAL","remaining_issue":170},
+    {"path":"linux/tests/visual-parity-test","status":"UNMIGRATED","remaining_issue":170}
   ],
   "receipt_channels": [
     {"name":"TORNADOTTY_CONTROLLED_CHILD_RECEIPT_DIR","owner":"controlled_child"},

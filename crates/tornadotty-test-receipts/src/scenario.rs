@@ -1,5 +1,7 @@
 //! Named real-product scenarios owned by the single journey driver.
 
+mod notification_settings;
+
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Write};
 use std::os::unix::fs::symlink;
@@ -52,6 +54,13 @@ pub fn run(arguments: &[String]) -> Result<(), String> {
             Path::new(fixture),
             Path::new(actor),
         ),
+        [name, product, backend, daemon] if name == "notification-settings" => {
+            notification_settings::run(
+                Path::new(product),
+                parse_backend(backend)?,
+                Path::new(daemon),
+            )
+        }
         _ => Err(usage().to_owned()),
     }
 }
@@ -661,6 +670,21 @@ fn send_input_key(
     )
 }
 
+fn send_input_text(
+    driver: &Path,
+    session: &Path,
+    backend: Backend,
+    value: &str,
+) -> Result<(), String> {
+    let (transport, window) = input_target(driver, session, backend)?;
+    driver_success(
+        driver,
+        &["input", "type"],
+        &[session],
+        &[transport, &window, value],
+    )
+}
+
 fn input_target(
     driver: &Path,
     session: &Path,
@@ -899,5 +923,5 @@ fn require_safe_identifier(value: &str) -> Result<(), String> {
 }
 
 fn usage() -> &'static str {
-    "scenario usage:\n  tornadotty-journey-driver scenario window-identity PRODUCT x11|wayland APPLICATION_ID DESKTOP_ENTRY\n  tornadotty-journey-driver scenario divider-layout PRODUCT x11|wayland\n  tornadotty-journey-driver scenario session-restore PRODUCT x11|wayland FIXTURE ACTOR"
+    "scenario usage:\n  tornadotty-journey-driver scenario window-identity PRODUCT x11|wayland APPLICATION_ID DESKTOP_ENTRY\n  tornadotty-journey-driver scenario divider-layout PRODUCT x11|wayland\n  tornadotty-journey-driver scenario session-restore PRODUCT x11|wayland FIXTURE ACTOR\n  tornadotty-journey-driver scenario notification-settings PRODUCT x11|wayland NOTIFICATION_DAEMON"
 }

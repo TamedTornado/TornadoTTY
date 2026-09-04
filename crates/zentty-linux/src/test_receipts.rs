@@ -88,6 +88,16 @@ pub(crate) fn action(action: ActionName, outcome: ActionOutcome, target_id: Opti
     });
 }
 
+pub(crate) fn command_palette_resolution(action_name: &str, parameter: &str) {
+    if action_name == "open-settings-section" {
+        action(
+            ActionName::ResolveCommandPalette,
+            ActionOutcome::Completed,
+            Some(parameter),
+        );
+    }
+}
+
 pub(crate) fn failure(code: FailureCode, target_id: Option<&str>) {
     let target_id = match target_id.map(ReceiptId::new).transpose() {
         Ok(target_id) => target_id,
