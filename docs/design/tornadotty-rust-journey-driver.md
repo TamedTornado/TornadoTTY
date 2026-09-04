@@ -56,7 +56,14 @@ and real PTY child, verifies the live X11 `WM_CLASS` or Wayland `set_app_id`,
 causes the PTY child to exit, and validates both evidence streams. It passes in
 private Xvfb and private headless Weston.
 
-The divider/layout, session-restore, and notification/settings journeys have
+`rust-divider-layout-driver` is the second. Rust waits for real terminal and
+Wayland presentation readiness, delivers the configured Split Right shortcut
+through the controlled compositor, requires the exact typed two-column layout,
+and closes through the real product shortcut. The broader workspace/settings
+journey remains in place and `PARTIAL`; this representative does not replace or
+discard its additional settings and multi-window assertions.
+
+The session-restore and notification/settings journeys have
 already adopted Rust process ownership, typed product receipts, verified input,
 deadlines, resource leases, and cleanup, but their remaining scenario logic is
 still Bash. They remain `PARTIAL`; GH-149 must not close until those named

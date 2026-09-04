@@ -746,3 +746,27 @@ the diagnostic mutation campaign.
   literal must either become a typed product expectation, remain native
   boundary evidence, or be explicitly shown redundant before its Bash scenario
   is retired.
+
+### Divider/layout Rust scenario discovery
+
+- The first compact Rust-owned divider run successfully delivered the physical
+  split command and created two real Ghostty panes, but its typed layout
+  expectation incorrectly named the initial column `column-pane-1`. The
+  product contract correctly reported `column-worklane-1`; only the added
+  column is `column-pane-2`. The failed run was retained as a test-oracle
+  correction, not worked around or attributed to the product.
+- The corrected X11 scenario passed. Its first controlled Wayland run then
+  exposed another implicit legacy-helper behavior: focusing Cage's outer X11
+  window is insufficient to focus the nested TornadoTTY surface. The old helper
+  also performed a real pointer click. That action is now an explicit bounded,
+  owner-verified Rust input operation rather than hidden Bash setup.
+- The input wrapper selected native Cage/wtype in the next run, so outer-X11
+  clicking correctly did not apply. That run showed terminal readiness can
+  precede Wayland toplevel presentation. The Rust scenario now waits for the
+  typed 1024x768 window-geometry event instead of the legacy human
+  `window-size` log before native input.
+- With the typed presentation gate, the representative passed in both private
+  Xvfb/X11 and private Cage/Wayland. Both launches created two real Ghostty
+  panes, observed exact typed column geometry, closed through Ctrl+Q, exited
+  zero, and validated both evidence streams. The two new matrix cells are PASS;
+  this focused execution is not an aggregate qualification claim.

@@ -64,6 +64,13 @@ pub fn run(arguments: &[String]) -> Result<(), InputError> {
             verify_target(Path::new(session), transport, window).map_err(InputError::Identity)?;
             type_text(transport, window, value).map_err(InputError::Delivery)
         }
+        [command, session, transport, window, x, y] if command == "click" => {
+            let transport = parse_transport(transport).map_err(InputError::Arguments)?;
+            let x = parse_coordinate(x).map_err(InputError::Arguments)?;
+            let y = parse_coordinate(y).map_err(InputError::Arguments)?;
+            verify_target(Path::new(session), transport, window).map_err(InputError::Identity)?;
+            click(transport, window, x, y).map_err(InputError::Delivery)
+        }
         _ => Err(InputError::Arguments(usage().to_owned())),
     }
 }
@@ -182,6 +189,39 @@ fn type_text(transport: Transport, window: &str, value: &str) -> Result<(), Stri
     }
 }
 
+fn click(transport: Transport, window: &str, x: u16, y: u16) -> Result<(), String> {
+    match transport {
+        Transport::X11 | Transport::OuterX11 => {
+            run_tool(
+                "xdotool windowfocus",
+                Command::new("xdotool").args(["windowfocus", "--sync", window]),
+            )?;
+            run_tool(
+                "xdotool click",
+                Command::new("xdotool").args([
+                    "mousemove",
+                    "--window",
+                    window,
+                    &x.to_string(),
+                    &y.to_string(),
+                    "click",
+                    "1",
+                ]),
+            )
+        }
+        Transport::Wayland => Err(
+            "native Wayland pointer injection is not available through the keyboard driver"
+                .to_owned(),
+        ),
+    }
+}
+
+fn parse_coordinate(value: &str) -> Result<u16, String> {
+    value
+        .parse::<u16>()
+        .map_err(|_| "pointer coordinates must be unsigned 16-bit integers".to_owned())
+}
+
 fn parse_chord(chord: &str) -> Result<(Vec<&str>, &str), String> {
     let mut parts = chord.split('+').collect::<Vec<_>>();
     let key = parts.pop().ok_or_else(|| "key chord is empty".to_owned())?;
@@ -224,5 +264,5 @@ fn require_success(label: &str, output: &Output) -> Result<(), String> {
 }
 
 fn usage() -> &'static str {
-    "input usage:\n  tornadotty-journey-driver input verify SESSION x11|outer-x11|wayland WINDOW-OR--\n  tornadotty-journey-driver input key SESSION x11|outer-x11|wayland WINDOW-OR-- CHORD\n  tornadotty-journey-driver input type SESSION x11|outer-x11|wayland WINDOW-OR-- TEXT"
+    "input usage:\n  tornadotty-journey-driver input verify SESSION x11|outer-x11|wayland WINDOW-OR--\n  tornadotty-journey-driver input key SESSION x11|outer-x11|wayland WINDOW-OR-- CHORD\n  tornadotty-journey-driver input type SESSION x11|outer-x11|wayland WINDOW-OR-- TEXT\n  tornadotty-journey-driver input click SESSION x11|outer-x11 WINDOW X Y"
 }

@@ -33,8 +33,180 @@ pub fn run(arguments: &[String]) -> Result<(), String> {
                 Path::new(desktop_entry),
             )
         }
+        [name, product, backend] if name == "divider-layout" => {
+            divider_layout(Path::new(product), parse_backend(backend)?)
+        }
         _ => Err(usage().to_owned()),
     }
+}
+
+fn divider_layout(product: &Path, backend: Backend) -> Result<(), String> {
+    if !product.is_absolute() || !product.is_file() {
+        return Err("divider-layout product must be an absolute regular file".to_owned());
+    }
+    let session_id = controlled_input_session_id(backend)?;
+    let run_root = create_named_run_root("divider-layout")?;
+    let result = run_divider_layout(product, backend, &session_id, &run_root);
+    if let Err(error) = fs::remove_dir_all(&run_root)
+        && result.is_ok()
+    {
+        return Err(format!("could not remove scenario directory: {error}"));
+    }
+    result?;
+    println!(
+        "rust-divider-layout-{}: PASS real-ghostty real-gtk physical-input typed-layout",
+        backend_name(backend)
+    );
+    Ok(())
+}
+
+fn run_divider_layout(
+    product: &Path,
+    backend: Backend,
+    session_id: &str,
+    root: &Path,
+) -> Result<(), String> {
+    let state = root.join("state");
+    let session = root.join("session");
+    create_owner_directory(&state)?;
+    create_owner_directory(&session)?;
+    let receipt = state.join("product-events.ndjson");
+    let config_home = std::env::var_os("XDG_CONFIG_HOME")
+        .ok_or_else(|| "divider-layout requires isolated XDG_CONFIG_HOME".to_owned())?;
+    let config_dir = PathBuf::from(config_home).join("zentty");
+    fs::create_dir_all(&config_dir)
+        .map_err(|error| format!("could not create isolated config directory: {error}"))?;
+    fs::write(
+        config_dir.join("config.toml"),
+        concat!(
+            "[confirmations]\n",
+            "confirm_before_closing_pane = false\n",
+            "confirm_before_closing_window = false\n",
+            "confirm_before_quitting = false\n",
+            "[pane_layout]\n",
+            "right_split_behavior = \"alwaysSplit\"\n"
+        ),
+    )
+    .map_err(|error| format!("could not write isolated layout config: {error}"))?;
+
+    let driver = std::env::current_exe()
+        .map_err(|error| format!("could not locate journey driver: {error}"))?;
+    let resources = resource_root()?;
+    let resource = format!("display={}:{}", backend_name(backend), session_id);
+    let mut supervisor = Command::new(&driver)
+        .args(["session", "supervise"])
+        .arg(&session)
+        .arg(resources)
+        .args(["--resource", &resource, "--", "env"])
+        .arg(format!(
+            "TORNADOTTY_TEST_RECEIPT_FILE={}",
+            receipt.display()
+        ))
+        .arg(product)
+        .args(["--command", "sleep 60", "--state-directory"])
+        .arg(&state)
+        .arg("--no-session-restore")
+        .stdout(Stdio::null())
+        .stderr(Stdio::inherit())
+        .spawn()
+        .map_err(|error| format!("could not start product supervisor: {error}"))?;
+
+    let scenario_result = observe_divider_layout(&driver, &session, &receipt, backend)
+        .and_then(|()| send_input_key(&driver, &session, backend, "ctrl+q"))
+        .and_then(|()| {
+            driver_success(
+                &driver,
+                &["session", "wait"],
+                &[&session],
+                &["10000", "exited"],
+            )
+        })
+        .and_then(|()| {
+            let status = supervisor
+                .wait()
+                .map_err(|error| format!("could not wait for product supervisor: {error}"))?;
+            if status.success() {
+                Ok(())
+            } else {
+                Err(format!("product supervisor failed with {status}"))
+            }
+        })
+        .and_then(|()| driver_success(&driver, &["validate"], &[&receipt], &["--complete"]))
+        .and_then(|()| driver_success(&driver, &["session", "validate-journal"], &[&session], &[]));
+    if scenario_result.is_err() {
+        stop_supervisor(&driver, &session, &mut supervisor);
+        report_product_log(&session.join("product.log"));
+    }
+    scenario_result
+}
+
+fn observe_divider_layout(
+    driver: &Path,
+    session: &Path,
+    receipt: &Path,
+    backend: Backend,
+) -> Result<(), String> {
+    driver_success(
+        driver,
+        &["session", "wait"],
+        &[session],
+        &["10000", "running"],
+    )?;
+    driver_success(
+        driver,
+        &["wait"],
+        &[receipt],
+        &["10000", "1", "terminal-ready", "pane-1"],
+    )?;
+    if matches!(backend, Backend::Wayland) {
+        driver_success(
+            driver,
+            &["wait"],
+            &[receipt],
+            &["10000", "1", "window-geometry", "window-1", "1024", "768"],
+        )?;
+    }
+    focus_input_target(driver, session, backend)?;
+    send_input_key(driver, session, backend, "ctrl+d")?;
+    driver_success(
+        driver,
+        &["wait"],
+        &[receipt],
+        &[
+            "10000",
+            "1",
+            "action",
+            "split-pane-right",
+            "completed",
+            "pane-2",
+        ],
+    )?;
+    driver_success(
+        driver,
+        &["wait"],
+        &[receipt],
+        &[
+            "10000",
+            "1",
+            "pane-layout",
+            "window-1",
+            "worklane-1",
+            "column-worklane-1=pane-1;column-pane-2=pane-2",
+        ],
+    )
+}
+
+fn focus_input_target(driver: &Path, session: &Path, backend: Backend) -> Result<(), String> {
+    let (transport, window) = input_target(driver, session, backend)?;
+    if transport == "outer-x11" {
+        driver_success(
+            driver,
+            &["input", "click"],
+            &[session],
+            &[transport, &window, "700", "400"],
+        )?;
+    }
+    Ok(())
 }
 
 fn window_identity(
@@ -198,24 +370,7 @@ fn observe_window_identity(
 }
 
 fn verify_x11_identity(product_pid: &str, application_id: &str) -> Result<(), String> {
-    let deadline = Instant::now() + DEADLINE;
-    let window = loop {
-        let output = Command::new("xdotool")
-            .args(["search", "--onlyvisible", "--pid", product_pid])
-            .output()
-            .map_err(|error| format!("could not search X11 windows: {error}"))?;
-        if output.status.success()
-            && let Some(window) = String::from_utf8_lossy(&output.stdout)
-                .lines()
-                .rfind(|line| line.parse::<u64>().is_ok_and(|value| value > 0))
-        {
-            break window.to_owned();
-        }
-        if Instant::now() >= deadline {
-            return Err("X11 product window was not mapped before deadline".to_owned());
-        }
-        thread::sleep(POLL);
-    };
+    let window = find_x11_window(product_pid)?;
     let output = Command::new("xprop")
         .args(["-id", &window, "WM_CLASS"])
         .output()
@@ -228,6 +383,63 @@ fn verify_x11_identity(product_pid: &str, application_id: &str) -> Result<(), St
         return Err(format!("X11 WM_CLASS instance differs: {}", value.trim()));
     }
     Ok(())
+}
+
+fn find_x11_window(product_pid: &str) -> Result<String, String> {
+    let deadline = Instant::now() + DEADLINE;
+    loop {
+        let output = Command::new("xdotool")
+            .args(["search", "--onlyvisible", "--pid", product_pid])
+            .output()
+            .map_err(|error| format!("could not search X11 windows: {error}"))?;
+        if output.status.success()
+            && let Some(window) = String::from_utf8_lossy(&output.stdout)
+                .lines()
+                .rfind(|line| line.parse::<u64>().is_ok_and(|value| value > 0))
+        {
+            return Ok(window.to_owned());
+        }
+        if Instant::now() >= deadline {
+            return Err("X11 product window was not mapped before deadline".to_owned());
+        }
+        thread::sleep(POLL);
+    }
+}
+
+fn send_input_key(
+    driver: &Path,
+    session: &Path,
+    backend: Backend,
+    chord: &str,
+) -> Result<(), String> {
+    let (transport, window) = input_target(driver, session, backend)?;
+    driver_success(
+        driver,
+        &["input", "key"],
+        &[session],
+        &[transport, &window, chord],
+    )
+}
+
+fn input_target(
+    driver: &Path,
+    session: &Path,
+    backend: Backend,
+) -> Result<(&'static str, String), String> {
+    match backend {
+        Backend::X11 => {
+            let product_pid = driver_stdout(driver, &["session", "product-pid"], &[session], &[])?;
+            Ok(("x11", find_x11_window(product_pid.trim())?))
+        }
+        Backend::Wayland
+            if std::env::var("ZENTTY_NESTED_WAYLAND_OUTER_X11_INPUT").as_deref() == Ok("1") =>
+        {
+            let window = std::env::var("ZENTTY_NESTED_WAYLAND_OUTER_X11_WINDOW")
+                .map_err(|_| "controlled outer-X11 window is absent".to_owned())?;
+            Ok(("outer-x11", window))
+        }
+        Backend::Wayland => Ok(("wayland", "-".to_owned())),
+    }
 }
 
 fn wait_for_log(path: &Path, expected: &str) -> Result<(), String> {
@@ -338,13 +550,34 @@ fn controlled_session_id(backend: Backend) -> Result<String, String> {
     Ok(value)
 }
 
+fn controlled_input_session_id(backend: Backend) -> Result<String, String> {
+    let name = match backend {
+        Backend::X11 => "ZENTTY_NESTED_X11_SESSION_ID",
+        Backend::Wayland => "ZENTTY_NESTED_WAYLAND_INPUT_SESSION_ID",
+    };
+    let value = std::env::var(name).map_err(|_| {
+        format!(
+            "{} input scenario must run through its controlled wrapper",
+            backend_name(backend)
+        )
+    })?;
+    if value.len() != 64 || !value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err(format!("{name} is malformed"));
+    }
+    Ok(value)
+}
+
 fn create_run_root() -> Result<PathBuf, String> {
+    create_named_run_root("window-identity")
+}
+
+fn create_named_run_root(name: &str) -> Result<PathBuf, String> {
     let timestamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_err(|error| format!("system clock precedes Unix epoch: {error}"))?
         .as_nanos();
     let path = std::env::temp_dir().join(format!(
-        "tornadotty-window-identity-{}-{timestamp}",
+        "tornadotty-{name}-{}-{timestamp}",
         std::process::id()
     ));
     create_owner_directory(&path)?;
@@ -426,5 +659,5 @@ fn require_safe_identifier(value: &str) -> Result<(), String> {
 }
 
 fn usage() -> &'static str {
-    "scenario usage:\n  tornadotty-journey-driver scenario window-identity PRODUCT x11|wayland APPLICATION_ID DESKTOP_ENTRY"
+    "scenario usage:\n  tornadotty-journey-driver scenario window-identity PRODUCT x11|wayland APPLICATION_ID DESKTOP_ENTRY\n  tornadotty-journey-driver scenario divider-layout PRODUCT x11|wayland"
 }

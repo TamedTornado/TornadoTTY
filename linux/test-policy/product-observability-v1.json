@@ -39,6 +39,11 @@
       "migration_status": "MIGRATED"
     },
     {
+      "path": "linux/tests/rust-divider-layout-driver",
+      "coverage": ["split_pane_right", "pane_layout", "terminal_ready", "window_geometry"],
+      "migration_status": "MIGRATED"
+    },
+    {
       "path": "linux/tests/rust-workspace-pane-settings",
       "coverage": ["split_pane_right", "pane_layout", "terminal_ready"],
       "migration_status": "PARTIAL",

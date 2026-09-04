@@ -395,6 +395,22 @@ fn input_driver_rejects_a_foreign_x11_window_before_sending_input() {
         "getwindowpid 4242\nwindowfocus --sync 4242\nkey ctrl+t\n"
     );
 
+    fs::write(&calls, b"").unwrap();
+    let clicked = driver()
+        .args(["input", "click"])
+        .arg(&session)
+        .args(["x11", "4242", "700", "400"])
+        .env("PATH", &fake_bin)
+        .env("MOCK_XDOTOOL_CALLS", &calls)
+        .env("MOCK_XDOTOOL_OWNER", product.to_string())
+        .output()
+        .unwrap();
+    assert!(clicked.status.success());
+    assert_eq!(
+        fs::read_to_string(&calls).unwrap(),
+        "getwindowpid 4242\nwindowfocus --sync 4242\nmousemove --window 4242 700 400 click 1\n"
+    );
+
     assert!(Fixture::stop(&session).status.success());
     assert!(fixture.wait_supervisor(&session).status.success());
 }
