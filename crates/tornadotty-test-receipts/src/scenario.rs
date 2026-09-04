@@ -2,6 +2,7 @@
 
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Write};
+use std::os::unix::fs::symlink;
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
@@ -15,6 +16,15 @@ const POLL: Duration = Duration::from_millis(20);
 enum Backend {
     X11,
     Wayland,
+}
+
+struct RestoreInputs {
+    state: PathBuf,
+    session: PathBuf,
+    fake_bin: PathBuf,
+    project: PathBuf,
+    receipt: PathBuf,
+    actor_receipt: PathBuf,
 }
 
 /// Runs one named real-product scenario.
@@ -36,7 +46,237 @@ pub fn run(arguments: &[String]) -> Result<(), String> {
         [name, product, backend] if name == "divider-layout" => {
             divider_layout(Path::new(product), parse_backend(backend)?)
         }
+        [name, product, backend, fixture, actor] if name == "session-restore" => session_restore(
+            Path::new(product),
+            parse_backend(backend)?,
+            Path::new(fixture),
+            Path::new(actor),
+        ),
         _ => Err(usage().to_owned()),
+    }
+}
+
+fn session_restore(
+    product: &Path,
+    backend: Backend,
+    fixture: &Path,
+    actor: &Path,
+) -> Result<(), String> {
+    if !product.is_absolute()
+        || !product.is_file()
+        || !fixture.is_absolute()
+        || !fixture.is_file()
+        || !actor.is_absolute()
+        || !actor.is_file()
+    {
+        return Err(
+            "session-restore product, fixture, and actor must be absolute regular files".to_owned(),
+        );
+    }
+    let session_id = controlled_input_session_id(backend)?;
+    let run_root = create_named_run_root("session-restore")?;
+    let result = run_session_restore(product, backend, fixture, actor, &session_id, &run_root);
+    if let Err(error) = fs::remove_dir_all(&run_root)
+        && result.is_ok()
+    {
+        return Err(format!("could not remove scenario directory: {error}"));
+    }
+    result?;
+    println!(
+        "rust-session-restore-driver-{}: PASS persisted-topology controlled-codex typed-readiness physical-input",
+        backend_name(backend)
+    );
+    Ok(())
+}
+
+fn run_session_restore(
+    product: &Path,
+    backend: Backend,
+    fixture: &Path,
+    actor: &Path,
+    session_id: &str,
+    root: &Path,
+) -> Result<(), String> {
+    let inputs = prepare_restore_inputs(root, fixture, actor)?;
+    let driver = std::env::current_exe()
+        .map_err(|error| format!("could not locate journey driver: {error}"))?;
+    let resource = format!("display={}:{}", backend_name(backend), session_id);
+    let path = std::env::var_os("PATH").ok_or_else(|| "PATH is absent".to_owned())?;
+    let mut joined_path = inputs.fake_bin.as_os_str().to_os_string();
+    joined_path.push(":");
+    joined_path.push(path);
+    let mut supervisor = Command::new(&driver)
+        .args(["session", "supervise"])
+        .arg(&inputs.session)
+        .arg(resource_root()?)
+        .args(["--resource", &resource, "--"])
+        .arg(product)
+        .arg("--state-directory")
+        .arg(&inputs.state)
+        .env("PATH", joined_path)
+        .env("ZENTTY_CONTROLLED_AGENT_PROFILE", "codex-restore")
+        .env("ZENTTY_CONTROLLED_AGENT_SESSIONS", "session-codex")
+        .env("ZENTTY_CONTROLLED_AGENT_SLEEP_SECONDS", "60")
+        .env("ZENTTY_CONTROLLED_AGENT_RECEIPT", &inputs.actor_receipt)
+        .env("TORNADOTTY_TEST_RECEIPT_FILE", &inputs.receipt)
+        .stdout(Stdio::null())
+        .stderr(Stdio::inherit())
+        .spawn()
+        .map_err(|error| format!("could not start restore supervisor: {error}"))?;
+
+    let scenario_result = observe_session_restore(
+        &driver,
+        &inputs.session,
+        &inputs.receipt,
+        &inputs.actor_receipt,
+        &inputs.project,
+        backend,
+    )
+    .and_then(|()| send_input_key(&driver, &inputs.session, backend, "ctrl+q"))
+    .and_then(|()| {
+        driver_success(
+            &driver,
+            &["session", "wait"],
+            &[&inputs.session],
+            &["10000", "exited"],
+        )
+    })
+    .and_then(|()| {
+        let status = supervisor
+            .wait()
+            .map_err(|error| format!("could not wait for restore supervisor: {error}"))?;
+        if status.success() {
+            Ok(())
+        } else {
+            Err(format!("restore supervisor failed with {status}"))
+        }
+    })
+    .and_then(|()| driver_success(&driver, &["validate"], &[&inputs.receipt], &["--complete"]))
+    .and_then(|()| {
+        driver_success(
+            &driver,
+            &["session", "validate-journal"],
+            &[&inputs.session],
+            &[],
+        )
+    });
+    if scenario_result.is_err() {
+        stop_supervisor(&driver, &inputs.session, &mut supervisor);
+        report_product_log(&inputs.session.join("product.log"));
+    }
+    scenario_result
+}
+
+fn prepare_restore_inputs(
+    root: &Path,
+    fixture: &Path,
+    actor: &Path,
+) -> Result<RestoreInputs, String> {
+    let inputs = RestoreInputs {
+        state: root.join("state"),
+        session: root.join("session"),
+        fake_bin: root.join("bin"),
+        project: root.join("project"),
+        receipt: root.join("state/product-events.ndjson"),
+        actor_receipt: root.join("controlled-agent.receipt"),
+    };
+    for directory in [
+        &inputs.state,
+        &inputs.session,
+        &inputs.fake_bin,
+        &inputs.project,
+    ] {
+        create_owner_directory(directory)?;
+    }
+    symlink(actor, inputs.fake_bin.join("codex"))
+        .map_err(|error| format!("could not install controlled Codex actor: {error}"))?;
+    let mut snapshot: serde_json::Value = serde_json::from_slice(
+        &fs::read(fixture).map_err(|error| format!("could not read restore fixture: {error}"))?,
+    )
+    .map_err(|error| format!("restore fixture is malformed: {error}"))?;
+    replace_json_string(
+        &mut snapshot,
+        "/tmp/project",
+        &inputs.project.to_string_lossy(),
+    );
+    fs::write(
+        inputs.state.join("restore-snapshot.json"),
+        serde_json::to_vec(&snapshot)
+            .map_err(|error| format!("could not encode restore fixture: {error}"))?,
+    )
+    .map_err(|error| format!("could not publish restore fixture: {error}"))?;
+    write_restore_config()?;
+    Ok(inputs)
+}
+
+fn write_restore_config() -> Result<(), String> {
+    let config_home = std::env::var_os("XDG_CONFIG_HOME")
+        .ok_or_else(|| "session-restore requires isolated XDG_CONFIG_HOME".to_owned())?;
+    let config_dir = PathBuf::from(config_home).join("zentty");
+    fs::create_dir_all(&config_dir)
+        .map_err(|error| format!("could not create isolated config directory: {error}"))?;
+    fs::write(
+        config_dir.join("config.toml"),
+        concat!(
+            "[confirmations]\n",
+            "confirm_before_closing_pane = false\n",
+            "confirm_before_closing_window = false\n",
+            "confirm_before_quitting = false\n",
+            "[restore]\n",
+            "restore_workspace_on_launch = true\n"
+        ),
+    )
+    .map_err(|error| format!("could not write isolated restore config: {error}"))
+}
+
+fn observe_session_restore(
+    driver: &Path,
+    session: &Path,
+    receipt: &Path,
+    actor_receipt: &Path,
+    project: &Path,
+    backend: Backend,
+) -> Result<(), String> {
+    driver_success(
+        driver,
+        &["session", "wait"],
+        &[session],
+        &["10000", "running"],
+    )?;
+    driver_success(
+        driver,
+        &["wait"],
+        &[receipt],
+        &["10000", "1", "terminal-ready", "pane-agent"],
+    )?;
+    driver_success(
+        driver,
+        &["wait"],
+        &[receipt],
+        &["10000", "1", "focus-pane", "pane-agent"],
+    )?;
+    wait_for_log(actor_receipt, "resume:session-codex pid:")?;
+    wait_for_log(
+        actor_receipt,
+        &format!("cwd:session-codex value:{}", project.display()),
+    )?;
+    focus_input_target(driver, session, backend)
+}
+
+fn replace_json_string(value: &mut serde_json::Value, from: &str, to: &str) {
+    match value {
+        serde_json::Value::String(current) if current == from => to.clone_into(current),
+        serde_json::Value::Array(values) => {
+            for value in values {
+                replace_json_string(value, from, to);
+            }
+        }
+        serde_json::Value::Object(values) => {
+            for value in values.values_mut() {
+                replace_json_string(value, from, to);
+            }
+        }
+        _ => {}
     }
 }
 
@@ -659,5 +899,5 @@ fn require_safe_identifier(value: &str) -> Result<(), String> {
 }
 
 fn usage() -> &'static str {
-    "scenario usage:\n  tornadotty-journey-driver scenario window-identity PRODUCT x11|wayland APPLICATION_ID DESKTOP_ENTRY\n  tornadotty-journey-driver scenario divider-layout PRODUCT x11|wayland"
+    "scenario usage:\n  tornadotty-journey-driver scenario window-identity PRODUCT x11|wayland APPLICATION_ID DESKTOP_ENTRY\n  tornadotty-journey-driver scenario divider-layout PRODUCT x11|wayland\n  tornadotty-journey-driver scenario session-restore PRODUCT x11|wayland FIXTURE ACTOR"
 }

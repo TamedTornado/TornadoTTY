@@ -63,12 +63,21 @@ and closes through the real product shortcut. The broader workspace/settings
 journey remains in place and `PARTIAL`; this representative does not replace or
 discard its additional settings and multi-window assertions.
 
-The session-restore and notification/settings journeys have
-already adopted Rust process ownership, typed product receipts, verified input,
-deadlines, resource leases, and cleanup, but their remaining scenario logic is
-still Bash. They remain `PARTIAL`; GH-149 must not close until those named
-representative workflows are Rust-owned and their old assertions are accounted
-for rather than silently deleted.
+`rust-session-restore-driver` is the third. Rust copies the checked-in workspace
+fixture into an owner-only run directory, rewrites only its fixture project
+path, installs the shared controlled Codex actor, and launches the real product.
+It requires typed terminal and focus readiness, the real reconstructed `codex
+resume` command, the restored working directory, physical compositor input,
+clean product exit, and valid product and supervisor evidence. The broader
+`rust-session-restore` journey remains `PARTIAL`; this representative does not
+replace or discard its crash, corrupt-state, remote-transfer, and multi-agent
+assertions.
+
+The notification/settings journey has already adopted Rust process ownership,
+typed product receipts, verified input, deadlines, resource leases, and cleanup,
+but its remaining scenario logic is still Bash. It remains `PARTIAL`; GH-149
+must not close until that named representative workflow is Rust-owned and the
+old assertions are accounted for rather than silently deleted.
 
 ## Focused verification
 

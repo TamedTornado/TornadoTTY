@@ -770,3 +770,27 @@ the diagnostic mutation campaign.
   panes, observed exact typed column geometry, closed through Ctrl+Q, exited
   zero, and validated both evidence streams. The two new matrix cells are PASS;
   this focused execution is not an aggregate qualification claim.
+
+### Session-restore Rust scenario discovery
+
+- The first Rust-owned restore run failed before the product launched because
+  the driver passed the existing colon-delimited `PATH` to `join_paths` as one
+  path segment. Rust correctly rejected it. The driver now constructs the
+  inherited path as an OS string and sets controlled environment variables
+  directly on the supervised process rather than invoking and re-parsing
+  through `env`.
+- The corrected representative passed in both private Xvfb/X11 and private
+  Cage/Wayland. Each run copied the real checked-in workspace fixture into an
+  owner-only state directory, restored `pane-agent`, invoked the shared
+  controlled actor as `codex resume session-codex`, preserved the fixture's
+  rewritten working directory, observed typed terminal and focus readiness,
+  closed through real compositor input, exited zero, and validated the product
+  receipt plus supervisor journal.
+- The controlled Wayland environment again emitted host GNOME portal helper
+  SIGSEGV diagnostics. The TornadoTTY process and journey passed independently;
+  those environmental crashes remain visible and are not relabeled as clean
+  product behavior.
+- Two explicit PASS cells now name the X11 and Wayland representative. The
+  broad legacy restore journey remains `PARTIAL` because its additional crash,
+  corruption, remote-transfer, and multi-agent coverage has not silently been
+  discarded. No aggregate qualification was run or claimed.

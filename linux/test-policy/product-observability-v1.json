@@ -44,6 +44,11 @@
       "migration_status": "MIGRATED"
     },
     {
+      "path": "linux/tests/rust-session-restore-driver",
+      "coverage": ["terminal_ready", "focus_pane", "controlled_codex_resume"],
+      "migration_status": "MIGRATED"
+    },
+    {
       "path": "linux/tests/rust-workspace-pane-settings",
       "coverage": ["split_pane_right", "pane_layout", "terminal_ready"],
       "migration_status": "PARTIAL",
