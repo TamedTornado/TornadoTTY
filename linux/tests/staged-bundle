@@ -16,6 +16,12 @@ cp "${build_dir}/lib/libgtk4-layer-shell.so" "${stage_dir}/lib/"
 cp -a "${build_dir}/libexec/zentty/." "${stage_dir}/libexec/zentty/"
 cp -a "${build_dir}/share/zentty/." "${stage_dir}/share/zentty/"
 
+private_cli="${stage_dir}/libexec/zentty/agent-wrappers/shared/zentty"
+[[ ! -e "${private_cli}" && ! -L "${private_cli}" ]] || {
+    echo "staged-bundle: duplicate wrapper-owned CLI executable is forbidden" >&2
+    exit 1
+}
+
 theme_source="${repo_root}/ZenttyResources/ghostty/themes"
 theme_stage="${stage_dir}/share/zentty/ghostty/themes"
 [[ -f "${theme_stage}/GitHub-Dark-Personal" ]] || {
@@ -89,6 +95,7 @@ for wrapper in \
         exit 1
     }
 done
+"${repo_root}/linux/tests/agent-wrapper-cli-authority-test"
 
 fake_amp="${integration_home}/real-amp/amp"
 mkdir -p "$(dirname "${fake_amp}")"

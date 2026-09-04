@@ -82,6 +82,19 @@ extract_package wrong-mode
 chmod 0777 "${temporary}/wrong-mode/usr/lib/tornadotty/bin/tornadotty-cli"
 expect_rejected wrong-mode "payload mode drift"
 
+extract_package duplicate-cli
+duplicate_cli="${temporary}/duplicate-cli/usr/lib/tornadotty/libexec/zentty/agent-wrappers/shared/zentty"
+install -D -m 0755 \
+    "${temporary}/duplicate-cli/usr/lib/tornadotty/bin/tornadotty-cli" \
+    "${duplicate_cli}"
+duplicate_cli_manifest="${temporary}/duplicate-cli-manifest.json"
+jq --arg sha "$(sha256sum "${duplicate_cli}" | awk '{print $1}')" \
+    '.files += [{path:"/usr/lib/tornadotty/libexec/zentty/agent-wrappers/shared/zentty",
+      type:"file",mode:"755",owner_component:"negative-fixture",sha256:$sha}]' \
+    "${manifest}" >"${duplicate_cli_manifest}"
+expect_rejected duplicate-cli "duplicate wrapper-owned TornadoTTY CLI executable is forbidden" \
+    "${duplicate_cli_manifest}"
+
 extract_package path-leak
 printf '\n/home/builder/Projects/zentty/build/private\n' >> \
     "${temporary}/path-leak/usr/share/applications/com.tamedtornado.tornadotty.desktop"
@@ -119,4 +132,4 @@ jq --arg sha "$(sha256sum "${forbidden_file}" | awk '{print $1}')" \
     "${manifest}" >"${forbidden_manifest}"
 expect_rejected forbidden-static "forbidden payload file" "${forbidden_manifest}"
 
-echo "debian-package-build-test: PASS structural=real negatives=undeclared+license+third-party-license+mode+path+runpath+credential+static-archive"
+echo "debian-package-build-test: PASS structural=real negatives=undeclared+license+third-party-license+mode+duplicate-cli+path+runpath+credential+static-archive"

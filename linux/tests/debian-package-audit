@@ -72,6 +72,9 @@ for legacy in /usr/lib/zentty /usr/bin/zentty /usr/bin/zentty-linux; do
     [[ ! -e "${root}${legacy}" && ! -L "${root}${legacy}" ]] ||
         fail "legacy Zentty install path leaked into TornadoTTY package: ${legacy}"
 done
+private_cli="${root}/usr/lib/tornadotty/libexec/zentty/agent-wrappers/shared/zentty"
+[[ ! -e "${private_cli}" && ! -L "${private_cli}" ]] ||
+    fail "duplicate wrapper-owned TornadoTTY CLI executable is forbidden"
 ghostty="${root}/usr/lib/tornadotty/lib/libghostty-gtk-embed.so"
 # The loader token must remain literal in the audited ELF.
 # shellcheck disable=SC2016

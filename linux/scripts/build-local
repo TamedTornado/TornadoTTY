@@ -197,8 +197,7 @@ cp "${cargo_target_dir}/${cargo_profile}/tornadotty-journey-driver" \
     "${output_dir}/bin/tornadotty-journey-driver"
 wrapper_root="${output_dir}/libexec/zentty/agent-wrappers"
 rm -rf "${wrapper_root}"
-mkdir -p "${wrapper_root}/shared"
-cp "${output_dir}/bin/zentty" "${wrapper_root}/shared/zentty"
+mkdir -p "${wrapper_root}"
 for specification in \
     amp:amp claude:claude codex:codex copilot:copilot cursor:cursor-agent \
     droid:droid gemini:gemini opencode:opencode pi:pi omp:omp kimi:kimi \

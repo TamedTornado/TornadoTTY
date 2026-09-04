@@ -77,18 +77,6 @@ find_real_binary() {
 }
 
 zentty_cli_bin() {
-    local self_dir wrapper_root bundled_cli
-    self_dir="$(cd "$(dirname "$0")" && pwd)"
-    wrapper_root="$(cd "${self_dir}/.." && pwd)"
-    bundled_cli="${wrapper_root}/shared/zentty"
-    trace "cli lookup: bundled=${bundled_cli} exists=$([[ -x "$bundled_cli" ]] && echo yes || echo no)"
-
-    if [[ -x "$bundled_cli" ]]; then
-        trace "cli resolved: bundled -> ${bundled_cli}"
-        printf '%s\n' "$bundled_cli"
-        return 0
-    fi
-
     trace "cli lookup: ZENTTY_CLI_BIN=${ZENTTY_CLI_BIN:-UNSET} exists=$([[ -n "${ZENTTY_CLI_BIN:-}" && -x "${ZENTTY_CLI_BIN:-}" ]] && echo yes || echo no)"
     if [[ -n "${ZENTTY_CLI_BIN:-}" && -x "${ZENTTY_CLI_BIN}" ]]; then
         trace "cli resolved: env ZENTTY_CLI_BIN -> ${ZENTTY_CLI_BIN}"
@@ -96,13 +84,15 @@ zentty_cli_bin() {
         return 0
     fi
 
-    local path_zentty
-    if path_zentty="$(command -v zentty 2>/dev/null)"; then
-        trace "cli resolved: PATH -> ${path_zentty}"
-        printf '%s\n' "$path_zentty"
-        return 0
-    fi
-    trace "cli lookup: NOT FOUND (bundled missing, ZENTTY_CLI_BIN missing/unexec, no zentty on PATH)"
+    local command_name path_cli
+    for command_name in tornadotty-cli zentty; do
+        if path_cli="$(command -v "${command_name}" 2>/dev/null)"; then
+            trace "cli resolved: PATH ${command_name} -> ${path_cli}"
+            printf '%s\n' "$path_cli"
+            return 0
+        fi
+    done
+    trace "cli lookup: NOT FOUND (ZENTTY_CLI_BIN missing/unexec, no TornadoTTY CLI on PATH)"
     return 1
 }
 

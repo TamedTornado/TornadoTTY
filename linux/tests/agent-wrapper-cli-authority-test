@@ -1,0 +1,58 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+wrapper_source="${repo_root}/ZenttyResources/bin/shared/zentty-agent-wrapper"
+root="$(mktemp -d)"
+trap 'rm -rf -- "${root}"' EXIT
+
+fail() {
+    echo "agent-wrapper-cli-authority-test: error: $*" >&2
+    exit 1
+}
+
+mkdir -p "${root}/wrappers/codex" "${root}/wrappers/shared" "${root}/canonical"
+cp "${wrapper_source}" "${root}/wrappers/codex/codex"
+chmod 0755 "${root}/wrappers/codex/codex"
+
+cat >"${root}/canonical/tornadotty-cli" <<'CANONICAL'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '<%s>\n' "$@" >"${WRAPPER_AUTHORITY_RECEIPT}"
+CANONICAL
+chmod 0755 "${root}/canonical/tornadotty-cli"
+
+cat >"${root}/wrappers/shared/zentty" <<'STALE'
+#!/usr/bin/env bash
+set -euo pipefail
+touch "${WRAPPER_STALE_CLI_RECEIPT}"
+exit 77
+STALE
+chmod 0755 "${root}/wrappers/shared/zentty"
+
+WRAPPER_AUTHORITY_RECEIPT="${root}/explicit.receipt" \
+WRAPPER_STALE_CLI_RECEIPT="${root}/stale.receipt" \
+ZENTTY_CLI_BIN="${root}/canonical/tornadotty-cli" \
+ZENTTY_AGENT_TOOL=codex \
+PATH="${root}/canonical:/usr/bin:/bin" \
+    "${root}/wrappers/codex/codex" --model 'space model'
+
+[[ ! -e "${root}/stale.receipt" ]] ||
+    fail "wrapper selected a bundled CLI instead of the explicit canonical CLI"
+expected_explicit="$(printf '<%s>\n' launch codex --model 'space model')"
+[[ "$(cat "${root}/explicit.receipt")" == "${expected_explicit}" ]] ||
+    fail "wrapper did not preserve exact arguments through the explicit canonical CLI"
+
+rm -f "${root}/wrappers/shared/zentty"
+env -u ZENTTY_CLI_BIN \
+    WRAPPER_AUTHORITY_RECEIPT="${root}/path.receipt" \
+    WRAPPER_STALE_CLI_RECEIPT="${root}/stale.receipt" \
+    ZENTTY_AGENT_TOOL=codex \
+    PATH="${root}/canonical:/usr/bin:/bin" \
+    "${root}/wrappers/codex/codex" --version
+
+expected_path="$(printf '<%s>\n' launch codex --version)"
+[[ "$(cat "${root}/path.receipt")" == "${expected_path}" ]] ||
+    fail "wrapper did not resolve the canonical tornadotty-cli command from PATH"
+
+echo "agent-wrapper-cli-authority-test: PASS canonical-cli=one explicit-env path-fallback"

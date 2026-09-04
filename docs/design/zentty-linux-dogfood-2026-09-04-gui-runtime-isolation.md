@@ -494,3 +494,40 @@ correct installed negative route. GH-172 remains open until a naturally
 occurring Approve-for-me request is silent and one request genuinely routed to
 the user still notifies during dogfooding. No full Linux qualification run was
 performed for this issue-sized fix.
+
+### Single Linux CLI authority repair
+
+The deployment failure exposed a packaging design defect rather than merely a
+missed copy step. `build-local` had installed the same Rust CLI at both
+`bin/zentty` and `libexec/zentty/agent-wrappers/shared/zentty`, and the shared
+agent wrapper deliberately preferred the private copy over the
+`ZENTTY_CLI_BIN` path exported by the application. That made the private copy
+an independent, silently stale implementation authority.
+
+Linux now stages and packages one CLI executable. Installed packages expose it
+as `/usr/lib/tornadotty/bin/tornadotty-cli` (with the public `/usr/bin` entry
+point remaining a symlink). The application exports that canonical path to
+each pane. Agent wrappers first use the explicit export and otherwise resolve
+`tornadotty-cli` from `PATH`; they neither stage nor search for a wrapper-owned
+CLI. The source macOS app-bundle placement remains separate and unchanged.
+
+Tests were red before the repair: a wrapper fixture selected a deliberately
+stale private CLI despite a valid explicit canonical path, and the rebuilt
+stage contained the private executable. Focused green evidence now proves:
+
+- `agent-wrapper-cli-authority-test` selects the explicit canonical CLI even
+  when a stale private candidate is present, preserves arguments exactly, and
+  falls back to the public `tornadotty-cli` command when no export is present;
+- `staged-bundle` rejects any wrapper-owned CLI and invokes the authority test;
+- `debian-package-audit` rejects any package that reintroduces the private
+  executable;
+- a product-only ReleaseSafe rebuild contains no
+  `libexec/zentty/agent-wrappers/shared/zentty` path.
+
+The already-running Codex processes inherited the obsolete absolute pathname
+before this repair and cannot have their environment rewritten. The live
+installation therefore uses a temporary compatibility symlink at that old
+pathname, pointing to the canonical CLI, until those sessions are restarted.
+This is one executable rather than two independently deployable copies; new
+builds and packages do not contain the compatibility path. No broad
+qualification run was performed for this packaging-focused correction.
