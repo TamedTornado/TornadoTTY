@@ -285,20 +285,31 @@ assert_installed_system_paths() {
 
 build_upgrade_fixture() {
     local fixture_dir="${work_dir}/upgrade-fixture-root"
-    local fixture_version legacy_path legacy_sha epoch
+    local fixture_version legacy_path legacy_kind legacy_mode legacy_sha legacy_target epoch
     fixture_version="$(jq -r '.version' "${fixture_contract}")"
-    legacy_path="$(jq -r '.package_delta.added_owned_file' "${fixture_contract}")"
-    legacy_sha="$(jq -r '.package_delta.added_owned_file_sha256' "${fixture_contract}")"
     epoch="$(jq -r '.source_date_epoch' "${candidate_provenance}")"
     dpkg-deb --raw-extract "${candidate_package}" "${fixture_dir}"
     sed -i "s/^Version: .*/Version: ${fixture_version}/" "${fixture_dir}/DEBIAN/control"
-    printf 'zentty lifecycle fixture v1\n' >"${fixture_dir}${legacy_path}"
-    chmod 0644 "${fixture_dir}${legacy_path}"
-    [[ "$(sha256sum "${fixture_dir}${legacy_path}" | awk '{print $1}')" == "${legacy_sha}" ]] ||
-        fail "upgrade fixture legacy content differs from its contract"
-    printf '%s  %s\n' \
-        "$(md5sum "${fixture_dir}${legacy_path}" | awk '{print $1}')" "${legacy_path#/}" \
-        >>"${fixture_dir}/DEBIAN/md5sums"
+    while IFS=$'\037' read -r legacy_path legacy_kind legacy_mode legacy_sha legacy_target; do
+        mkdir -p "$(dirname "${fixture_dir}${legacy_path}")"
+        case "${legacy_kind}" in
+            file)
+                printf 'zentty lifecycle fixture v1\n' >"${fixture_dir}${legacy_path}"
+                chmod "${legacy_mode}" "${fixture_dir}${legacy_path}"
+                [[ "$(sha256sum "${fixture_dir}${legacy_path}" | awk '{print $1}')" == "${legacy_sha}" ]] ||
+                    fail "upgrade fixture legacy content differs from its contract: ${legacy_path}"
+                printf '%s  %s\n' \
+                    "$(md5sum "${fixture_dir}${legacy_path}" | awk '{print $1}')" "${legacy_path#/}" \
+                    >>"${fixture_dir}/DEBIAN/md5sums"
+                ;;
+            symlink)
+                ln -s "${legacy_target}" "${fixture_dir}${legacy_path}"
+                ;;
+            *) fail "unsupported legacy fixture path kind: ${legacy_kind}" ;;
+        esac
+    done < <(jq -r '.package_delta.legacy_owned_paths[] |
+        [.path,.kind,(.mode // ""),(.sha256 // ""),(.target // "")] | join("\u001f")' \
+        "${fixture_contract}")
     LC_ALL=C sort -o "${fixture_dir}/DEBIAN/md5sums" "${fixture_dir}/DEBIAN/md5sums"
     find "${fixture_dir}" -exec touch -h -d "@${epoch}" {} +
     SOURCE_DATE_EPOCH="${epoch}" dpkg-deb --root-owner-group --build \
@@ -412,8 +423,10 @@ inner_journey() {
     normalize_database_paths "${work_dir}/fixture-database.txt"
     cmp -s "${work_dir}/fixture-archive.txt" "${work_dir}/fixture-database.txt" ||
         fail "fixture package database ownership differs from its archive"
-    legacy_path="$(jq -r '.package_delta.added_owned_file' "${fixture_contract}")"
-    [[ -f "${lifecycle_root}${legacy_path}" ]] || fail "fixture legacy file was not installed"
+    while IFS= read -r legacy_path; do
+        [[ -e "${lifecycle_root}${legacy_path}" || -L "${lifecycle_root}${legacy_path}" ]] ||
+            fail "fixture legacy path was not installed: ${legacy_path}"
+    done < <(jq -r '.package_delta.legacy_owned_paths[].path' "${fixture_contract}")
     dpkg --root="${lifecycle_root}" --verify "${package_name}" >/dev/null ||
         fail "fixture failed dpkg payload verification"
     assert_installed_system_paths fixture-install "${upgrade_package}"
@@ -425,8 +438,10 @@ inner_journey() {
     upgrade_fingerprint="$(audit_installed_candidate supported-upgrade)"
     [[ "${upgrade_fingerprint}" == "${fresh_fingerprint}" ]] ||
         fail "supported upgrade payload differs from fresh install"
-    [[ ! -e "${lifecycle_root}${legacy_path}" ]] ||
-        fail "supported upgrade retained the fixture legacy file"
+    while IFS= read -r legacy_path; do
+        [[ ! -e "${lifecycle_root}${legacy_path}" && ! -L "${lifecycle_root}${legacy_path}" ]] ||
+            fail "supported upgrade retained legacy installed path: ${legacy_path}"
+    done < <(jq -r '.package_delta.legacy_owned_paths[].path' "${fixture_contract}")
     assert_installed_system_paths supported-upgrade
     assert_user_and_sentinels supported-upgrade
     record_transition supported-upgrade 'dpkg --install' PASS "${upgrade_fingerprint}"
@@ -541,7 +556,7 @@ expanded_manifest="$(readlink -f -- "$2")"
 receipt_directory="${3:-${repo_root}/build/linux/package-lifecycle}"
 candidate_provenance="${candidate_package%.deb}.provenance.json"
 
-for command in awk bwrap cmp cut diff dpkg dpkg-deb dpkg-query find grep jq md5sum \
+for command in awk bwrap cmp cut diff dirname dpkg dpkg-deb dpkg-query find grep jq md5sum \
     readlink sed sha256sum sort stat tar touch; do
     command -v "${command}" >/dev/null || prerequisite_failure "required command not found: ${command}"
 done

@@ -40,7 +40,7 @@ dpkg-deb --contents "${artifact}" >/dev/null
 
 extract_package positive
 "${audit}" "${temporary}/positive" "${manifest}" >/dev/null
-ZENTTY_BUILD_DIR="${temporary}/positive/usr/lib/zentty" \
+ZENTTY_BUILD_DIR="${temporary}/positive/usr/lib/tornadotty" \
     "${repo_root}/linux/tests/abi-surface" >/dev/null
 (
     cd "${temporary}/positive"
@@ -52,7 +52,7 @@ sed -i '/^Replaces: zentty$/d' "${temporary}/missing-rename-metadata/DEBIAN/cont
 expect_rejected missing-rename-metadata "legacy package replacement is missing"
 
 extract_package undeclared
-install -m 0644 /dev/null "${temporary}/undeclared/usr/lib/zentty/unexpected.a"
+install -m 0644 /dev/null "${temporary}/undeclared/usr/lib/tornadotty/unexpected.a"
 expect_rejected undeclared "expanded manifest and payload differ"
 
 extract_package missing-license
@@ -64,7 +64,7 @@ rm "${temporary}/missing-third-party-notice/usr/share/doc/tornadotty/third-party
 expect_rejected missing-third-party-notice "expanded manifest and payload differ"
 
 extract_package wrong-mode
-chmod 0777 "${temporary}/wrong-mode/usr/lib/zentty/bin/zentty"
+chmod 0777 "${temporary}/wrong-mode/usr/lib/tornadotty/bin/tornadotty-cli"
 expect_rejected wrong-mode "payload mode drift"
 
 extract_package path-leak
@@ -78,10 +78,10 @@ expect_rejected path-leak "source or build path leaked" "${path_manifest}"
 
 extract_package bad-runpath
 patchelf --set-rpath /tmp/build-tree \
-    "${temporary}/bad-runpath/usr/lib/zentty/lib/libghostty-gtk-embed.so"
+    "${temporary}/bad-runpath/usr/lib/tornadotty/lib/libghostty-gtk-embed.so"
 runpath_manifest="${temporary}/bad-runpath-manifest.json"
-runpath_sha="$(sha256sum "${temporary}/bad-runpath/usr/lib/zentty/lib/libghostty-gtk-embed.so" | awk '{print $1}')"
-jq --arg sha "${runpath_sha}" '(.files[] | select(.path == "/usr/lib/zentty/lib/libghostty-gtk-embed.so") | .sha256) = $sha' \
+runpath_sha="$(sha256sum "${temporary}/bad-runpath/usr/lib/tornadotty/lib/libghostty-gtk-embed.so" | awk '{print $1}')"
+jq --arg sha "${runpath_sha}" '(.files[] | select(.path == "/usr/lib/tornadotty/lib/libghostty-gtk-embed.so") | .sha256) = $sha' \
     "${manifest}" >"${runpath_manifest}"
 expect_rejected bad-runpath "Ghostty RUNPATH is not install-relative" "${runpath_manifest}"
 
@@ -94,12 +94,12 @@ jq --arg sha "${credential_sha}" '(.files[] | select(.path == "/usr/share/applic
     "${manifest}" >"${credential_manifest}"
 expect_rejected credential "credential-shaped content in payload" "${credential_manifest}"
 
-forbidden_file="${temporary}/forbidden-static/usr/lib/zentty/unexpected.a"
+forbidden_file="${temporary}/forbidden-static/usr/lib/tornadotty/unexpected.a"
 extract_package forbidden-static
 install -m 0644 /dev/null "${forbidden_file}"
 forbidden_manifest="${temporary}/forbidden-static-manifest.json"
 jq --arg sha "$(sha256sum "${forbidden_file}" | awk '{print $1}')" \
-    '.files += [{path:"/usr/lib/zentty/unexpected.a",type:"file",mode:"644",
+    '.files += [{path:"/usr/lib/tornadotty/unexpected.a",type:"file",mode:"644",
       owner_component:"negative-fixture",sha256:$sha}]' \
     "${manifest}" >"${forbidden_manifest}"
 expect_rejected forbidden-static "forbidden payload file" "${forbidden_manifest}"

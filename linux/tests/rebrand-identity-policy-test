@@ -43,4 +43,12 @@ jq '(.boundaries[] | select(.id == "state-directory")).canonical = "$XDG_STATE_H
     "${source_policy}" >"${temporary}/internal-namespace-migration.json"
 expect_failure "${temporary}/internal-namespace-migration.json"
 
+jq '(.boundaries[] | select(.id == "private-install-layout")).canonical = "/usr/lib/zentty"' \
+    "${source_policy}" >"${temporary}/legacy-install-layout.json"
+expect_failure "${temporary}/legacy-install-layout.json"
+
+jq '(.boundaries[] | select(.id == "public-cli")).action = "compatibility-alias"' \
+    "${source_policy}" >"${temporary}/legacy-public-alias.json"
+expect_failure "${temporary}/legacy-public-alias.json"
+
 echo "rebrand-identity-policy-test: PASS"

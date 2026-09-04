@@ -172,9 +172,9 @@ chmod 0644 "${package_root}/usr/share/doc/tornadotty/changelog.Debian.gz"
 # The loader token must remain literal for the dynamic linker.
 # shellcheck disable=SC2016
 patchelf --set-rpath '$ORIGIN' \
-    "${package_root}/usr/lib/zentty/lib/libghostty-gtk-embed.so"
+    "${package_root}/usr/lib/tornadotty/lib/libghostty-gtk-embed.so"
 # shellcheck disable=SC2016
-[[ "$(patchelf --print-rpath "${package_root}/usr/lib/zentty/lib/libghostty-gtk-embed.so")" == '$ORIGIN' ]] ||
+[[ "$(patchelf --print-rpath "${package_root}/usr/lib/tornadotty/lib/libghostty-gtk-embed.so")" == '$ORIGIN' ]] ||
     fail "Ghostty package RUNPATH normalization failed"
 
 # ReleaseSafe deliberately retains enough debug information for developer
@@ -205,11 +205,11 @@ EOF
 shlibs_output="$(
     cd "${work_root}"
     dpkg-shlibdeps --warnings=0 -O \
-        -l"${package_root}/usr/lib/zentty/lib" \
-        -e"${package_root}/usr/lib/zentty/bin/zentty-linux" \
-        -e"${package_root}/usr/lib/zentty/bin/zentty" \
-        -e"${package_root}/usr/lib/zentty/lib/libghostty-gtk-embed.so" \
-        -e"${package_root}/usr/lib/zentty/lib/libgtk4-layer-shell.so"
+        -l"${package_root}/usr/lib/tornadotty/lib" \
+        -e"${package_root}/usr/lib/tornadotty/bin/tornadotty" \
+        -e"${package_root}/usr/lib/tornadotty/bin/tornadotty-cli" \
+        -e"${package_root}/usr/lib/tornadotty/lib/libghostty-gtk-embed.so" \
+        -e"${package_root}/usr/lib/tornadotty/lib/libgtk4-layer-shell.so"
 )"
 derived_dependencies="$(sed -n 's/^shlibs:Depends=//p' <<<"${shlibs_output}")"
 [[ -n "${derived_dependencies}" ]] || fail "dpkg-shlibdeps produced no dependency metadata"

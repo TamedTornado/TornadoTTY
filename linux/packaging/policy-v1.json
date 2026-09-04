@@ -18,11 +18,11 @@
     "display_backends": ["wayland", "x11"]
   },
   "layout": {
-    "private_root": "/usr/lib/zentty",
+    "private_root": "/usr/lib/tornadotty",
     "public_cli": "/usr/bin/tornadotty-cli",
-    "public_cli_target": "../lib/zentty/bin/zentty",
+    "public_cli_target": "../lib/tornadotty/bin/tornadotty-cli",
     "public_gui": "/usr/bin/tornadotty",
-    "public_gui_target": "../lib/zentty/bin/zentty-linux",
+    "public_gui_target": "../lib/tornadotty/bin/tornadotty",
     "desktop_entry": "/usr/share/applications/com.tamedtornado.tornadotty.desktop",
     "appstream_metadata": "/usr/share/metainfo/com.tamedtornado.tornadotty.metainfo.xml",
     "icon": "/usr/share/icons/hicolor/256x256/apps/com.tamedtornado.tornadotty.png",

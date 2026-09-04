@@ -22,7 +22,7 @@ package="${work}/tornadotty.deb"
 manifest="${work}/manifest.json"
 mkdir -p \
     "${package_root}/DEBIAN" \
-    "${package_root}/usr/lib/zentty/bin" \
+    "${package_root}/usr/lib/tornadotty/bin" \
     "${package_root}/usr/bin" \
     "${install_root}/var/lib/dpkg" \
     "${install_root}/var/log" \
@@ -37,14 +37,14 @@ Architecture: amd64
 Maintainer: Test <test@example.invalid>
 Description: installed-root contract fixture
 EOF
-cat >"${package_root}/usr/lib/zentty/bin/zentty" <<'EOF'
+cat >"${package_root}/usr/lib/tornadotty/bin/tornadotty" <<'EOF'
 #!/bin/sh
 printf 'fixture-installed-product\n'
 EOF
-chmod 0755 "${package_root}/usr/lib/zentty/bin/zentty"
-ln -s ../lib/zentty/bin/zentty "${package_root}/usr/bin/zentty"
+chmod 0755 "${package_root}/usr/lib/tornadotty/bin/tornadotty"
+ln -s ../lib/tornadotty/bin/tornadotty "${package_root}/usr/bin/tornadotty"
 dpkg-deb --root-owner-group --build "${package_root}" "${package}" >/dev/null
-fixture_sha="$(sha256sum "${package_root}/usr/lib/zentty/bin/zentty" | awk '{print $1}')"
+fixture_sha="$(sha256sum "${package_root}/usr/lib/tornadotty/bin/tornadotty" | awk '{print $1}')"
 jq -n --arg sha "${fixture_sha}" '
   {
     schema_version:1,
@@ -53,8 +53,8 @@ jq -n --arg sha "${fixture_sha}" '
     architecture:"amd64",
     zentty_revision:"0123456789abcdef0123456789abcdef01234567",
     files:[
-      {path:"/usr/bin/zentty",type:"symlink",mode:"0777",target:"../lib/zentty/bin/zentty"},
-      {path:"/usr/lib/zentty/bin/zentty",type:"file",mode:"755",sha256:$sha}
+      {path:"/usr/bin/tornadotty",type:"symlink",mode:"0777",target:"../lib/tornadotty/bin/tornadotty"},
+      {path:"/usr/lib/tornadotty/bin/tornadotty",type:"file",mode:"755",sha256:$sha}
     ]
   }
 ' >"${manifest}"
@@ -75,11 +75,11 @@ if "${helper}" prepare "${install_root}" "${package}" "${work}/wrong-manifest.js
 fi
 
 "${helper}" prepare "${install_root}" "${package}" "${manifest}" >/dev/null
-if "${helper}" exec "${install_root}" -- /usr/bin/zentty >/dev/null 2>&1; then
+if "${helper}" exec "${install_root}" -- /usr/bin/tornadotty >/dev/null 2>&1; then
     fail "execution outside a controlled environment was accepted"
 fi
 output="$("${repo_root}/linux/tests/isolated-session" \
-    "${helper}" exec "${install_root}" -- /usr/bin/zentty)"
+    "${helper}" exec "${install_root}" -- /usr/bin/tornadotty)"
 grep -Fxq fixture-installed-product <<<"${output}" ||
     fail "installed executable did not run in the controlled namespace"
 "${repo_root}/linux/tests/isolated-session" \
@@ -92,16 +92,16 @@ jq '.helper_sha256 = "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffff
     "${work}/marker.json" >"${install_root}/.zentty-installed-runtime.json"
 chmod 0444 "${install_root}/.zentty-installed-runtime.json"
 if "${repo_root}/linux/tests/isolated-session" \
-    "${helper}" exec "${install_root}" -- /usr/bin/zentty >/dev/null 2>&1; then
+    "${helper}" exec "${install_root}" -- /usr/bin/tornadotty >/dev/null 2>&1; then
     fail "stale helper identity was accepted"
 fi
 chmod 0644 "${install_root}/.zentty-installed-runtime.json"
 cp "${work}/marker.json" "${install_root}/.zentty-installed-runtime.json"
 chmod 0444 "${install_root}/.zentty-installed-runtime.json"
 
-printf 'tampered\n' >>"${install_root}/usr/lib/zentty/bin/zentty"
+printf 'tampered\n' >>"${install_root}/usr/lib/tornadotty/bin/tornadotty"
 if "${repo_root}/linux/tests/isolated-session" \
-    "${helper}" exec "${install_root}" -- /usr/bin/zentty >/dev/null 2>&1; then
+    "${helper}" exec "${install_root}" -- /usr/bin/tornadotty >/dev/null 2>&1; then
     fail "modified installed payload was accepted"
 fi
 

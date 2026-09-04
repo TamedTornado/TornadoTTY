@@ -42,13 +42,13 @@
     },
     {
       "id": "public-cli",
-      "action": "compatibility-alias",
+      "action": "rename",
       "legacy": "/usr/bin/zentty",
       "canonical": "/usr/bin/tornadotty-cli"
     },
     {
       "id": "public-gui",
-      "action": "compatibility-alias",
+      "action": "rename",
       "legacy": "/usr/bin/zentty-linux",
       "canonical": "/usr/bin/tornadotty"
     },
@@ -84,9 +84,9 @@
     },
     {
       "id": "private-install-layout",
-      "action": "retain-internal-compatibility",
+      "action": "rename",
       "legacy": "/usr/lib/zentty",
-      "canonical": "/usr/lib/zentty"
+      "canonical": "/usr/lib/tornadotty"
     },
     {
       "id": "upstream-name",

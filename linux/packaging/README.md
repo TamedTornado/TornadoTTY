@@ -106,15 +106,19 @@ not a skip. `linux/tests/qualify-local` remains the authoritative entry point.
 
 ## Filesystem model
 
-The relocatable application tree is installed below `/usr/lib/zentty`. Relative
-links in `/usr/bin` expose the GUI and CLI without breaking the application's
-sibling-binary, private-library, and resource lookup. Desktop integration,
+The relocatable application tree is installed below `/usr/lib/tornadotty`.
+Relative links expose only `/usr/bin/tornadotty` and
+`/usr/bin/tornadotty-cli`; packages must not recreate `/usr/bin/zentty`,
+`/usr/bin/zentty-linux`, or `/usr/lib/zentty`. This keeps the installed product
+identity distinct without renaming source crates, environment variables, or
+user-state namespaces that remain compatibility contracts. Desktop integration,
 compiled terminfo, icons, and copyright material use standard `/usr/share`
 locations. Ghostty's runtime shell-integration and theme resources live at
 `/usr/share/ghostty`, adjacent to the compiled terminfo sentinel Ghostty uses
-to discover that directory. Zentty's product-specific shell integration and
-theme catalog remain below `/usr/lib/zentty/share/zentty`; the two resource
-roots serve separate consumers and neither substitutes for the other.
+to discover that directory. Product-specific shell integration and the theme
+catalog remain in the internal `share/zentty` subtree below
+`/usr/lib/tornadotty`; the two resource roots serve separate consumers and
+neither substitutes for the other.
 
 Package-manager removal never deletes files below a user's XDG directories.
 Zentty may later expose a separate, explicit per-user cleanup command; it must

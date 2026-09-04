@@ -81,7 +81,7 @@ jq '.entries += [{"id":"secret","kind":"file","source":"secret","destination":"/
     "${source_manifest}" >"${temporary}/unsafe-user-destination.json"
 expect_manifest_rejected unsafe-user-destination "manifest schema or path safety failed"
 
-jq '.entries[0].target = "/usr/lib/zentty/bin/zentty"' \
+jq '.entries[0].target = "/usr/lib/tornadotty/bin/tornadotty-cli"' \
     "${source_manifest}" >"${temporary}/absolute-symlink.json"
 expect_manifest_rejected absolute-symlink "manifest schema or path safety failed"
 
@@ -104,6 +104,14 @@ expect_manifest_rejected world-writable-executable "manifest schema or path safe
 jq '.entries[2].mystery = true' \
     "${source_manifest}" >"${temporary}/unknown-entry-key.json"
 expect_manifest_rejected unknown-entry-key "manifest schema or path safety failed"
+
+jq '.entries += [{"id":"legacy-gui","kind":"symlink","owner_component":"entry-points","destination":"/usr/bin/zentty-linux","target":"../lib/tornadotty/bin/tornadotty"}]' \
+    "${source_manifest}" >"${temporary}/legacy-public-entry.json"
+expect_manifest_rejected legacy-public-entry "manifest schema or path safety failed"
+
+jq '(.entries[] | select(.id == "private-gui")).destination = "/usr/lib/zentty/bin/zentty-linux"' \
+    "${source_manifest}" >"${temporary}/legacy-private-root.json"
+expect_manifest_rejected legacy-private-root "manifest destinations or required entry details drifted"
 
 jq '.entries |= map(select(.id != "copyright"))' \
     "${source_manifest}" >"${temporary}/missing-license.json"

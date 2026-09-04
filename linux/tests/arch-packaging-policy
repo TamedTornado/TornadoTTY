@@ -36,8 +36,12 @@ jq -e '
   .schema_version == 1 and .closed_world == true and
   ([.entries[].id] | length == (unique | length)) and
   ([.entries[].destination] | length == (unique | length)) and
-  any(.entries[]; .id == "private-gui" and .destination == "/usr/lib/zentty/bin/zentty-linux") and
-  any(.entries[]; .id == "private-cli" and .destination == "/usr/lib/zentty/bin/zentty") and
+  any(.entries[]; .id == "private-gui" and .destination == "/usr/lib/tornadotty/bin/tornadotty") and
+  any(.entries[]; .id == "private-cli" and .destination == "/usr/lib/tornadotty/bin/tornadotty-cli") and
+  all(.entries[];
+    (.destination != "/usr/bin/zentty") and
+    (.destination != "/usr/bin/zentty-linux") and
+    (.destination | startswith("/usr/lib/zentty") | not)) and
   any(.entries[]; .id == "desktop-entry") and
   any(.entries[]; .id == "application-icon") and
   any(.entries[]; .id == "third-party-notices") and

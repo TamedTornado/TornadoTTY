@@ -15,26 +15,29 @@ fail() {
 make_fixture() {
     local name="$1" mode="${2:-valid}"
     local root="${temporary}/${name}/root"
-    local artifact="${temporary}/${name}/zentty-0.1.0-1-x86_64.pkg.tar.zst"
-    local manifest="${temporary}/${name}/zentty-0.1.0-1-x86_64.manifest.json"
-    local provenance="${temporary}/${name}/zentty-0.1.0-1-x86_64.provenance.json"
-    mkdir -p "${root}/usr/lib/zentty/lib" "${root}/usr/bin"
-    cp /bin/true "${root}/usr/lib/zentty/lib/libghostty-gtk-embed.so"
+    local artifact="${temporary}/${name}/tornadotty-0.1.0-1-x86_64.pkg.tar.zst"
+    local manifest="${temporary}/${name}/tornadotty-0.1.0-1-x86_64.manifest.json"
+    local provenance="${temporary}/${name}/tornadotty-0.1.0-1-x86_64.provenance.json"
+    mkdir -p "${root}/usr/lib/tornadotty/lib" "${root}/usr/bin"
+    cp /bin/true "${root}/usr/lib/tornadotty/lib/libghostty-gtk-embed.so"
     # The loader token is intentionally literal.
     # shellcheck disable=SC2016
-    patchelf --set-rpath '$ORIGIN' "${root}/usr/lib/zentty/lib/libghostty-gtk-embed.so"
+    patchelf --set-rpath '$ORIGIN' "${root}/usr/lib/tornadotty/lib/libghostty-gtk-embed.so"
     if [[ "${mode}" == legitimate-home-pattern ]]; then
-        printf '/home//Users/unsafe\n' >>"${root}/usr/lib/zentty/lib/libghostty-gtk-embed.so"
+        printf '/home//Users/unsafe\n' >>"${root}/usr/lib/tornadotty/lib/libghostty-gtk-embed.so"
     elif [[ "${mode}" == leaked-build-path ]]; then
         printf '/home/jason/Projects/zentty-release\n' \
-            >>"${root}/usr/lib/zentty/lib/libghostty-gtk-embed.so"
+            >>"${root}/usr/lib/tornadotty/lib/libghostty-gtk-embed.so"
         # Keep substantial output after the match so grep -q under pipefail
         # would reproduce the false-negative behavior found on Omarchy.
         head -c 1048576 /dev/zero | tr '\0' x \
-            >>"${root}/usr/lib/zentty/lib/libghostty-gtk-embed.so"
+            >>"${root}/usr/lib/tornadotty/lib/libghostty-gtk-embed.so"
     fi
-    chmod 0644 "${root}/usr/lib/zentty/lib/libghostty-gtk-embed.so"
-    ln -s ../lib/zentty/lib/libghostty-gtk-embed.so "${root}/usr/bin/zentty-linux"
+    chmod 0644 "${root}/usr/lib/tornadotty/lib/libghostty-gtk-embed.so"
+    ln -s ../lib/tornadotty/lib/libghostty-gtk-embed.so "${root}/usr/bin/tornadotty"
+    if [[ "${mode}" == legacy-path ]]; then
+        ln -s tornadotty "${root}/usr/bin/zentty-linux"
+    fi
     [[ "${mode}" != extra ]] || printf 'undeclared\n' >"${root}/usr/extra"
     {
         printf 'pkgname = tornadotty\n'
@@ -55,14 +58,19 @@ make_fixture() {
         bsdtar -cf - .PKGINFO usr | zstd -q -T1 -o "${artifact}"
     )
     jq -n \
-        --arg file_sha "$(sha256sum "${root}/usr/lib/zentty/lib/libghostty-gtk-embed.so" | awk '{print $1}')" '
+        --arg file_sha "$(sha256sum "${root}/usr/lib/tornadotty/lib/libghostty-gtk-embed.so" | awk '{print $1}')" \
+        --arg legacy "$([[ "${mode}" == legacy-path ]] && echo true || echo false)" '
       {schema_version:1,package:"tornadotty",version:"0.1.0",architecture:"x86_64",
-       package_family:"arch",zentty_revision:("a" * 40),files:[
-        {path:"/usr/bin/zentty-linux",type:"symlink",mode:"0777",
-         owner_component:"entry-points",target:"../lib/zentty/lib/libghostty-gtk-embed.so"},
-        {path:"/usr/lib/zentty/lib/libghostty-gtk-embed.so",type:"file",mode:"644",
+       package_family:"arch",zentty_revision:("a" * 40),files:([
+        {path:"/usr/bin/tornadotty",type:"symlink",mode:"0777",
+         owner_component:"entry-points",target:"../lib/tornadotty/lib/libghostty-gtk-embed.so"},
+        {path:"/usr/lib/tornadotty/lib/libghostty-gtk-embed.so",type:"file",mode:"644",
          owner_component:"ghostty-embedding",sha256:$file_sha}
-       ]}' >"${manifest}"
+       ] + (if $ARGS.named.legacy == "true" then
+         [{path:"/usr/bin/zentty-linux",type:"symlink",mode:"0777",
+           owner_component:"negative-fixture",target:"tornadotty"}]
+         else [] end))}' \
+        >"${manifest}"
     jq -n \
         --arg artifact "$(basename "${artifact}")" \
         --arg artifact_sha "$(sha256sum "${artifact}" | awk '{print $1}')" \
@@ -84,9 +92,9 @@ make_fixture() {
 expect_failure() {
     local name="$1" expected="$2"
     if "${subject}" \
-        "${temporary}/${name}/zentty-0.1.0-1-x86_64.pkg.tar.zst" \
-        "${temporary}/${name}/zentty-0.1.0-1-x86_64.manifest.json" \
-        "${temporary}/${name}/zentty-0.1.0-1-x86_64.provenance.json" \
+        "${temporary}/${name}/tornadotty-0.1.0-1-x86_64.pkg.tar.zst" \
+        "${temporary}/${name}/tornadotty-0.1.0-1-x86_64.manifest.json" \
+        "${temporary}/${name}/tornadotty-0.1.0-1-x86_64.provenance.json" \
         >"${temporary}/${name}.log" 2>&1; then
         fail "${name} unexpectedly passed"
     fi
@@ -96,15 +104,15 @@ expect_failure() {
 
 make_fixture valid
 "${subject}" \
-    "${temporary}/valid/zentty-0.1.0-1-x86_64.pkg.tar.zst" \
-    "${temporary}/valid/zentty-0.1.0-1-x86_64.manifest.json" \
-    "${temporary}/valid/zentty-0.1.0-1-x86_64.provenance.json" >/dev/null
+    "${temporary}/valid/tornadotty-0.1.0-1-x86_64.pkg.tar.zst" \
+    "${temporary}/valid/tornadotty-0.1.0-1-x86_64.manifest.json" \
+    "${temporary}/valid/tornadotty-0.1.0-1-x86_64.provenance.json" >/dev/null
 
 make_fixture legitimate-home-pattern legitimate-home-pattern
 "${subject}" \
-    "${temporary}/legitimate-home-pattern/zentty-0.1.0-1-x86_64.pkg.tar.zst" \
-    "${temporary}/legitimate-home-pattern/zentty-0.1.0-1-x86_64.manifest.json" \
-    "${temporary}/legitimate-home-pattern/zentty-0.1.0-1-x86_64.provenance.json" \
+    "${temporary}/legitimate-home-pattern/tornadotty-0.1.0-1-x86_64.pkg.tar.zst" \
+    "${temporary}/legitimate-home-pattern/tornadotty-0.1.0-1-x86_64.manifest.json" \
+    "${temporary}/legitimate-home-pattern/tornadotty-0.1.0-1-x86_64.provenance.json" \
     >/dev/null
 make_fixture leaked-build-path leaked-build-path
 expect_failure leaked-build-path 'build path leaked into ELF'
@@ -115,12 +123,14 @@ make_fixture missing-dependency missing-dependency
 expect_failure missing-dependency 'dependencies do not match'
 make_fixture missing-rename-metadata missing-rename-metadata
 expect_failure missing-rename-metadata 'legacy package replacement is missing'
+make_fixture legacy-path legacy-path
+expect_failure legacy-path 'legacy Zentty install path leaked'
 make_fixture stale
 jq '.artifact.sha256 = ("0" * 64)' \
-    "${temporary}/stale/zentty-0.1.0-1-x86_64.provenance.json" \
+    "${temporary}/stale/tornadotty-0.1.0-1-x86_64.provenance.json" \
     >"${temporary}/stale/provenance.tmp"
 mv "${temporary}/stale/provenance.tmp" \
-    "${temporary}/stale/zentty-0.1.0-1-x86_64.provenance.json"
+    "${temporary}/stale/tornadotty-0.1.0-1-x86_64.provenance.json"
 expect_failure stale 'provenance is incomplete or stale'
 
 echo "arch-package-audit-test: PASS"

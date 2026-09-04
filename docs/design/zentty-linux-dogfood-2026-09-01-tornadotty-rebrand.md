@@ -144,8 +144,9 @@
   recognized the compatibility command `/usr/bin/zentty-linux`, while the
   canonical desktop entry launches `/usr/bin/tornadotty`. The final installed
   path inventory also still queried the obsolete package name `zentty`.
-  Both checks now recognize/require the canonical public identities while
-  retaining the old executable solely as a tested compatibility alias.
+  At that point both checks recognized the canonical public identities while
+  retaining the old executable as a compatibility alias. The GH-166 decision
+  below supersedes that installed-alias policy.
 - The apparent hang was needlessly opaque: product output was redirected to a
   temporary file, PID discovery was silent, and durable evidence was copied
   only after the failure trap ran. The journey now emits timestamped
@@ -199,3 +200,28 @@
   over-limit document. The fixture now includes every General-owned field,
   keeping the exact-limit rewrite size-neutral while retaining the one-byte-over
   rejection. PASS: the complete config-store module now runs **40/40**.
+
+## 2026-09-04 installed-name correction (GH-166)
+
+- Dogfooding exposed that the installed TornadoTTY launcher still resolved to
+  `/usr/lib/zentty/bin/zentty-linux`. The earlier rebrand deliberately retained
+  that path, but it is an observable installed-product name rather than a
+  source-only implementation detail. GH-166 supersedes that boundary decision.
+- The canonical private application root is now `/usr/lib/tornadotty`; its GUI
+  and automation executables are `bin/tornadotty` and
+  `bin/tornadotty-cli`. The only public command links are
+  `/usr/bin/tornadotty` and `/usr/bin/tornadotty-cli`.
+- Rust crate names, `ZENTTY_*` environment variables, XDG state directories,
+  log prefixes, and internal `share/zentty` and `libexec/zentty` subtrees remain
+  unchanged. They are compatibility or implementation contracts and were not
+  swept into a cosmetic rename.
+- `Provides`, `Conflicts`, and `Replaces` metadata still names the old `zentty`
+  package so package managers can perform a clean upgrade. The lifecycle
+  fixture now owns the two old command aliases and an old-root sentinel, and
+  requires all three to disappear on upgrade without touching user data.
+- Focused contract results: identity policy PASS; identity negative fixtures
+  PASS; Debian packaging policy PASS; packaging negative fixtures PASS; Arch
+  packaging policy PASS; Arch artifact-auditor fixtures PASS; isolated
+  installed-product-root fixture PASS; `agent_runtime` path-resolution tests
+  PASS. Real Debian and Arch package receipts are still required after a clean
+  commit; these focused results are not a release-qualification claim.

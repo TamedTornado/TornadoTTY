@@ -171,9 +171,9 @@ for file in "${primary_files[@]}"; do
             isolated_root="${diagnostic_directory}/isolated-root"
             dpkg-deb -x "${primary_output}/${file}" "${primary_root}"
             dpkg-deb -x "${isolated}/build/isolated-package/${file}" "${isolated_root}"
-            cp -- "${primary_root}/usr/lib/zentty/lib/libghostty-gtk-embed.so" \
+            cp -- "${primary_root}/usr/lib/tornadotty/lib/libghostty-gtk-embed.so" \
                 "${diagnostic_directory}/primary-libghostty-gtk-embed.so"
-            cp -- "${isolated_root}/usr/lib/zentty/lib/libghostty-gtk-embed.so" \
+            cp -- "${isolated_root}/usr/lib/tornadotty/lib/libghostty-gtk-embed.so" \
                 "${diagnostic_directory}/isolated-libghostty-gtk-embed.so"
             readelf -n "${diagnostic_directory}/primary-libghostty-gtk-embed.so" \
                 >"${diagnostic_directory}/primary-libghostty.notes.txt"

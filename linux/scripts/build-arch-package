@@ -144,7 +144,7 @@ ln -s ../x/xterm-ghostty "${package_root}/usr/share/terminfo/g/ghostty"
 # changelog path. The common manifest's Debian-only generated entry is omitted.
 # The loader token must remain literal.
 # shellcheck disable=SC2016
-patchelf --set-rpath '$ORIGIN' "${package_root}/usr/lib/zentty/lib/libghostty-gtk-embed.so"
+patchelf --set-rpath '$ORIGIN' "${package_root}/usr/lib/tornadotty/lib/libghostty-gtk-embed.so"
 while IFS= read -r candidate; do
     file "${candidate}" | grep -Fq ELF && strip --strip-debug "${candidate}"
 done < <(find "${package_root}" -type f -print | LC_ALL=C sort)
@@ -183,10 +183,10 @@ while IFS= read -r elf; do
         printf '%s\n' "${owner}" >>"${derived_rows}"
     done < <(readelf -d "${elf}" | sed -n 's/.*Shared library: \[\([^]]*\)\].*/\1/p')
 done < <(printf '%s\n' \
-    "${package_root}/usr/lib/zentty/bin/zentty-linux" \
-    "${package_root}/usr/lib/zentty/bin/zentty" \
-    "${package_root}/usr/lib/zentty/lib/libghostty-gtk-embed.so" \
-    "${package_root}/usr/lib/zentty/lib/libgtk4-layer-shell.so")
+    "${package_root}/usr/lib/tornadotty/bin/tornadotty" \
+    "${package_root}/usr/lib/tornadotty/bin/tornadotty-cli" \
+    "${package_root}/usr/lib/tornadotty/lib/libghostty-gtk-embed.so" \
+    "${package_root}/usr/lib/tornadotty/lib/libgtk4-layer-shell.so")
 mapfile -t derived_dependencies < <(LC_ALL=C sort -u "${derived_rows}")
 [[ "$(printf '%s\n' "${derived_dependencies[@]}")" == \
    "$(printf '%s\n' "${required_dependencies[@]}")" ]] || {

@@ -68,16 +68,20 @@ while IFS= read -r path; do
     fi
 done <"${actual_paths}"
 
-ghostty="${root}/usr/lib/zentty/lib/libghostty-gtk-embed.so"
+for legacy in /usr/lib/zentty /usr/bin/zentty /usr/bin/zentty-linux; do
+    [[ ! -e "${root}${legacy}" && ! -L "${root}${legacy}" ]] ||
+        fail "legacy Zentty install path leaked into TornadoTTY package: ${legacy}"
+done
+ghostty="${root}/usr/lib/tornadotty/lib/libghostty-gtk-embed.so"
 # The loader token must remain literal in the audited ELF.
 # shellcheck disable=SC2016
 [[ "$(patchelf --print-rpath "${ghostty}")" == '$ORIGIN' ]] ||
     fail "Ghostty RUNPATH is not install-relative"
 for elf in \
-    "${root}/usr/lib/zentty/bin/zentty-linux" \
-    "${root}/usr/lib/zentty/bin/zentty" \
+    "${root}/usr/lib/tornadotty/bin/tornadotty" \
+    "${root}/usr/lib/tornadotty/bin/tornadotty-cli" \
     "${ghostty}" \
-    "${root}/usr/lib/zentty/lib/libgtk4-layer-shell.so"; do
+    "${root}/usr/lib/tornadotty/lib/libgtk4-layer-shell.so"; do
     file "${elf}" | grep -Fq ELF || fail "expected ELF payload is missing: ${elf}"
     readelf -lW "${elf}" | grep -Fq GNU_RELRO || fail "RELRO missing: ${elf}"
     ! readelf -lW "${elf}" | grep -F GNU_STACK | grep -Fq RWE || fail "executable stack: ${elf}"

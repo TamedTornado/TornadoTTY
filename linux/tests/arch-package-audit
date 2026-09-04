@@ -76,6 +76,10 @@ cmp -s "${temporary}/archive-paths" "${temporary}/manifest-paths" ||
     fail "archive contains missing or undeclared payload files"
 [[ ! -e "${temporary}/usr/share/doc/tornadotty/changelog.Debian.gz" ]] ||
     fail "Debian changelog leaked into Arch package"
+for legacy in /usr/lib/zentty /usr/bin/zentty /usr/bin/zentty-linux; do
+    [[ ! -e "${temporary}${legacy}" && ! -L "${temporary}${legacy}" ]] ||
+        fail "legacy Zentty install path leaked into TornadoTTY package: ${legacy}"
+done
 
 while IFS= read -r path; do
     absolute="${temporary}${path}"
@@ -93,7 +97,7 @@ while IFS= read -r path; do
 done < <(jq -r '.files[] | select(.type == "file") | .path' "${manifest}")
 # The expected loader token is intentionally literal.
 # shellcheck disable=SC2016
-[[ "$(patchelf --print-rpath "${temporary}/usr/lib/zentty/lib/libghostty-gtk-embed.so")" == '$ORIGIN' ]] ||
+[[ "$(patchelf --print-rpath "${temporary}/usr/lib/tornadotty/lib/libghostty-gtk-embed.so")" == '$ORIGIN' ]] ||
     fail "private Ghostty RUNPATH is not normalized"
 
 jq -e \

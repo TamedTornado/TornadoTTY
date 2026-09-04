@@ -88,25 +88,30 @@ if [[ -n "${previous_package}" ]]; then
     (( version_order > 0 )) ||
         fail "current package does not sort newer than upgrade fixture"
     pacman_root --noconfirm -U "${previous_package}" >>"${log}" 2>&1
-    [[ "$(pacman_root -Q zentty | awk '{print $2}')" == "${previous_version}" ]] ||
+    previous_name="$(bsdtar -xOf "${previous_package}" .PKGINFO | sed -n 's/^pkgname = //p' | head -1)"
+    [[ "$(pacman_root -Q "${previous_name}" | awk '{print $2}')" == "${previous_version}" ]] ||
         fail "previous package did not install at its declared version"
 fi
 
 pacman_root --noconfirm -U "${package}" >>"${log}" 2>&1
 current_version="$(jq -r '.package_version + "-1"' "${provenance}")"
-[[ "$(pacman_root -Q zentty | awk '{print $2}')" == "${current_version}" ]] ||
+[[ "$(pacman_root -Q tornadotty | awk '{print $2}')" == "${current_version}" ]] ||
     fail "current package did not install at its provenance version"
-pacman_root -Qkk zentty >>"${log}" 2>&1
+pacman_root -Qkk tornadotty >>"${log}" 2>&1
 grep -Fq '0 altered files' "${log}" || fail "installed package payload differs"
+for legacy_path in /usr/bin/zentty /usr/bin/zentty-linux /usr/lib/zentty; do
+    [[ ! -e "${root}${legacy_path}" && ! -L "${root}${legacy_path}" ]] ||
+        fail "legacy installed path remains after upgrade: ${legacy_path}"
+done
 
 help_output="${temporary}/help"
-LD_LIBRARY_PATH="${root}/usr/lib/zentty/lib" \
-    "${root}/usr/lib/zentty/bin/zentty-linux" --help >"${help_output}"
-grep -Fxq 'Usage: zentty-linux [OPTIONS]' "${help_output}" ||
+LD_LIBRARY_PATH="${root}/usr/lib/tornadotty/lib" \
+    "${root}/usr/lib/tornadotty/bin/tornadotty" --help >"${help_output}"
+grep -Fxq 'Usage: tornadotty [OPTIONS]' "${help_output}" ||
     fail "installed application help contract failed"
 
-pacman_root --noconfirm -R zentty >>"${log}" 2>&1
-if pacman_root -Q zentty >/dev/null 2>&1; then
+pacman_root --noconfirm -R tornadotty >>"${log}" 2>&1
+if pacman_root -Q tornadotty >/dev/null 2>&1; then
     fail "package remains registered after uninstall"
 fi
 while IFS= read -r path; do

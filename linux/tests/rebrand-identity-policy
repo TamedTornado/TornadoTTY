@@ -30,7 +30,6 @@ jq -e '
   ([.boundaries[].action] - [
     "rename",
     "replace-package",
-    "compatibility-alias",
     "retain-internal-compatibility",
     "nominative-attribution"
   ] | length == 0) and
@@ -49,6 +48,18 @@ jq -e '
     "upstream-name"
   ] - [.boundaries[].id] | length == 0) and
   (all(.boundaries[]; (.legacy | length > 0) and (.canonical | length > 0))) and
+  (first(.boundaries[] | select(.id == "public-cli"))) == {
+    id:"public-cli",action:"rename",legacy:"/usr/bin/zentty",
+    canonical:"/usr/bin/tornadotty-cli"
+  } and
+  (first(.boundaries[] | select(.id == "public-gui"))) == {
+    id:"public-gui",action:"rename",legacy:"/usr/bin/zentty-linux",
+    canonical:"/usr/bin/tornadotty"
+  } and
+  (first(.boundaries[] | select(.id == "private-install-layout"))) == {
+    id:"private-install-layout",action:"rename",legacy:"/usr/lib/zentty",
+    canonical:"/usr/lib/tornadotty"
+  } and
   (all(.boundaries[] | select(.action == "retain-internal-compatibility");
     .legacy == .canonical))
 ' "${policy}" >/dev/null || fail "identity policy is incomplete or invalid"

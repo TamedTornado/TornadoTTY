@@ -6,9 +6,24 @@
   "derivation": "repack-current-candidate-payload",
   "purpose": "Exercise a real dpkg upgrade from the oldest lifecycle-contract fixture without storing a binary package in Git.",
   "package_delta": {
-    "added_owned_file": "/usr/lib/zentty/legacy-upgrade-fixture",
-    "added_owned_file_mode": "0644",
-    "added_owned_file_sha256": "a411c9a247b164bc70ef3cc1139e4dfe1adb05e549e1dd6b745b15df7257f933",
+    "legacy_owned_paths": [
+      {
+        "path": "/usr/lib/zentty/legacy-upgrade-fixture",
+        "kind": "file",
+        "mode": "0644",
+        "sha256": "a411c9a247b164bc70ef3cc1139e4dfe1adb05e549e1dd6b745b15df7257f933"
+      },
+      {
+        "path": "/usr/bin/zentty",
+        "kind": "symlink",
+        "target": "../lib/zentty/legacy-upgrade-fixture"
+      },
+      {
+        "path": "/usr/bin/zentty-linux",
+        "kind": "symlink",
+        "target": "../lib/zentty/legacy-upgrade-fixture"
+      }
+    ],
     "expected_after_upgrade": "REMOVED"
   },
   "user_data_contract": {

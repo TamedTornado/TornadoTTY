@@ -165,11 +165,10 @@ dpkg --root="${install_root}" --log="${install_root}/var/log/dpkg.log" \
 
 for required in \
     /usr/bin/tornadotty /usr/bin/tornadotty-cli \
-    /usr/bin/zentty /usr/bin/zentty-linux \
-    /usr/lib/zentty/lib/libghostty-gtk-embed.so \
-    /usr/lib/zentty/libexec/zentty/tmux-shim/tmux \
-    /usr/lib/zentty/libexec/zentty/agent-wrappers/codex/codex \
-    /usr/lib/zentty/share/zentty/shell-integration/zentty-bash-integration.bash \
+    /usr/lib/tornadotty/lib/libghostty-gtk-embed.so \
+    /usr/lib/tornadotty/libexec/zentty/tmux-shim/tmux \
+    /usr/lib/tornadotty/libexec/zentty/agent-wrappers/codex/codex \
+    /usr/lib/tornadotty/share/zentty/shell-integration/zentty-bash-integration.bash \
     /usr/share/ghostty/shell-integration/bash/ghostty.bash \
     /usr/share/terminfo/x/xterm-ghostty \
     /usr/share/applications/com.tamedtornado.tornadotty.desktop \
@@ -177,6 +176,10 @@ for required in \
     /usr/share/icons/hicolor/256x256/apps/com.tamedtornado.tornadotty.png; do
     [[ -e "${install_root}${required}" || -L "${install_root}${required}" ]] ||
         fail "installed resource is missing: ${required}"
+done
+for legacy in /usr/bin/zentty /usr/bin/zentty-linux /usr/lib/zentty; do
+    [[ ! -e "${install_root}${legacy}" && ! -L "${install_root}${legacy}" ]] ||
+        fail "legacy Zentty install path remains: ${legacy}"
 done
 desktop_entry="${install_root}/usr/share/applications/com.tamedtornado.tornadotty.desktop"
 appstream="${install_root}/usr/share/metainfo/com.tamedtornado.tornadotty.metainfo.xml"
@@ -257,14 +260,14 @@ trap 'status=$?; printf "line=%s status=%s\n" "${LINENO}" "${status}" >"${out}/$
     printf 'resources=%s\n' "${GHOSTTY_RESOURCES_DIR}"
     printf 'pwd=%s\n' "${PWD}"
 } >"${out}/${phase}-pane-${pane}.env"
-[[ "${ZENTTY_CLI_BIN}" == /usr/lib/zentty/bin/zentty ]]
-[[ "${ZENTTY_SHELL_INTEGRATION_DIR}" == /usr/lib/zentty/share/zentty/shell-integration ]]
+[[ "${ZENTTY_CLI_BIN}" == /usr/lib/tornadotty/bin/tornadotty-cli ]]
+[[ "${ZENTTY_SHELL_INTEGRATION_DIR}" == /usr/lib/tornadotty/share/zentty/shell-integration ]]
 [[ "${GHOSTTY_RESOURCES_DIR}" == /usr/share/ghostty ]]
 [[ "${TERM}" == xterm-ghostty ]]
 [[ -f /usr/share/ghostty/shell-integration/bash/ghostty.bash ]]
-[[ -f /usr/lib/zentty/share/zentty/shell-integration/zentty-bash-integration.bash ]]
-[[ -x /usr/lib/zentty/libexec/zentty/agent-wrappers/codex/codex ]]
-[[ -x /usr/lib/zentty/libexec/zentty/tmux-shim/tmux ]]
+[[ -f /usr/lib/tornadotty/share/zentty/shell-integration/zentty-bash-integration.bash ]]
+[[ -x /usr/lib/tornadotty/libexec/zentty/agent-wrappers/codex/codex ]]
+[[ -x /usr/lib/tornadotty/libexec/zentty/tmux-shim/tmux ]]
 
 if mkdir "${out}/${phase}-leader" 2>/dev/null; then
     "${ZENTTY_CLI_BIN}" list panes --json >"${out}/${phase}-panes-before.json"
@@ -279,7 +282,7 @@ if mkdir "${out}/${phase}-leader" 2>/dev/null; then
         jq -e '
             any(.hooks.sessionStart[]; .command == "user-owned") and
             any(.hooks.sessionStart[];
-                (.command | contains("/usr/lib/zentty/bin/zentty") and
+                (.command | contains("/usr/lib/tornadotty/bin/tornadotty-cli") and
                     contains("ipc agent-event --adapter=cursor")))
         ' "${HOME}/.cursor/hooks.json" >/dev/null
         "${ZENTTY_CLI_BIN}" uninstall cursor-hooks
@@ -292,12 +295,12 @@ if mkdir "${out}/${phase}-leader" 2>/dev/null; then
             sleep 0.02
         done
         [[ "$(jq 'length' "${out}/first-panes-after.json")" -eq 3 ]]
-        tmux_path=/usr/lib/zentty/libexec/zentty/tmux-shim/tmux
+        tmux_path=/usr/lib/tornadotty/libexec/zentty/tmux-shim/tmux
         "${tmux_path}" list-panes -F '#{pane_id}' >"${out}/first-tmux-panes.txt"
         [[ "$(wc -l <"${out}/first-tmux-panes.txt")" -eq 3 ]]
         PATH="${out}/bin:/usr/bin:/bin" \
             ZENTTY_CONTROLLED_AGENT_PROFILE=codex-permission \
-            /usr/lib/zentty/libexec/zentty/agent-wrappers/codex/codex \
+            /usr/lib/tornadotty/libexec/zentty/agent-wrappers/codex/codex \
             --installed-package-probe
         printf 'passed\n' >"${out}/agent-wrapper.receipt"
     else
@@ -337,7 +340,7 @@ start_direct() {
         ZENTTY_INSTALLED_RECEIPTS="${receipts}" \
         ZENTTY_INSTALLED_PHASE="${phase}" \
         "${helper}" exec "${install_root}" -- \
-        /usr/bin/zentty-linux --state-directory "${state_dir}" \
+        /usr/bin/tornadotty --state-directory "${state_dir}" \
         --command "${receipts}/pane-child" >"${product_log}" 2>&1 &
     product_pid=$!
 }
@@ -366,9 +369,7 @@ find_product_pid() {
             cmdline="$(tr '\0' ' ' <"${path}" 2>/dev/null || true)"
             executable="${cmdline%% *}"
             if [[ ( "${executable}" == /usr/bin/tornadotty ||
-                    "${executable}" == /usr/bin/zentty-linux ||
-                    "${executable}" == tornadotty ||
-                    "${executable}" == zentty-linux ) &&
+                    "${executable}" == tornadotty ) &&
                 ( -z "${needle}" || "${cmdline}" == *"${needle}"* ) ]]; then
                 if [[ "${desktop_launch}" == true ]] &&
                     [[ -n "$(readlink "/proc/${pid}/exe" 2>/dev/null || true)" ]] &&
@@ -390,15 +391,15 @@ find_product_pid() {
         sleep 0.025
     done
     progress INFO "${current_phase}" \
-        "pid-not-found expected=/usr/bin/tornadotty|/usr/bin/zentty-linux needle=${needle:-desktop-environment}"
+        "pid-not-found expected=/usr/bin/tornadotty needle=${needle:-desktop-environment}"
     return 1
 }
 
 audit_process() {
     local pid="$1" phase="$2" exe environment_hash mappings_hash
     exe="$(readlink "/proc/${pid}/exe" 2>/dev/null || true)"
-    [[ "${exe}" == "${install_root}/usr/lib/zentty/bin/zentty-linux" ||
-        "${exe}" == /usr/lib/zentty/bin/zentty-linux ]] ||
+    [[ "${exe}" == "${install_root}/usr/lib/tornadotty/bin/tornadotty" ||
+        "${exe}" == /usr/lib/tornadotty/bin/tornadotty ]] ||
         fail "${phase} executable is not the dpkg-owned payload: ${exe}"
     if tr '\0' '\n' <"/proc/${pid}/environ" | grep -F "${repo_root}" >/dev/null; then
         fail "${phase} product environment leaked the source checkout"
@@ -419,7 +420,7 @@ audit_process() {
         >"${receipts}/${phase}-process.json"
 }
 
-phase_start first-launch "entry=/usr/bin/zentty-linux compatibility-alias=true"
+phase_start first-launch "entry=/usr/bin/tornadotty"
 start_direct first
 wait_for_file "${receipts}/first-ready" "first installed CLI mutation"
 first_product="$(find_product_pid)" || fail "first installed product PID was not observable"
@@ -567,7 +568,7 @@ phase_start desktop-entry "desktop-id=com.tamedtornado.tornadotty.desktop"
 cat >"${receipts}/desktop-shell" <<'DESKTOP_SHELL'
 #!/usr/bin/env bash
 set -euo pipefail
-[[ "${ZENTTY_CLI_BIN}" == /usr/lib/zentty/bin/zentty ]]
+[[ "${ZENTTY_CLI_BIN}" == /usr/lib/tornadotty/bin/tornadotty-cli ]]
 [[ "${GHOSTTY_RESOURCES_DIR}" == /usr/share/ghostty ]]
 printf 'ready\n' >"${ZENTTY_INSTALLED_RECEIPTS}/desktop-ready"
 for _ in {1..1200}; do

@@ -63,9 +63,10 @@ impl AgentRuntime {
             "zentty-linux: agent-runtime socket={}",
             socket_path.display()
         );
-        let cli_path = std::env::current_exe()
-            .map_err(|error| format!("could not resolve Tornado TTY executable: {error}"))?
-            .with_file_name("zentty");
+        let cli_path = installed_cli_path(
+            &std::env::current_exe()
+                .map_err(|error| format!("could not resolve Tornado TTY executable: {error}"))?,
+        );
         let wrapper_root = cli_path
             .parent()
             .and_then(std::path::Path::parent)
@@ -386,6 +387,15 @@ impl AgentRuntime {
     }
 }
 
+fn installed_cli_path(current_executable: &Path) -> PathBuf {
+    let packaged_cli = current_executable.with_file_name("tornadotty-cli");
+    if packaged_cli.is_file() {
+        packaged_cli
+    } else {
+        current_executable.with_file_name("zentty")
+    }
+}
+
 fn integration_enabled(
     states: &std::collections::BTreeMap<String, zentty_core::AgentIntegrationState>,
     tool: &str,
@@ -621,13 +631,33 @@ impl Drop for AgentRuntime {
 #[cfg(test)]
 mod tests {
     use super::{
-        agent_teams_environment, color_terminal_environment, installed_wrapper_directories,
-        instance_runtime_directory, integration_enabled, pane_path, shell_integration_environment,
-        wrapper_names,
+        agent_teams_environment, color_terminal_environment, installed_cli_path,
+        installed_wrapper_directories, instance_runtime_directory, integration_enabled, pane_path,
+        shell_integration_environment, wrapper_names,
     };
     use std::collections::BTreeMap;
     use std::fs;
     use std::os::unix::fs::PermissionsExt;
+
+    #[test]
+    fn installed_cli_is_the_tornadotty_sibling_of_the_resolved_gui() {
+        let root = std::env::temp_dir().join(format!(
+            "tornadotty-cli-selection-{}",
+            std::process::id()
+        ));
+        let bin = root.join("bin");
+        let gui = bin.join("tornadotty");
+        let packaged_cli = bin.join("tornadotty-cli");
+        let staging_cli = bin.join("zentty");
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&bin).unwrap();
+        fs::write(&staging_cli, "staging").unwrap();
+
+        assert_eq!(installed_cli_path(&gui), staging_cli);
+        fs::write(&packaged_cli, "packaged").unwrap();
+        assert_eq!(installed_cli_path(&gui), packaged_cli);
+        fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn explicit_off_is_the_only_state_that_removes_an_installed_wrapper() {
