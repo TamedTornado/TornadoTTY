@@ -54,7 +54,7 @@ Add or update an incident entry as facts become known. Preserve:
 
 ## Cross-repository completion rule
 
-The canonical report lives in `TamedTornado/zentty`; engine fixes may live in
+The canonical report lives in `TamedTornado/TornadoTTY`; engine fixes may live in
 `TamedTornado/ghostty`. A repair is complete only when:
 
 - the report describes the observation, evidence, repair, proof, and outcome;
@@ -68,6 +68,12 @@ If a follow-up is deliberately deferred, track it publicly and link it from the
 report.
 
 ## Integration qualification standard
+
+This section describes broader milestone/release qualification, not a gate
+to rerun for every bug fix or commit. Daily repairs use focused regressions and
+the affected existing integration journeys. GitHub CI checks our work; its
+public receipt is not an additional approval step. Keep unperformed live QA
+explicitly pending without blocking unrelated development.
 
 The Linux port must be externally auditable. A passing unit test is necessary
 but is not evidence that an embedded terminal works. Each milestone must retain

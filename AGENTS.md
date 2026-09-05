@@ -1,113 +1,132 @@
-# AGENTS.md
+# TornadoTTY contributor and agent instructions
+
+## Ownership and scope
+
+- This is Jason's **TornadoTTY** repository, a Linux-focused fork of ZenTTY.
+  Jason sets product direction and approves upstream interactions. Inherited
+  macOS instructions do not govern Linux development.
+- Preserve upstream attribution. Existing `zentty` crate, module, environment,
+  and persistence names are not a mandate for sweeping internal renames.
+  Public branding and installed entry points should use TornadoTTY.
+- Work against an issue with acceptance criteria for substantive changes.
+  Prefer issue-sized features or repairs, not arbitrary tiny slices. Record
+  newly discovered scope separately rather than silently expanding the issue.
+- No broad rewrite or new framework merely to make the architecture look tidy.
+  Prefer existing owners, integration boundaries, and test infrastructure.
+- Do not generate or edit repository files using Python. Use `apply_patch` or
+  transparent, narrowly scoped editor-safe shell commands.
 
 ## GitHub repository targeting
 
-- This checkout has both `origin` (`TamedTornado/TornadoTTY`) and `upstream`
-  (`dedene/zentty`). Every GitHub command that creates, edits, comments on,
-  closes, reopens, or otherwise mutates an issue or pull request must specify
-  `--repo TamedTornado/TornadoTTY` (or `-R TamedTornado/TornadoTTY`) explicitly.
-- Never rely on GitHub CLI remote inference for a mutating command. Read-only
-  upstream inspection must likewise name `--repo dedene/zentty` explicitly.
+- Every mutating GitHub command must explicitly specify
+  `--repo TamedTornado/TornadoTTY` (or `-R TamedTornado/TornadoTTY`).
+  Never rely on remote inference: this checkout also has an upstream remote.
+- Read-only upstream inspection must explicitly name `--repo dedene/zentty`.
 - Do not comment on, review, open, close, or otherwise mutate upstream issues
-  or pull requests without Jason's explicit approval for that exact upstream
-  interaction.
+  or pull requests without Jason's approval for that exact interaction.
+- Review the diff and run relevant checks before committing. Report exact
+  commits, push status, actual test results, and remaining acceptance gaps.
+  Do not close an issue solely because code was written.
 
-## Testing
+## Linux build and daily iteration
 
-Two test targets:
-- **ZenttyLogicTests** — no app host, parallel-safe. Pure logic + detached AppKit component tests (~380 tests).
-- **ZenttyTests** — hosted in Zentty.app, serial. Tests that need real windows or app lifecycle (~24 tests).
+- Read the README and the relevant issue before changing behavior. Use
+  `linux/scripts/build-local` to build the integrated product and
+  `linux/scripts/run-local` when a local launch is requested. Inspect their
+  options and prerequisites rather than improvising another launcher.
+- Jason may be running this agent inside TornadoTTY. Do not terminate,
+  restart, or launch his client without explicit coordination. Use isolated
+  test instances and state; never overwrite his workspace with test fixtures.
+- An authorized install may atomically replace installed executables while
+  the old process continues running. Do not overwrite an executing file in
+  place. Distinguish source, built, installed, and currently running versions;
+  a new on-disk binary does not change a running GUI or agent's launch policy.
+- Do not install unrelated system packages or modify partitions to complete
+  a routine build/deploy. Explain genuinely missing prerequisites.
+- Give progress updates at meaningful boundaries, especially on failures or
+  unexpectedly long work. Do not claim work is underway or monitored after
+  ending the turn.
 
-Run the full all-target gate only when you explicitly need Logic + hosted app + integration in one command. Use the virtual-display harness so AppKit windows are created on the test display:
-```
-ZENTTY_TEST_DISPLAY_PROVIDER=betterdisplay scripts/test-on-virtual-display
-```
+## Testing: product behavior first
 
-For normal local verification of hosted window/AppKit behavior, use the hosted virtual-display wrapper instead of running `ZenttyTests` through plain `xcodebuild`:
-```
-scripts/test-hosted-on-virtual-display
-```
+- For a bug, reproduce it with a focused failing regression before fixing it
+  where feasible. If reproduction is unavailable, say so. Run focused checks
+  for each repair before any aggregate run.
+- **Do not run full qualification for every fix or commit.** Use targeted
+  Rust tests and the affected existing integration journey. Broader local
+  qualification (`linux/tests/qualify-local`) is for release or meaningful
+  cross-cutting validation, not the default edit loop. GitHub CI checks our
+  work; waiting for a public CI receipt is not a separate release approval gate.
+- Exercise real GTK/Ghostty/PTY/IPC boundaries for integration claims, using
+  the existing isolated journey driver. Do not create parallel harnesses,
+  recursive aggregate suites, or extra evidence machinery without a concrete
+  product need. No broad retries or relaxed requirements to turn failures green.
+- Assert observable semantics, not formatter mirroring, source hashes, exact
+  incidental log wording, or byte-identical help. Test the user-reported path,
+  not just a nearby reducer. Test agents' automated behavior ourselves; Jason
+  performs user-level QA, not manual execution of our integration fixtures.
+- Use `linux/tests/mutate-rust` for targeted mutation checks. Preserve its
+  resource isolation and `.cargo/mutants.toml` (`gitignore = true`,
+  `copy_target = false`); never copy build trees into mutation workers.
+  Mutation strength is required for unattended-maintenance claims, not test count.
+- Use existing capacity controls; do not arbitrarily serialize all tests or
+  launch unbounded workers. GUI tests must not steal focus from the live client.
+- Report only results actually run. Keep PASS, FAIL, BLOCKED, XFAIL, and
+  NOT_IMPLEMENTED distinct, with reasons and tracked gaps. Do not present an
+  old matrix total as a new run. Preserve raw Valgrind receipts alongside
+  suppressed runs, review the entire effective suppression set, and describe
+  success as **PASS with reviewed suppressions**. Keep ReleaseSafe Valgrind
+  XFAIL; do not broaden suppressions to make it green.
 
-The virtual-display harness is the expected local path for tests that can create AppKit windows. It creates or reuses a display named `ZenttyTests`, sets `ZENTTY_TEST_SCREEN_NAME=ZenttyTests`, and runs the scheme's testables by default. It supports `ZENTTY_TEST_DISPLAY_PROVIDER=auto`, `betterdisplay`, or `simpledisplay`; `auto` prefers BetterDisplay when available. This moves prepared test windows off the active display, but AppKit tests still run in the same Aqua session and can still steal focus.
+## Dependencies
 
-The virtual-display scripts set `TEST_RUNNER_SWIFT_BACKTRACE=enable=no`. If you bypass them and call `xcodebuild` directly, always prefix with `TEST_RUNNER_SWIFT_BACKTRACE=enable=no`. On macOS 26 (Tahoe) the Swift backtrace handler shows an interactive "Press space to interact" prompt on crash, which hangs xcodebuild indefinitely until a 30s timeout. The `TEST_RUNNER_` prefix forwards env vars from xcodebuild to the xctest subprocess (a plain `SWIFT_BACKTRACE=...` on xcodebuild does NOT propagate).
+- Respect `rust-toolchain.toml` and Cargo's checked-in minimum-publish-age
+  policy. Do not bypass it with another toolchain or a courtesy wrapper.
+  Track migration to stable Cargo in #96 once it supports the needed policy.
+- For JavaScript tooling use pnpm, with `minimumReleaseAge: 10080` or
+  `minimum-release-age=10080`. Exclusions require Jason's explicit approval.
 
-Multiple agents often run in parallel in this repo.
+## State, errors, and logs
 
-Guidelines:
-- New tests go in `ZenttyLogicTests` unless they call `showWindow()`, `makeKeyAndOrderFront()`, or access `NSApp` lifecycle.
-- Use `scripts/test-on-virtual-display -only-testing:ZenttyLogicTests` for local `ZenttyLogicTests` runs that may create real AppKit windows.
-- Use `scripts/test-hosted-on-virtual-display` for local `ZenttyTests` runs that open real AppKit windows.
-- Use `scripts/test-modern-shell-integrations` before release after changing shell integration; it requires local `fish`, `nu`, and `/usr/bin/expect`, and fails if the fish/nu resource files are not tracked.
-- Tests that create windows must close them in `tearDown` or `addTeardownBlock`.
-- Use XCTest expectations instead of `RunLoop.current.run(until:)`.
-- The app host runs inert during tests (no main window, `.prohibited` activation policy) via `XCTestConfigurationFilePath` detection in `main.swift`.
-- **Do not pass `-derivedDataPath` to xcodebuild.** Use the default DerivedData location. Creating per-agent directories under `/tmp/` wastes gigabytes of disk and they never get cleaned up.
-- Do not use `./runner`.
+- Keep canonical state ownership explicit. Agent lifecycle, human attention,
+  and UI selection are different concepts; do not substitute one for another.
+- Preserve saved worklane/pane topology and restore intent across lazy startup,
+  failed agent resume, normal agent exit, and repeated save/restart cycles.
+- Bound queues, retention, and GUI-thread work. Move blocking work off GTK;
+  reject stale background results. Do not infer that payload limits bound a queue.
+- CLI failures use actionable stderr and a nonzero exit. Recoverable in-app
+  failures should be observable and contained, not crash the whole application.
+- Log useful lifecycle transitions and bounded diagnostics. Do not log tokens,
+  private terminal contents, or every unchanged status update by default.
+  Separate hypotheses from confirmed causes and fixes from verified outcomes.
 
-## Design Docs
+## Planning and field reports
 
-- Do not add design docs, specs, or plans to git unless Peter explicitly asks.
-- It is fine to create them locally for discussion or planning, but keep them untracked and ignored by default.
+- Use GitHub issues for substantive plans, acceptance criteria, and follow-ups.
+  Add standalone design documents only when Jason requests them or an agreed
+  issue requires one. No inherited third-party approval requirement applies.
+- Follow [field-reporting guidance](docs/dogfood-field-reporting.md). The
+  current report is
+  [2026-09-04 GUI runtime isolation](docs/design/zentty-linux-dogfood-2026-09-04-gui-runtime-isolation.md).
+  Keep this pointer current when rotating reports; start another at a natural
+  boundary rather than growing one incident log indefinitely.
+- Record meaningful observations, failed hypotheses, repairs, focused evidence,
+  and uncertainty as work proceeds. Keep entries concise; don't commit raw
+  dumps or private data. A pending user check stays pending, not falsely passed.
+- Cross-link TornadoTTY and Ghostty commits when a repair changes both repos.
 
-## Linux Port Dogfood Field Reports
+## macOS-only maintenance (when explicitly in scope)
 
-The public Linux port is an explicit downstream exception to the design-doc
-rule above. Maintain its production-style dogfood record while investigating
-and repairing the Ghostty GTK embedding and Zentty Linux application.
-
-Follow [`docs/dogfood-field-reporting.md`](docs/dogfood-field-reporting.md).
-The active report is
-[`docs/design/zentty-linux-dogfood-2026-08-01.md`](docs/design/zentty-linux-dogfood-2026-08-01.md).
-
-Do not reconstruct the record at the end of a long implementation run. Record
-observed behavior, impact, evidence identifiers, diagnosis, failed attempts,
-repair, regression coverage, and live outcome as each becomes known. Clearly
-label hypotheses. A repair is incomplete until its code, tests, field-report
-entry, and observed result agree.
-
-Ghostty-fork fixes and this report live in separate repositories. Cross-link
-their commit hashes and publish both parts as one documented repair operation.
-
-### Linux port integration qualification
-
-Treat integration coverage as the primary credibility gate. Unit tests alone
-cannot certify the port. Every embedding or Linux-shell milestone must exercise
-the real Ghostty engine, GTK widget lifecycle, PTY, renderer, and display
-backend through the public/downstream integration boundary.
-
-The required gate includes unchanged Ghostty regression tests; a minimal host
-under Wayland and X11; multi-surface focus, resize, input, output, exit, and
-teardown; configuration and host-callback propagation; repeated lifecycle and
-leak checks; and live GNOME/KDE, IME, scaling, clipboard, and GPU qualification
-where automation cannot faithfully reproduce the environment. Publish exact
-commands and result receipts in the field report. Do not describe a milestone
-as complete when a required environment is untested; label the gap explicitly.
-
-## Project Generation
-
-- Treat `project.yml` as the source of truth for Xcode project structure and generated build scripts.
-- Do not make manual edits directly in `Zentty.xcodeproj/project.pbxproj` unless Peter explicitly asks.
-- When project configuration changes are needed, update `project.yml` first and regenerate the project.
-
-## Agent Bench
-
-`scripts/agent-bench/` drives each supported agent CLI through the Zentty wrapper and asserts the hook events the integration depends on. It is the regression backstop for the Antigravity (agy) integration in particular, where the hook pipeline has historically been fragile.
-
-For the agy integration, the gate is `scripts/test-agy-bench`. It builds Zentty (skip with `--no-build`) and runs the full agy scenario sweep — `smoke,session_capture,approval,tools,restore_launch,restore_launch_with_id` — in `--strict` mode (auth-skip / binary-skip become failures).
-
-Re-run after:
-- any agy CLI version bump (it is the upstream side of the contract),
-- any change to `AgyHooksInstaller`, `agyAdapter`, or `AgyCanonicalReEmitter`,
-- any change to `scripts/agent-bench/profiles/agy.json`.
-
-Profile-level Python tests (`scripts/agent-bench/tests/test_agent_bench.py`) run via `python3 -m unittest discover scripts/agent-bench/tests` and catch bad profile shapes before the harness is even invoked.
-
-## Error Handling
-
-Two-tier strategy based on execution context:
-
-1. **Fatal/exit** — CLI tools (ClaudeHookBridge, AgentStatusHelper). When the process IS the error reporter, log to stderr and exit with a non-zero status code.
-2. **Log and continue** — In-app observers (AgentStatusCenter, PRArtifactResolver, GhosttyThemeResolver, WorklaneReviewStateResolver). Best-effort detection should never crash the app. Log via `os.Logger` and fall back to a safe default.
-
-Exception: `LibghosttyRuntime` initialization uses `fatalError` — the terminal engine is an essential dependency with no meaningful fallback.
+- `project.yml` owns Xcode project generation. Change it and regenerate rather
+  than hand-editing `Zentty.xcodeproj/project.pbxproj`.
+- `ZenttyLogicTests` is the unhosted target; `ZenttyTests` needs an app host.
+  Use `scripts/test-on-virtual-display -only-testing:ZenttyLogicTests` or
+  `scripts/test-hosted-on-virtual-display` for window-creating tests. Close
+  test windows in teardown; use XCTest expectations instead of run-loop sleeps.
+- If invoking `xcodebuild` directly, prefix
+  `TEST_RUNNER_SWIFT_BACKTRACE=enable=no` to avoid interactive crash prompts.
+  Do not add per-agent `-derivedDataPath` trees or use `./runner`.
+- For macOS Antigravity changes, consult `scripts/agent-bench/` and run the
+  existing `scripts/test-agy-bench` scenarios; do not transplant that harness
+  into the Linux implementation. Use `scripts/test-modern-shell-integrations`
+  for relevant inherited shell integration release checks.
