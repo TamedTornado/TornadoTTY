@@ -603,3 +603,63 @@ The already-focused acknowledgement defect fixed above was independently real
 and was explicitly encoded by the former unit expectation, but it was not the
 cause of this particular field symptom. The observed false Needs Input status
 remains GH-172 validation, not evidence that pane selection failed.
+
+## 2026-09-05 — GH-161 installed-path completion
+
+The remaining GH-161 check used the actual installed GUI and canonical CLI in
+an isolated instance, private home/state, and private Xvfb display. Jason's
+working client was not restarted, installed over, or sent test traffic. This
+is controlled installed-binary validation, not a claim of an 18-hour live soak.
+
+The first invocation could not create display sockets inside the sandbox;
+escalation allowed the existing isolation wrapper to run. It then failed
+before launching the product because the journey required a sibling `zentty`
+CLI. The installed package correctly uses `tornadotty-cli`. The existing
+journey now prefers that canonical sibling and retains the staged-build name
+fallback; no executable copy or compatibility alias was created.
+
+The previous response barrier proved only that the busy pane updated after a
+burst. The same scenario now creates a second real PTY via the authenticated
+CLI and sends three distinct keyboard lines through the private display,
+GTK, and Ghostty while the producer is still sending events. The sibling must
+acknowledge each line within the existing two-second responsiveness budget.
+Both sides of each probe check that the producer has not completed. A deliberate
+negative check removed the sibling's acknowledgement: the journey failed with
+`sibling PTY input stalled during event traffic` and produced no PASS receipt.
+The acknowledgement was restored before the final run. This checks the new
+integration assertion, not additional product mutation coverage.
+
+Installed GUI build ID: `0906c73ee9c31ca3b94026ee81774c49d454e160`.
+Installed CLI build ID: `21273f3255dfed52142c2576002af0abec6aeca8`.
+These are the previously deployed repair binaries, not a new deployment.
+
+Reproduction (run outside the sandbox's display/socket restriction):
+
+```sh
+ZENTTY_LINUX_BINARY=/usr/lib/tornadotty/bin/tornadotty \
+ZENTTY_AGENT_IPC_SCENARIO=event-coalescing \
+ZENTTY_AGENT_EVENT_BURST_COUNT=5000 \
+ZENTTY_AGENT_EVENT_COALESCING_RECEIPT=/tmp/gh161-installed-final.json \
+linux/tests/nested-x11 linux/tests/rust-agent-ipc
+```
+
+Final installed result: PASS. 5,000 duplicate authenticated events and 5,000
+changing title frames ran over 25.453 seconds. Maximum sibling input latency
+was 60 ms; post-burst GTK response was 4 ms. Main-heap PSS growth was zero,
+anonymous RSS/PSS fell 488 KiB, total PSS fell 223 KiB, descriptors and child
+counts did not grow, and thread count fell by one. There were zero duplicate
+state changes, project refreshes, sidebar rebuilds, attention changes,
+notifications, semantic title updates, or animation restarts. The meaningful
+task transition (delivered twice) caused exactly one state, fleet, status, and
+persistence update. No resource threshold or product requirement was relaxed.
+
+The scoped success message no longer claims unrelated adapter scenarios ran.
+The default staged 500-event path is also checked; Bash syntax, ShellCheck,
+and diff whitespace checks cover the small test-only changes. No Rust product
+code changed and no full qualification was run. Existing matrix totals are
+not new results from this operation.
+
+GH-161's demonstrated event-amplification repair and installed-path checks
+are complete. Arbitrary changing-event queue saturation remains GH-163;
+per-pane cgroups remain GH-162. This bounded test neither establishes native
+crash isolation nor proves the absence of every possible long-lived leak.

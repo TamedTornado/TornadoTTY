@@ -128,8 +128,11 @@ done
 [[ -x "${product}" ]] || fail "staged product is not built: ${product}"
 [[ -x "${actor}" ]] || fail "controlled agent actor is missing: ${actor}"
 zentty_product_disable_lifecycle_confirmations
-helper="$(dirname "${product}")/zentty"
-[[ -x "${helper}" ]] || fail "staged agent helper is not built: ${helper}"
+helper="$(dirname "${product}")/tornadotty-cli"
+if [[ ! -x "${helper}" ]]; then
+    helper="$(dirname "${product}")/zentty"
+fi
+[[ -x "${helper}" ]] || fail "product agent helper is not built: ${helper}"
 wrapper_root="$(cd "$(dirname "${product}")/.." && pwd)/libexec/zentty/agent-wrappers"
 [[ -x "${wrapper_root}/codex/codex" ]] || fail "staged Codex wrapper is missing"
 [[ -x "${wrapper_root}/claude/claude" ]] || fail "staged Claude wrapper is missing"
@@ -871,6 +874,7 @@ run_event_coalescing() {
     local attention_changes desktop_notifications persistence_saves status_updates title_events animation_restarts
     local receipt="${ZENTTY_AGENT_EVENT_COALESCING_RECEIPT:-${repo_root}/build/linux/agent-event-coalescing.json}"
     local receipt_temp
+    local sibling_receipt probe probe_started_ns probe_latency_ms maximum_probe_latency_ms=0
 
     [[ "${burst_count}" =~ ^[1-9][0-9]*$ && "${burst_count}" -le 10000 ]] ||
         fail "ZENTTY_AGENT_EVENT_BURST_COUNT must be between 1 and 10000"
@@ -883,6 +887,7 @@ run_event_coalescing() {
     burst_finish_gate="${state_directory}/finish.fifo"
     mkfifo "${burst_finish_gate}"
     private_home="$(mktemp -d)"
+    sibling_receipt="${state_directory}/sibling.receipt"
     XDG_CONFIG_HOME="${private_home}/xdg-config" \
         zentty_product_disable_lifecycle_confirmations
     PATH="${fake_bin}:${PATH}" GDK_SCALE=1 GDK_DPI_SCALE=1 \
@@ -893,6 +898,7 @@ run_event_coalescing() {
         ZENTTY_CONTROLLED_AGENT_BURST_RECEIPT="${burst_receipt}" \
         ZENTTY_CONTROLLED_AGENT_BURST_COUNT="${burst_count}" \
         ZENTTY_CONTROLLED_AGENT_FINISH_GATE="${burst_finish_gate}" \
+        ZENTTY_CONTROLLED_AGENT_SIBLING_RECEIPT="${sibling_receipt}" \
         "${product}" --command "${actor}" \
         --state-directory "${state_directory}" --no-session-restore >"${log}" 2>&1 &
     product_pid=$!
@@ -923,6 +929,9 @@ run_event_coalescing() {
         fail "priming state was not persisted"
     grep -Fqx 'primed' "${burst_receipt}" ||
         fail "controlled child did not stop at the burst boundary"
+    zentty_product_wait_for_log "${sibling_receipt}" 'ready' \
+        "sibling PTY did not start" || fail "sibling PTY did not start"
+    zentty_product_prepare_input "${backend}" "${log}"
     before_rss="$(awk '/^RssAnon:/ { print $2; exit }' "/proc/${product_pid}/status")"
     [[ "${before_rss}" =~ ^[0-9]+$ ]] || fail "could not read product RssAnon before burst"
     before_pss="$(awk '/^Pss:/ { print $2; exit }' "/proc/${product_pid}/smaps_rollup")"
@@ -951,6 +960,25 @@ run_event_coalescing() {
 
     burst_started_ns="$(date +%s%N)"
     : >"${burst_gate}"
+    zentty_product_wait_for_log "${burst_receipt}" 'burst-active' \
+        "producer did not start" || fail "producer did not start"
+    for probe in sibling-one sibling-two sibling-three; do
+        ! grep -Fq 'completed=' "${burst_receipt}" ||
+            fail "burst finished before sibling responsiveness probe"
+        probe_started_ns="$(date +%s%N)"
+        zentty_product_type "${backend}" "${probe}"
+        zentty_product_key "${backend}" Return
+        zentty_product_wait_for_log "${sibling_receipt}" "${probe}" \
+            "sibling PTY input stalled during event traffic" 40 ||
+            fail "sibling PTY input stalled during event traffic"
+        probe_latency_ms=$((($(date +%s%N) - probe_started_ns) / 1000000))
+        ((probe_latency_ms <= 2000)) || fail "sibling PTY response exceeded 2000 ms"
+        if ((probe_latency_ms > maximum_probe_latency_ms)); then
+            maximum_probe_latency_ms="${probe_latency_ms}"
+        fi
+        ! grep -Fq 'completed=' "${burst_receipt}" ||
+            fail "sibling response arrived only after event traffic stopped"
+    done
     for _ in {1..1200}; do
         grep -Fqx "completed=${burst_count}" "${burst_receipt}" && break
         sleep 0.05
@@ -1080,6 +1108,8 @@ run_event_coalescing() {
         --argjson title_events "${title_events}" \
         --argjson animation_restarts "${animation_restarts}" \
         '{schema_version:1,status:"PASS",transport:"real-unix-socket",pty:"real",gtk:"real",burst_count:$burst_count,source_title_frame_count:$burst_count,memory:{maximum_growth_kib:16384,rss_anon:{before_kib:$before_rss_kib,after_kib:$after_rss_kib,growth_kib:$rss_growth_kib},pss:{before_kib:$before_pss_kib,after_kib:$after_pss_kib,growth_kib:$pss_growth_kib},anonymous_pss:{before_kib:$before_anon_pss_kib,after_kib:$after_anon_pss_kib,growth_kib:$anon_pss_growth_kib},main_heap_pss:{before_kib:$before_heap_pss_kib,after_kib:$after_heap_pss_kib,growth_kib:$heap_pss_growth_kib}},resources:{file_descriptors:{before:$before_fds,after:$after_fds,growth:$fd_growth,maximum_growth:2},threads:{before:$before_threads,after:$after_threads,growth:$thread_growth,maximum_growth:2},child_processes:{before:$before_children,after:$after_children,growth:$child_growth,maximum_growth:0}},burst_effect_deltas:{duplicate_running_state_changes:$changed_events,meaningful_task_state_changes:$progress_events,project_refreshes:$project_refreshes,fleet_refreshes:$fleet_refreshes,sidebar_renders:$sidebar_renders,gtk_status_updates:$status_updates,attention_changes:$attention_changes,desktop_notifications:$desktop_notifications,persistence_saves:$persistence_saves,coalescing_log_records:$coalescing_log_records,maximum_coalescing_log_records:$coalescing_log_max,semantic_terminal_title_events:$title_events,animation_restarts:$animation_restarts},timing:{producer_duration_ms:$burst_duration_ms,gtk_drain_latency_ms:$gtk_drain_latency_ms,maximum_gtk_drain_latency_ms:2000},responsiveness_barrier:{kind:"task.progress",progress:"1/2",duplicate_delivery:true,gtk_presented:true}}' \
+        | jq --argjson latency "${maximum_probe_latency_ms}" \
+        '. + {sibling_responsiveness: {probes:3, during_traffic:true, maximum_latency_ms:$latency, limit_ms:2000}}' \
         >"${receipt_temp}"
     mv -f -- "${receipt_temp}" "${receipt}"
 
@@ -1099,6 +1129,8 @@ run_event_coalescing() {
 
 if [[ "${scenario}" == event-coalescing ]]; then
     run_event_coalescing
+    echo "Rust event coalescing passed: ${backend}, helper=real-process, transport=real-unix-socket, pty=real, gtk=real, sibling-input=during-traffic, bounded-growth=checked"
+    exit 0
 fi
 
 if [[ "${scenario}" == codex-review-routing ]]; then

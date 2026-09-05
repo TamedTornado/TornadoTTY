@@ -80,6 +80,16 @@ codex_has_hook() {
 case "${profile}" in
     event-coalescing)
         require_helper
+        if [[ "${ZENTTY_CONTROLLED_AGENT_SIBLING_RECEIPT:-}" != "" ]]; then
+            if [[ "${ZENTTY_PANE_ID}" != pane-1 ]]; then
+                printf 'ready\n' >"${ZENTTY_CONTROLLED_AGENT_SIBLING_RECEIPT}"
+                while IFS= read -r probe; do
+                    printf '%s\n' "${probe}" >>"${ZENTTY_CONTROLLED_AGENT_SIBLING_RECEIPT}"
+                done
+                exit 0
+            fi
+            "${helper}" split right --equal >/dev/null
+        fi
         burst_gate="${ZENTTY_CONTROLLED_AGENT_BURST_GATE:-}"
         burst_receipt="${ZENTTY_CONTROLLED_AGENT_BURST_RECEIPT:-}"
         burst_count="${ZENTTY_CONTROLLED_AGENT_BURST_COUNT:-500}"
@@ -104,6 +114,9 @@ case "${profile}" in
             printf '%s' "${event}" | "${helper}" ipc agent-event
             frame_index=$((event_index % ${#spinner_frames[@]}))
             printf '\033]0;Working %s event-coalescing\007' "${spinner_frames[frame_index]}"
+            if ((event_index == 0)); then
+                printf 'burst-active\n' >>"${burst_receipt}"
+            fi
         done
         printf 'completed=%s\n' "${burst_count}" >>"${burst_receipt}"
         transition="$(jq -cn \
