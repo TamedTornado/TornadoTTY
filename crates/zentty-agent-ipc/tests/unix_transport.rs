@@ -2,7 +2,7 @@ use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::fs::{FileTypeExt, symlink};
 use std::os::unix::net::UnixStream;
-use std::sync::{Arc, Mutex, mpsc};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use zentty_agent_ipc::{AgentIpcClient, AgentIpcServer, generate_pane_token};
 use zentty_core::{AgentPhase, AgentStatusStore, AgentTarget, PaneTokenRegistry};
@@ -34,7 +34,7 @@ fn real_unix_socket_reconnects_canonicalizes_and_rejects_revoked_panes() {
     let mut registry = PaneTokenRegistry::default();
     registry.register("token-a", canonical.clone()).unwrap();
     let registry = Arc::new(Mutex::new(registry));
-    let (sender, receiver) = mpsc::channel();
+    let (sender, receiver) = zentty_agent_ipc::ingress_channel(128, 16);
     let server = AgentIpcServer::start(&socket, Arc::clone(&registry), sender).unwrap();
 
     let event = br#"{"version":1,"event":"agent.running","agent":{"name":"Codex"},"session":{"id":"session-a"}}"#;
@@ -98,7 +98,7 @@ fn real_server_rejects_wrong_tokens_malformed_events_and_oversized_frames() {
     registry
         .register("token-a", AgentTarget::new("window-a", "lane-a", "pane-a"))
         .unwrap();
-    let (sender, receiver) = mpsc::channel();
+    let (sender, receiver) = zentty_agent_ipc::ingress_channel(128, 16);
     let server = AgentIpcServer::start(&socket, Arc::new(Mutex::new(registry)), sender).unwrap();
 
     assert!(
@@ -128,7 +128,7 @@ fn stalled_client_is_bounded_and_cannot_permanently_block_later_events() {
     let canonical = AgentTarget::new("window-a", "lane-a", "pane-a");
     let mut registry = PaneTokenRegistry::default();
     registry.register("token-a", canonical.clone()).unwrap();
-    let (sender, receiver) = mpsc::channel();
+    let (sender, receiver) = zentty_agent_ipc::ingress_channel(128, 16);
     let server = AgentIpcServer::start(&socket, Arc::new(Mutex::new(registry)), sender).unwrap();
 
     let stalled = UnixStream::connect(&socket).unwrap();
@@ -163,7 +163,7 @@ fn socket_start_rejects_symlinked_parents_and_broken_endpoint_symlinks() {
     let linked_parent = root.join("linked");
     fs::create_dir_all(&real_parent).unwrap();
     symlink(&real_parent, &linked_parent).unwrap();
-    let (sender, _receiver) = mpsc::channel();
+    let (sender, _receiver) = zentty_agent_ipc::ingress_channel(128, 16);
     assert!(
         AgentIpcServer::start(
             linked_parent.join("instance.sock"),
@@ -176,7 +176,7 @@ fn socket_start_rejects_symlinked_parents_and_broken_endpoint_symlinks() {
 
     let endpoint = real_parent.join("instance.sock");
     symlink(real_parent.join("missing"), &endpoint).unwrap();
-    let (sender, _receiver) = mpsc::channel();
+    let (sender, _receiver) = zentty_agent_ipc::ingress_channel(128, 16);
     assert!(
         AgentIpcServer::start(
             &endpoint,
@@ -199,7 +199,7 @@ fn socket_start_rejects_symlinked_parents_and_broken_endpoint_symlinks() {
 fn socket_start_verifies_private_directory_and_socket_type() {
     let (directory, socket) = temporary_socket();
     fs::set_permissions(&directory, fs::Permissions::from_mode(0o755)).unwrap();
-    let (sender, _receiver) = mpsc::channel();
+    let (sender, _receiver) = zentty_agent_ipc::ingress_channel(128, 16);
     let server = AgentIpcServer::start(
         &socket,
         Arc::new(Mutex::new(PaneTokenRegistry::default())),
@@ -217,4 +217,45 @@ fn socket_start_verifies_private_directory_and_socket_type() {
             .is_socket()
     );
     server.shutdown().unwrap();
+}
+
+#[test]
+fn saturated_ingress_rejects_busy_pane_but_services_quiet_pane_and_shuts_down() {
+    let (directory, socket) = temporary_socket();
+    let mut registry = PaneTokenRegistry::default();
+    registry
+        .register("busy-token", AgentTarget::new("window", "lane", "busy"))
+        .unwrap();
+    registry
+        .register("quiet-token", AgentTarget::new("window", "lane", "quiet"))
+        .unwrap();
+    let (sender, receiver) = zentty_agent_ipc::ingress_channel(4, 2);
+    let server = AgentIpcServer::start(&socket, Arc::new(Mutex::new(registry)), sender).unwrap();
+    let event = br#"{"version":1,"event":"agent.running","agent":{"name":"Codex"},"session":{"id":"overload"}}"#;
+    for _ in 0..2 {
+        AgentIpcClient::send_event(&socket, "busy-token", event, None).unwrap();
+    }
+    // Deliberately do not run a consumer: admission must reject, not hang or
+    // acknowledge a message it cannot retain. Unauthenticated senders still fail auth.
+    let rejection = AgentIpcClient::send_event(&socket, "busy-token", event, None).unwrap_err();
+    assert!(
+        matches!(rejection, zentty_agent_ipc::AgentIpcError::Remote {
+            category: zentty_agent_ipc::ApplicationErrorCategory::ProductUnavailable,
+            ref code, ..
+        } if code == "ingress_full"),
+        "{rejection}"
+    );
+    AgentIpcClient::send_event(&socket, "quiet-token", event, None).unwrap();
+    assert_eq!(receiver.try_recv().unwrap().target.pane_id, "busy");
+    assert_eq!(receiver.try_recv().unwrap().target.pane_id, "quiet");
+    assert_eq!(receiver.try_recv().unwrap().target.pane_id, "busy");
+    assert!(receiver.try_recv().is_err());
+    AgentIpcClient::send_event(&socket, "busy-token", event, None).unwrap();
+    AgentIpcClient::send_event(&socket, "busy-token", event, None).unwrap();
+    let started = std::time::Instant::now();
+    server.shutdown().unwrap();
+    assert!(started.elapsed() < Duration::from_secs(2));
+    assert_eq!(receiver.try_iter().count(), 2);
+    assert!(!socket.exists());
+    fs::remove_dir_all(directory).unwrap();
 }

@@ -107,7 +107,7 @@
   issue requires one. No inherited third-party approval requirement applies.
 - Follow [field-reporting guidance](docs/dogfood-field-reporting.md). The
   current report is
-  [2026-09-04 GUI runtime isolation](docs/design/zentty-linux-dogfood-2026-09-04-gui-runtime-isolation.md).
+  [2026-09-05 ingress backpressure](docs/design/tornadotty-linux-dogfood-2026-09-05-ingress-backpressure.md).
   Keep this pointer current when rotating reports; start another at a natural
   boundary rather than growing one incident log indefinitely.
 - Record meaningful observations, failed hypotheses, repairs, focused evidence,

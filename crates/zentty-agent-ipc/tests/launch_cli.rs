@@ -4,7 +4,7 @@ use std::os::unix::fs::symlink;
 use std::os::unix::process::ExitStatusExt;
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, mpsc};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use zentty_agent_ipc::AgentIpcServer;
 use zentty_core::{AgentTarget, PaneTokenRegistry};
@@ -872,7 +872,7 @@ fn opencode_prelaunch_event_crosses_the_authenticated_socket_before_exec() {
             AgentTarget::new("window", "test-lane", "test-pane"),
         )
         .unwrap();
-    let (sender, receiver) = mpsc::channel();
+    let (sender, receiver) = zentty_agent_ipc::ingress_channel(128, 16);
     let server = AgentIpcServer::start(
         tool.directory.join("instance.sock"),
         Arc::new(Mutex::new(registry)),

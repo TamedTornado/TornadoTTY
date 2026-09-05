@@ -1,23 +1,26 @@
+use std::cell::Cell;
 use std::collections::BTreeMap;
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex, mpsc};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 use zentty_agent_ipc::{
     AgentIpcServer, AuthenticatedProductRequest, AuthenticatedServerRequest,
-    AuthenticatedTmuxRequest, generate_pane_token, publish_instance, publish_pane_credential,
-    remove_pane_credential,
+    AuthenticatedTmuxRequest, IngressReceiver, generate_pane_token, ingress_channel,
+    publish_instance, publish_pane_credential, remove_pane_credential,
 };
 use zentty_core::{AgentTarget, AuthenticatedAgentEvent, PaneTokenRegistry};
 
 pub(crate) struct AgentRuntime {
     server: Option<AgentIpcServer>,
     registry: Arc<Mutex<PaneTokenRegistry>>,
-    receiver: mpsc::Receiver<AuthenticatedAgentEvent>,
-    tmux_receiver: mpsc::Receiver<AuthenticatedTmuxRequest>,
-    server_receiver: mpsc::Receiver<AuthenticatedServerRequest>,
-    product_receiver: mpsc::Receiver<AuthenticatedProductRequest>,
+    receiver: IngressReceiver<AuthenticatedAgentEvent>,
+    tmux_receiver: IngressReceiver<AuthenticatedTmuxRequest>,
+    server_receiver: IngressReceiver<AuthenticatedServerRequest>,
+    product_receiver: IngressReceiver<AuthenticatedProductRequest>,
+    last_pressure_log: Cell<Option<Instant>>,
     tokens_by_pane: BTreeMap<String, String>,
     credentials_by_pane: BTreeMap<String, PathBuf>,
     target_by_pane: BTreeMap<String, (String, String)>,
@@ -46,10 +49,12 @@ impl AgentRuntime {
         );
         let socket_path = runtime_directory.join("instance.sock");
         let registry = Arc::new(Mutex::new(PaneTokenRegistry::default()));
-        let (sender, receiver) = mpsc::channel();
-        let (tmux_sender, tmux_receiver) = mpsc::channel();
-        let (server_sender, server_receiver) = mpsc::channel();
-        let (product_sender, product_receiver) = mpsc::channel();
+        // Frame validation is capped at 384 KiB. These are message counts,
+        // not PTY-byte limits; a single pane cannot fill a route by itself.
+        let (sender, receiver) = ingress_channel(128, 16);
+        let (tmux_sender, tmux_receiver) = ingress_channel(32, 4);
+        let (server_sender, server_receiver) = ingress_channel(32, 4);
+        let (product_sender, product_receiver) = ingress_channel(32, 4);
         let server = AgentIpcServer::start_with_cli_routes(
             &socket_path,
             Arc::clone(&registry),
@@ -91,6 +96,7 @@ impl AgentRuntime {
             tmux_receiver,
             server_receiver,
             product_receiver,
+            last_pressure_log: Cell::new(None),
             tokens_by_pane: BTreeMap::new(),
             credentials_by_pane: BTreeMap::new(),
             target_by_pane: BTreeMap::new(),
@@ -363,19 +369,48 @@ impl AgentRuntime {
     }
 
     pub(crate) fn drain(&self) -> Vec<AuthenticatedAgentEvent> {
-        self.receiver.try_iter().collect()
+        self.log_ingress_pressure();
+        self.receiver.drain_batch(32)
+    }
+
+    fn log_ingress_pressure(&self) {
+        let now = Instant::now();
+        if self
+            .last_pressure_log
+            .get()
+            .is_some_and(|last| now.duration_since(last) < Duration::from_secs(5))
+        {
+            return;
+        }
+        self.last_pressure_log.set(Some(now));
+        for (route, pressure) in [
+            ("events", self.receiver.take_pressure()),
+            ("tmux", self.tmux_receiver.take_pressure()),
+            ("servers", self.server_receiver.take_pressure()),
+            ("product", self.product_receiver.take_pressure()),
+        ] {
+            if pressure.rejected > 0 {
+                eprintln!(
+                    "tornadotty: ingress-pressure route={route} queued={} high-water={} rejected={} last-pane={:?}",
+                    pressure.queued,
+                    pressure.high_water,
+                    pressure.rejected,
+                    pressure.last_rejected_pane
+                );
+            }
+        }
     }
 
     pub(crate) fn drain_tmux(&self) -> Vec<AuthenticatedTmuxRequest> {
-        self.tmux_receiver.try_iter().collect()
+        self.tmux_receiver.drain_batch(4)
     }
 
     pub(crate) fn drain_servers(&self) -> Vec<AuthenticatedServerRequest> {
-        self.server_receiver.try_iter().collect()
+        self.server_receiver.drain_batch(4)
     }
 
     pub(crate) fn drain_products(&self) -> Vec<AuthenticatedProductRequest> {
-        self.product_receiver.try_iter().collect()
+        self.product_receiver.drain_batch(4)
     }
 
     pub(crate) fn control_credential_for_pane(&self, pane_id: &str) -> Option<&Path> {
@@ -641,10 +676,8 @@ mod tests {
 
     #[test]
     fn installed_cli_is_the_tornadotty_sibling_of_the_resolved_gui() {
-        let root = std::env::temp_dir().join(format!(
-            "tornadotty-cli-selection-{}",
-            std::process::id()
-        ));
+        let root =
+            std::env::temp_dir().join(format!("tornadotty-cli-selection-{}", std::process::id()));
         let bin = root.join("bin");
         let gui = bin.join("tornadotty");
         let packaged_cli = bin.join("tornadotty-cli");

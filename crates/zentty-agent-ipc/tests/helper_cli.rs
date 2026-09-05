@@ -10,7 +10,7 @@ struct Harness {
     directory: std::path::PathBuf,
     socket: std::path::PathBuf,
     server: Option<AgentIpcServer>,
-    receiver: mpsc::Receiver<zentty_core::AuthenticatedAgentEvent>,
+    receiver: zentty_agent_ipc::IngressReceiver<zentty_core::AuthenticatedAgentEvent>,
 }
 
 impl Harness {
@@ -29,7 +29,7 @@ impl Harness {
                 AgentTarget::new("window-real", "lane-real", "pane-real"),
             )
             .unwrap();
-        let (sender, receiver) = mpsc::channel();
+        let (sender, receiver) = zentty_agent_ipc::ingress_channel(128, 16);
         let server =
             AgentIpcServer::start(&socket, Arc::new(Mutex::new(registry)), sender).unwrap();
         Self {

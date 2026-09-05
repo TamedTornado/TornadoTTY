@@ -2,7 +2,7 @@ use std::io::{Read, Write};
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::UnixStream;
 use std::process::Command;
-use std::sync::{Arc, Mutex, mpsc};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use zentty_agent_ipc::{
     AgentIpcClient, AgentIpcError, AgentIpcServer, ApplicationAuthority, ApplicationErrorCategory,
@@ -27,7 +27,7 @@ fn running_server() -> (
     std::path::PathBuf,
     std::path::PathBuf,
     AgentIpcServer,
-    mpsc::Receiver<AuthenticatedProductRequest>,
+    zentty_agent_ipc::IngressReceiver<AuthenticatedProductRequest>,
 ) {
     running_server_named(
         "default",
@@ -44,7 +44,22 @@ fn running_server_named(
     std::path::PathBuf,
     std::path::PathBuf,
     AgentIpcServer,
-    mpsc::Receiver<AuthenticatedProductRequest>,
+    zentty_agent_ipc::IngressReceiver<AuthenticatedProductRequest>,
+) {
+    running_server_with_limits(name, token, target, 32, 4)
+}
+
+fn running_server_with_limits(
+    name: &str,
+    token: &str,
+    target: AgentTarget,
+    capacity: usize,
+    per_pane: usize,
+) -> (
+    std::path::PathBuf,
+    std::path::PathBuf,
+    AgentIpcServer,
+    zentty_agent_ipc::IngressReceiver<AuthenticatedProductRequest>,
 ) {
     let root = std::env::temp_dir().join(format!(
         "zentty-product-ipc-{}-{:?}-{name}",
@@ -55,10 +70,10 @@ fn running_server_named(
     let socket = root.join("runtime/instance.sock");
     let mut registry = PaneTokenRegistry::default();
     registry.register(token, target).unwrap();
-    let (event_sender, _event_receiver) = mpsc::channel();
-    let (tmux_sender, _tmux_receiver) = mpsc::channel();
-    let (server_sender, _server_receiver) = mpsc::channel();
-    let (product_sender, product_receiver) = mpsc::channel();
+    let (event_sender, _event_receiver) = zentty_agent_ipc::ingress_channel(128, 16);
+    let (tmux_sender, _tmux_receiver) = zentty_agent_ipc::ingress_channel(32, 4);
+    let (server_sender, _server_receiver) = zentty_agent_ipc::ingress_channel(32, 4);
+    let (product_sender, product_receiver) = zentty_agent_ipc::ingress_channel(capacity, per_pane);
     let server = AgentIpcServer::start_with_cli_routes(
         &socket,
         Arc::new(Mutex::new(registry)),
@@ -434,10 +449,10 @@ fn delivered_cli_discovers_one_instance_without_exposing_its_credential() {
     registry
         .register_instance(token, AgentTarget::new("window-1", "lane-1", "pane-1"))
         .unwrap();
-    let (event_sender, event_receiver) = mpsc::channel();
-    let (tmux_sender, _tmux_receiver) = mpsc::channel();
-    let (server_sender, _server_receiver) = mpsc::channel();
-    let (product_sender, product_receiver) = mpsc::channel();
+    let (event_sender, event_receiver) = zentty_agent_ipc::ingress_channel(128, 16);
+    let (tmux_sender, _tmux_receiver) = zentty_agent_ipc::ingress_channel(32, 4);
+    let (server_sender, _server_receiver) = zentty_agent_ipc::ingress_channel(32, 4);
+    let (product_sender, product_receiver) = zentty_agent_ipc::ingress_channel(32, 4);
     let server = AgentIpcServer::start_with_cli_routes(
         &socket,
         Arc::new(Mutex::new(registry)),
@@ -607,6 +622,49 @@ fn real_agent_status_cli_maps_to_the_authenticated_lifecycle_route() {
         String::from_utf8_lossy(&output.stderr)
     );
     worker.join().unwrap();
+    server.shutdown().unwrap();
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn full_product_route_returns_explicit_rejection_without_executing_the_request() {
+    let (root, socket, server, receiver) = running_server_with_limits(
+        "overload",
+        "caller-token",
+        AgentTarget::new("window-1", "lane-1", "pane-1"),
+        1,
+        1,
+    );
+    let request = ApplicationRequest::new(ProductIpcKind::Discover, "panes", vec![]).unwrap();
+    let first_socket = socket.clone();
+    let first_request = request.clone();
+    let client = std::thread::spawn(move || {
+        AgentIpcClient::send_application(first_socket, "caller-token", &first_request, None)
+    });
+    let deadline = std::time::Instant::now() + Duration::from_secs(2);
+    while receiver.take_pressure().queued != 1 {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "first request never queued"
+        );
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    let rejection =
+        AgentIpcClient::send_application(&socket, "caller-token", &request, None).unwrap_err();
+    assert!(
+        matches!(rejection, AgentIpcError::Remote {
+        category: ApplicationErrorCategory::ProductUnavailable, ref code, ..
+    } if code == "ingress_full"),
+        "{rejection}"
+    );
+    assert_eq!(receiver.take_pressure().queued, 1);
+    receiver
+        .try_recv()
+        .unwrap()
+        .respond(discovery_reply(serde_json::json!([])))
+        .unwrap();
+    assert!(client.join().unwrap().unwrap().result().is_some());
+    assert!(receiver.try_recv().is_err());
     server.shutdown().unwrap();
     std::fs::remove_dir_all(root).unwrap();
 }

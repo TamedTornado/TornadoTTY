@@ -2,6 +2,7 @@
 
 mod cli;
 mod discovery;
+mod ingress;
 mod integrations;
 mod launch;
 mod presentation;
@@ -11,6 +12,10 @@ pub use cli::{CliProductCommand, parse_product_cli};
 pub use discovery::{
     DiscoveredInstance, InstanceCredential, discover_instances, publish_instance,
     publish_pane_credential, remove_pane_credential,
+};
+pub use ingress::{
+    IngressMessage, IngressPressure, IngressReceiver, IngressSendError, IngressSender,
+    ingress_channel,
 };
 pub use integrations::{install_integration, uninstall_integration};
 pub use launch::{LaunchError, launch_agent, resolve_real_binary};
@@ -267,7 +272,7 @@ impl AgentIpcServer {
     pub fn start(
         socket_path: impl AsRef<Path>,
         registry: Arc<Mutex<PaneTokenRegistry>>,
-        sender: mpsc::Sender<AuthenticatedAgentEvent>,
+        sender: IngressSender<AuthenticatedAgentEvent>,
     ) -> Result<Self, AgentIpcError> {
         Self::start_inner(socket_path, registry, sender, None, None, None)
     }
@@ -282,8 +287,8 @@ impl AgentIpcServer {
     pub fn start_with_tmux(
         socket_path: impl AsRef<Path>,
         registry: Arc<Mutex<PaneTokenRegistry>>,
-        sender: mpsc::Sender<AuthenticatedAgentEvent>,
-        tmux_sender: mpsc::Sender<AuthenticatedTmuxRequest>,
+        sender: IngressSender<AuthenticatedAgentEvent>,
+        tmux_sender: IngressSender<AuthenticatedTmuxRequest>,
     ) -> Result<Self, AgentIpcError> {
         Self::start_inner(socket_path, registry, sender, Some(tmux_sender), None, None)
     }
@@ -296,9 +301,9 @@ impl AgentIpcServer {
     pub fn start_with_product_routes(
         socket_path: impl AsRef<Path>,
         registry: Arc<Mutex<PaneTokenRegistry>>,
-        sender: mpsc::Sender<AuthenticatedAgentEvent>,
-        tmux_sender: mpsc::Sender<AuthenticatedTmuxRequest>,
-        server_sender: mpsc::Sender<AuthenticatedServerRequest>,
+        sender: IngressSender<AuthenticatedAgentEvent>,
+        tmux_sender: IngressSender<AuthenticatedTmuxRequest>,
+        server_sender: IngressSender<AuthenticatedServerRequest>,
     ) -> Result<Self, AgentIpcError> {
         Self::start_inner(
             socket_path,
@@ -318,10 +323,10 @@ impl AgentIpcServer {
     pub fn start_with_cli_routes(
         socket_path: impl AsRef<Path>,
         registry: Arc<Mutex<PaneTokenRegistry>>,
-        sender: mpsc::Sender<AuthenticatedAgentEvent>,
-        tmux_sender: mpsc::Sender<AuthenticatedTmuxRequest>,
-        server_sender: mpsc::Sender<AuthenticatedServerRequest>,
-        product_sender: mpsc::Sender<AuthenticatedProductRequest>,
+        sender: IngressSender<AuthenticatedAgentEvent>,
+        tmux_sender: IngressSender<AuthenticatedTmuxRequest>,
+        server_sender: IngressSender<AuthenticatedServerRequest>,
+        product_sender: IngressSender<AuthenticatedProductRequest>,
     ) -> Result<Self, AgentIpcError> {
         Self::start_inner(
             socket_path,
@@ -336,10 +341,10 @@ impl AgentIpcServer {
     fn start_inner(
         socket_path: impl AsRef<Path>,
         registry: Arc<Mutex<PaneTokenRegistry>>,
-        sender: mpsc::Sender<AuthenticatedAgentEvent>,
-        tmux_sender: Option<mpsc::Sender<AuthenticatedTmuxRequest>>,
-        server_sender: Option<mpsc::Sender<AuthenticatedServerRequest>>,
-        product_sender: Option<mpsc::Sender<AuthenticatedProductRequest>>,
+        sender: IngressSender<AuthenticatedAgentEvent>,
+        tmux_sender: Option<IngressSender<AuthenticatedTmuxRequest>>,
+        server_sender: Option<IngressSender<AuthenticatedServerRequest>>,
+        product_sender: Option<IngressSender<AuthenticatedProductRequest>>,
     ) -> Result<Self, AgentIpcError> {
         let socket_path = socket_path.as_ref().to_owned();
         match fs::symlink_metadata(&socket_path) {
@@ -545,7 +550,7 @@ impl AgentIpcClient {
             let error = response.error.ok_or_else(|| {
                 AgentIpcError::InvalidRequest("failed response omitted its error".to_owned())
             })?;
-            if error.code == "request_rejected" {
+            if matches!(error.code.as_str(), "request_rejected" | "ingress_full") {
                 return Err(AgentIpcError::Remote {
                     category: error
                         .category
@@ -610,7 +615,7 @@ impl AgentIpcClient {
             let error = response.error.ok_or_else(|| {
                 AgentIpcError::InvalidRequest("failed response omitted its error".to_owned())
             })?;
-            if error.code == "request_rejected" {
+            if matches!(error.code.as_str(), "request_rejected" | "ingress_full") {
                 return Err(AgentIpcError::Rejected(error.message));
             }
             ServerIpcReply::failure(error.code, error.message)
@@ -703,7 +708,7 @@ impl AgentIpcClient {
             let error = response.error.ok_or_else(|| {
                 AgentIpcError::InvalidRequest("failed response omitted its error".to_owned())
             })?;
-            if error.code == "request_rejected" {
+            if matches!(error.code.as_str(), "request_rejected" | "ingress_full") {
                 return Err(AgentIpcError::Remote {
                     category: error
                         .category
@@ -741,10 +746,18 @@ impl AgentIpcClient {
         if response.ok {
             Ok(())
         } else {
-            Err(AgentIpcError::Rejected(response.error.map_or_else(
-                || "unknown error".to_owned(),
-                |error| error.message,
-            )))
+            match response.error {
+                Some(error) if error.code == "ingress_full" => Err(AgentIpcError::Remote {
+                    category: error
+                        .category
+                        .unwrap_or(ApplicationErrorCategory::ProductUnavailable),
+                    code: error.code,
+                    message: error.message,
+                }),
+                error => Err(AgentIpcError::Rejected(
+                    error.map_or_else(|| "unknown error".to_owned(), |error| error.message),
+                )),
+            }
         }
     }
 
@@ -794,10 +807,10 @@ fn serve(
     listener: &UnixListener,
     running: &AtomicBool,
     registry: &Mutex<PaneTokenRegistry>,
-    sender: &mpsc::Sender<AuthenticatedAgentEvent>,
-    tmux_sender: Option<&mpsc::Sender<AuthenticatedTmuxRequest>>,
-    server_sender: Option<&mpsc::Sender<AuthenticatedServerRequest>>,
-    product_sender: Option<&mpsc::Sender<AuthenticatedProductRequest>>,
+    sender: &IngressSender<AuthenticatedAgentEvent>,
+    tmux_sender: Option<&IngressSender<AuthenticatedTmuxRequest>>,
+    server_sender: Option<&IngressSender<AuthenticatedServerRequest>>,
+    product_sender: Option<&IngressSender<AuthenticatedProductRequest>>,
 ) {
     let (connections, receiver) = mpsc::sync_channel(AgentIpcServer::MAX_PENDING_CONNECTIONS);
     let receiver = Arc::new(Mutex::new(receiver));
@@ -842,10 +855,10 @@ fn serve(
 fn handle_connection(
     mut stream: UnixStream,
     registry: &Mutex<PaneTokenRegistry>,
-    sender: &mpsc::Sender<AuthenticatedAgentEvent>,
-    tmux_sender: Option<&mpsc::Sender<AuthenticatedTmuxRequest>>,
-    server_sender: Option<&mpsc::Sender<AuthenticatedServerRequest>>,
-    product_sender: Option<&mpsc::Sender<AuthenticatedProductRequest>>,
+    sender: &IngressSender<AuthenticatedAgentEvent>,
+    tmux_sender: Option<&IngressSender<AuthenticatedTmuxRequest>>,
+    server_sender: Option<&IngressSender<AuthenticatedServerRequest>>,
+    product_sender: Option<&IngressSender<AuthenticatedProductRequest>>,
 ) {
     let _ = stream.set_read_timeout(Some(AgentIpcServer::CONNECTION_TIMEOUT));
     let _ = stream.set_write_timeout(Some(AgentIpcServer::CONNECTION_TIMEOUT));
@@ -935,7 +948,10 @@ fn handle_connection(
                     AgentIpcError::Remote { category, .. } => category,
                     AgentIpcError::Rejected(_) => ApplicationErrorCategory::ProductRejection,
                 }),
-                code: "request_rejected".to_owned(),
+                code: match &error {
+                    AgentIpcError::Remote { code, .. } => code.clone(),
+                    _ => "request_rejected".to_owned(),
+                },
                 message: error.to_string(),
             }),
         },
@@ -1015,10 +1031,10 @@ impl From<ProductIpcReply> for ProductReply {
 fn receive_request(
     stream: &mut UnixStream,
     registry: &Mutex<PaneTokenRegistry>,
-    sender: &mpsc::Sender<AuthenticatedAgentEvent>,
-    tmux_sender: Option<&mpsc::Sender<AuthenticatedTmuxRequest>>,
-    server_sender: Option<&mpsc::Sender<AuthenticatedServerRequest>>,
-    product_sender: Option<&mpsc::Sender<AuthenticatedProductRequest>>,
+    sender: &IngressSender<AuthenticatedAgentEvent>,
+    tmux_sender: Option<&IngressSender<AuthenticatedTmuxRequest>>,
+    server_sender: Option<&IngressSender<AuthenticatedServerRequest>>,
+    product_sender: Option<&IngressSender<AuthenticatedProductRequest>>,
 ) -> Result<ReceivedResponse, AgentIpcError> {
     let mut frame = Vec::new();
     stream
@@ -1051,9 +1067,7 @@ fn receive_request(
                 .authenticate(&token, event)
                 .map_err(pane_token_rejection)?;
             drop(registry);
-            sender.send(authenticated).map_err(|_| {
-                AgentIpcError::Rejected("application event receiver unavailable".to_owned())
-            })?;
+            sender.send(authenticated).map_err(ingress_rejection)?;
             Ok(ReceivedResponse {
                 id: request.id,
                 reply: None,
@@ -1081,11 +1095,7 @@ fn receive_request(
                     request: payload,
                     responder,
                 })
-                .map_err(|_| {
-                    AgentIpcError::Rejected(
-                        "tmux compatibility product receiver unavailable".to_owned(),
-                    )
-                })?;
+                .map_err(ingress_rejection)?;
             let reply = response
                 .recv_timeout(AgentIpcServer::TMUX_REPLY_TIMEOUT)
                 .map_err(|_| {
@@ -1125,7 +1135,7 @@ fn receive_product_request(
     target: AgentTarget,
     authority: CapabilityAuthority,
     subcommand: &str,
-    product_sender: Option<&mpsc::Sender<AuthenticatedProductRequest>>,
+    product_sender: Option<&IngressSender<AuthenticatedProductRequest>>,
 ) -> Result<ReceivedResponse, AgentIpcError> {
     if let Some(version) = request.application_api_version
         && version != APPLICATION_API_VERSION
@@ -1157,7 +1167,7 @@ fn receive_product_request(
             request: payload,
             responder,
         })
-        .map_err(|_| AgentIpcError::Rejected("product command receiver unavailable".to_owned()))?;
+        .map_err(ingress_rejection)?;
     let reply = response
         .recv_timeout(AgentIpcServer::APPLICATION_REPLY_TIMEOUT)
         .map_err(|_| AgentIpcError::Rejected("product command response timed out".to_owned()))?;
@@ -1171,7 +1181,7 @@ fn receive_server_request(
     request: WireRequest,
     target: AgentTarget,
     subcommand: &str,
-    server_sender: Option<&mpsc::Sender<AuthenticatedServerRequest>>,
+    server_sender: Option<&IngressSender<AuthenticatedServerRequest>>,
 ) -> Result<ReceivedResponse, AgentIpcError> {
     let payload = ServerIpcRequest::new(subcommand, request.arguments)
         .map_err(|error| AgentIpcError::Rejected(error.to_string()))?;
@@ -1185,9 +1195,7 @@ fn receive_server_request(
             request: payload,
             responder,
         })
-        .map_err(|_| {
-            AgentIpcError::Rejected("development-server product receiver unavailable".to_owned())
-        })?;
+        .map_err(ingress_rejection)?;
     let reply = response
         .recv_timeout(AgentIpcServer::TMUX_REPLY_TIMEOUT)
         .map_err(|_| AgentIpcError::Rejected("development-server response timed out".to_owned()))?;
@@ -1195,6 +1203,22 @@ fn receive_server_request(
         id: request.id,
         reply: Some(reply.into()),
     })
+}
+
+fn ingress_rejection<T: IngressMessage>(error: IngressSendError<T>) -> AgentIpcError {
+    match error {
+        IngressSendError::Full(message) => AgentIpcError::Remote {
+            category: ApplicationErrorCategory::ProductUnavailable,
+            code: "ingress_full".to_owned(),
+            message: format!(
+                "application ingress full for pane {}; request was not accepted",
+                message.pane_id()
+            ),
+        },
+        IngressSendError::Disconnected(_) => {
+            AgentIpcError::Rejected("application ingress receiver unavailable".to_owned())
+        }
+    }
 }
 
 fn validate_envelope(request: &WireRequest) -> Result<(), AgentIpcError> {

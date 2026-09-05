@@ -10,7 +10,7 @@ use zentty_tmux_compat::{Command as TmuxCommand, TmuxCompatReply};
 fn server() -> (
     std::path::PathBuf,
     AgentIpcServer,
-    mpsc::Receiver<zentty_agent_ipc::AuthenticatedTmuxRequest>,
+    zentty_agent_ipc::IngressReceiver<zentty_agent_ipc::AuthenticatedTmuxRequest>,
 ) {
     let directory = std::env::temp_dir().join(format!(
         "zentty-tmux-cli-{}-{:?}",
@@ -26,8 +26,8 @@ fn server() -> (
             AgentTarget::new("real-window", "real-lane", "real-pane"),
         )
         .unwrap();
-    let (event_sender, _event_receiver) = mpsc::channel();
-    let (tmux_sender, tmux_receiver) = mpsc::channel();
+    let (event_sender, _event_receiver) = zentty_agent_ipc::ingress_channel(128, 16);
+    let (tmux_sender, tmux_receiver) = zentty_agent_ipc::ingress_channel(32, 4);
     let server = AgentIpcServer::start_with_tmux(
         &socket,
         Arc::new(Mutex::new(registry)),

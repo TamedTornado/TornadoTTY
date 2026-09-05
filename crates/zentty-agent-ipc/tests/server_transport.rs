@@ -1,5 +1,5 @@
 use std::fs;
-use std::sync::{Arc, Mutex, mpsc};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use zentty_agent_ipc::{AgentIpcClient, AgentIpcServer, ServerIpcReply};
@@ -17,9 +17,9 @@ fn real_socket_authenticates_and_routes_server_commands_without_trusting_claimed
     let canonical = AgentTarget::new("window-real", "lane-real", "pane-real");
     let mut registry = PaneTokenRegistry::default();
     registry.register("token-real", canonical.clone()).unwrap();
-    let (event_sender, _event_receiver) = mpsc::channel();
-    let (tmux_sender, _tmux_receiver) = mpsc::channel();
-    let (server_sender, server_receiver) = mpsc::channel();
+    let (event_sender, _event_receiver) = zentty_agent_ipc::ingress_channel(128, 16);
+    let (tmux_sender, _tmux_receiver) = zentty_agent_ipc::ingress_channel(32, 4);
+    let (server_sender, server_receiver) = zentty_agent_ipc::ingress_channel(32, 4);
     let server = AgentIpcServer::start_with_product_routes(
         &socket,
         Arc::new(Mutex::new(registry)),
@@ -66,9 +66,9 @@ fn waiting_server_handler_does_not_hold_authentication_or_block_agent_events() {
     let canonical = AgentTarget::new("window", "lane", "pane");
     let mut registry = PaneTokenRegistry::default();
     registry.register("token", canonical.clone()).unwrap();
-    let (event_sender, event_receiver) = mpsc::channel();
-    let (tmux_sender, _tmux_receiver) = mpsc::channel();
-    let (server_sender, server_receiver) = mpsc::channel();
+    let (event_sender, event_receiver) = zentty_agent_ipc::ingress_channel(128, 16);
+    let (tmux_sender, _tmux_receiver) = zentty_agent_ipc::ingress_channel(32, 4);
+    let (server_sender, server_receiver) = zentty_agent_ipc::ingress_channel(32, 4);
     let server = AgentIpcServer::start_with_product_routes(
         &socket,
         Arc::new(Mutex::new(registry)),
