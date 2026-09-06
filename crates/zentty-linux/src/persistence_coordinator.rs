@@ -1,13 +1,10 @@
 use std::path::{Path, PathBuf};
-use std::sync::mpsc;
-use std::thread;
 use std::time::Duration;
 use zentty_linux::platform::{UserDirectory, resolve_user_path};
 
 use zentty_core::{
     PaneRestoreDraft, PersistenceRequest, SaveReason, SessionRestoreDraftWindow,
-    SessionRestoreEnvelope, SessionRestoreStore, SnapshotPersistence, WindowRecipe,
-    WorkspaceRecipe, WorkspaceState,
+    SessionRestoreEnvelope, SessionRestoreStore, WindowRecipe, WorkspaceRecipe, WorkspaceState,
 };
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -62,139 +59,8 @@ struct PendingLiveSnapshot {
     deadline: Duration,
 }
 
-enum PersistenceWorkerRequest {
-    Persist {
-        request: PersistenceRequest,
-        generation: u64,
-    },
-    PersistSynchronously {
-        request: PersistenceRequest,
-        generation: u64,
-        clean_exit_timestamp: Option<f64>,
-        response: mpsc::SyncSender<Result<bool, String>>,
-    },
-    #[cfg(test)]
-    Synchronize(mpsc::SyncSender<()>),
-    Shutdown,
-}
-
-struct PersistenceWorker {
-    requests: mpsc::Sender<PersistenceWorkerRequest>,
-    results: mpsc::Receiver<Result<bool, String>>,
-    thread: Option<thread::JoinHandle<()>>,
-}
-
-impl PersistenceWorker {
-    fn spawn(store: SessionRestoreStore) -> Result<Self, String> {
-        let (request_sender, request_receiver) = mpsc::channel();
-        let (result_sender, result_receiver) = mpsc::channel();
-        let thread = thread::Builder::new()
-            .name("zentty-session-persistence".to_owned())
-            .spawn(move || {
-                let mut persistence = SnapshotPersistence::new(store);
-                while let Ok(request) = request_receiver.recv() {
-                    match request {
-                        PersistenceWorkerRequest::Persist {
-                            request,
-                            generation,
-                        } => {
-                            let result = persistence
-                                .persist(request, generation)
-                                .map_err(|error| error.to_string());
-                            let _ = result_sender.send(result);
-                        }
-                        PersistenceWorkerRequest::PersistSynchronously {
-                            request,
-                            generation,
-                            clean_exit_timestamp,
-                            response,
-                        } => {
-                            let result = persistence
-                                .persist(request, generation)
-                                .map_err(|error| error.to_string())
-                                .and_then(|accepted| {
-                                    if !accepted {
-                                        return Ok(false);
-                                    }
-                                    if let Some(updated_at) = clean_exit_timestamp {
-                                        persistence
-                                            .store()
-                                            .mark_clean_exit(updated_at)
-                                            .map_err(|error| error.to_string())?;
-                                    }
-                                    Ok(accepted)
-                                });
-                            let _ = response.send(result);
-                        }
-                        #[cfg(test)]
-                        PersistenceWorkerRequest::Synchronize(response) => {
-                            let _ = response.send(());
-                        }
-                        PersistenceWorkerRequest::Shutdown => break,
-                    }
-                }
-            })
-            .map_err(|error| format!("could not start session-persistence worker: {error}"))?;
-        Ok(Self {
-            requests: request_sender,
-            results: result_receiver,
-            thread: Some(thread),
-        })
-    }
-
-    fn persist(&self, request: PersistenceRequest, generation: u64) -> Result<(), String> {
-        self.requests
-            .send(PersistenceWorkerRequest::Persist {
-                request,
-                generation,
-            })
-            .map_err(|_| "session-persistence worker stopped before accepting a save".to_owned())
-    }
-
-    fn persist_synchronously(
-        &self,
-        request: PersistenceRequest,
-        generation: u64,
-        clean_exit_timestamp: Option<f64>,
-    ) -> Result<bool, String> {
-        let (sender, receiver) = mpsc::sync_channel(1);
-        self.requests
-            .send(PersistenceWorkerRequest::PersistSynchronously {
-                request,
-                generation,
-                clean_exit_timestamp,
-                response: sender,
-            })
-            .map_err(|_| {
-                "session-persistence worker stopped before accepting a synchronous save".to_owned()
-            })?;
-        receiver.recv().map_err(|_| {
-            "session-persistence worker stopped before completing a synchronous save".to_owned()
-        })?
-    }
-
-    fn drain_errors(&self) -> Vec<String> {
-        self.results.try_iter().filter_map(Result::err).collect()
-    }
-
-    #[cfg(test)]
-    fn synchronize(&self) {
-        let (sender, receiver) = mpsc::sync_channel(1);
-        self.requests
-            .send(PersistenceWorkerRequest::Synchronize(sender))
-            .unwrap();
-        receiver.recv().unwrap();
-    }
-}
-
-impl Drop for PersistenceWorker {
-    fn drop(&mut self) {
-        let _ = self.requests.send(PersistenceWorkerRequest::Shutdown);
-        if let Some(thread) = self.thread.take() {
-            let _ = thread.join();
-        }
-    }
-}
+mod worker;
+use worker::PersistenceWorker;
 
 pub(crate) struct PersistenceCoordinator {
     worker: PersistenceWorker,
@@ -269,14 +135,8 @@ impl PersistenceCoordinator {
             return Ok(());
         }
         self.next_generation = self.next_generation.wrapping_add(1);
-        let accepted = self.worker.persist_synchronously(
-            PersistenceRequest::DeleteSnapshot,
-            self.next_generation,
-            None,
-        )?;
-        if !accepted {
-            return Err("restore snapshot consumption rejected a current generation".to_owned());
-        }
+        self.worker
+            .persist(PersistenceRequest::DeleteSnapshot, self.next_generation)?;
         self.prepared_restore = false;
         Ok(())
     }
@@ -337,7 +197,7 @@ impl PersistenceCoordinator {
         Ok(true)
     }
 
-    pub(crate) fn drain_live_snapshot_errors(&self) -> Vec<String> {
+    pub(crate) fn drain_background_errors(&self) -> Vec<String> {
         self.worker.drain_errors()
     }
 
@@ -573,10 +433,10 @@ mod tests {
         include_bytes!("../../zentty-core/tests/fixtures/session-restore-v3.json");
     static DIRECTORY_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
-    struct TestDirectory(PathBuf);
+    pub(super) struct TestDirectory(pub(super) PathBuf);
 
     impl TestDirectory {
-        fn new(label: &str) -> Self {
+        pub(super) fn new(label: &str) -> Self {
             let sequence = DIRECTORY_SEQUENCE.fetch_add(1, Ordering::Relaxed);
             let path = std::env::temp_dir().join(format!(
                 "zentty-persistence-coordinator-{label}-{}-{sequence}",
@@ -586,7 +446,7 @@ mod tests {
             Self(path)
         }
 
-        fn store(&self) -> SessionRestoreStore {
+        pub(super) fn store(&self) -> SessionRestoreStore {
             SessionRestoreStore::new(
                 self.0.join("restore-snapshot.json"),
                 self.0.join("restore-lifecycle.json"),
@@ -604,7 +464,7 @@ mod tests {
         }
     }
 
-    fn envelope() -> SessionRestoreEnvelope {
+    pub(super) fn envelope() -> SessionRestoreEnvelope {
         SessionRestoreEnvelope::from_json(V3_ENVELOPE).unwrap()
     }
 
@@ -652,6 +512,37 @@ mod tests {
     }
 
     #[test]
+    fn launch_does_not_wait_for_contended_snapshot_storage() {
+        let directory = TestDirectory::new("launch-contended");
+        let store = directory.store();
+        store.save_snapshot(&envelope()).unwrap();
+        store.mark_clean_exit(1.0).unwrap();
+        let (mut coordinator, _) = PersistenceCoordinator::start(&directory.0, true, 2.0).unwrap();
+        let lock = fs::File::open(store.snapshot_path().with_extension("lock")).unwrap();
+        lock.lock().unwrap();
+        // A real write ahead of consumption is blocked on the storage lock.
+        coordinator
+            .worker
+            .persist(PersistenceRequest::SaveSnapshot(envelope()), 0)
+            .unwrap();
+        // Launch completion must not wait behind that storage operation.
+        let started = std::time::Instant::now();
+        let result = coordinator.complete_launch();
+        let elapsed = started.elapsed();
+        drop(lock);
+        assert!(
+            result.is_ok(),
+            "launch waited on locked storage: {result:?}"
+        );
+        assert!(
+            elapsed < Duration::from_millis(200),
+            "launch blocked for {elapsed:?}"
+        );
+        coordinator.worker.synchronize();
+        assert!(!store.snapshot_path().exists());
+    }
+
+    #[test]
     fn startup_projects_the_existing_snapshot_and_marks_the_launch_unclean() {
         let directory = TestDirectory::new("startup");
         let store = directory.store();
@@ -667,6 +558,7 @@ mod tests {
         assert!(launch.warning.is_none());
         assert!(store.snapshot_path().is_file());
         coordinator.complete_launch().unwrap();
+        coordinator.worker.synchronize();
         assert!(!store.snapshot_path().exists());
         assert_eq!(store.prepare_for_launch(false).unwrap(), None,);
     }
@@ -987,10 +879,10 @@ mod tests {
                 .unwrap()
         );
         coordinator.worker.synchronize();
-        let errors = coordinator.drain_live_snapshot_errors();
+        let errors = coordinator.drain_background_errors();
         assert_eq!(errors.len(), 1);
         assert!(errors[0].contains("persist JSON failed"));
-        assert!(coordinator.drain_live_snapshot_errors().is_empty());
+        assert!(coordinator.drain_background_errors().is_empty());
     }
 
     #[test]

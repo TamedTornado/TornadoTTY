@@ -86,9 +86,9 @@ No traffic targets Jason's client, and no installed binary is replaced.
 
 ## Remaining #163 scope — not complete
 
-- Persistence still has an unbounded worker-request/result channel and
-  synchronous waits in explicit save/clean-exit paths. Coalescing latest live
-  snapshots must preserve durable topology and clean-exit ordering.
+- Persistence was the next unbounded boundary; the September 6 entry below
+  records its replacement and the distinction between startup and post-GUI
+  shutdown waits.
 - Transcript enrichment still creates replacement threads and uses an
   unbounded result channel. Generation/cancellation checks exist, but alone do
   not impose a hard concurrency/retention bound.
@@ -125,3 +125,108 @@ Local outputs: `/tmp/gh163-ipc-final.log`, `/tmp/gh163-clippy-complete.log`,
 `/tmp/gh163-cli-gtk.log`. Commands above recreate them. No full matrix was run;
 no new aggregate matrix totals or Wayland result is claimed. The built product
 is staged in `build/gh163`, not deployed into the running application.
+
+## September 6 — bounded persistence worker (#163)
+
+### Findings and decisions
+
+- The old worker had unbounded request **and completion** channels. The
+  existing 350 ms live-state debounce limited submission frequency, not queue
+  retention when storage fell behind. Successful completion messages also
+  accumulated until the GUI drained them.
+- Correction to the earlier scope note: `save_clean_exit` runs **after** the
+  GTK loop, window teardown, and Ghostty runtime drop. Its synchronous wait
+  is a durability barrier, not an active-GUI freeze. Preserve it; do not add
+  an asynchronous quit state machine or a timeout that claims unsaved state
+  was saved.
+- `complete_launch` did wait for the worker before entering the GTK loop.
+  Launch now submits snapshot consumption asynchronously. A newer pending
+  snapshot may supersede that deletion: replacing old state with current
+  state is the intended equivalent, not deletion of the newer snapshot.
+- Snapshot deletion itself does not acquire the adjacent storage lock. The
+  first attempted contention fixture incorrectly assumed it did; corrected
+  the fixture to enqueue a real locked **write** ahead of consumption. The
+  old implementation then waited through the 250 ms lock deadline. The
+  focused test requires launch submission below 200 ms, releases the lock,
+  flushes the actual worker, and checks consumption on disk.
+
+### Implementation bounds and ordering
+
+- Replaced the old worker, rather than adding a forwarding system. Its
+  focused module owns one pending latest-value snapshot, at most one
+  in-flight operation, and one non-coalescible control barrier. There is
+  still exactly one persistence thread. No disk I/O holds the mailbox lock.
+- Pending ordinary snapshots are replaced only by a current generation.
+  Superseded topology is freed outside the lock. This is a bound on retained
+  snapshot **count**, not a claim that arbitrarily large workspace topology
+  has a fixed byte size.
+- A final save excludes further submissions, follows the pending live save
+  so draft merging still works, and marks clean only after an accepted,
+  successful final publication. Worker teardown drains accepted state;
+  worker unwinding disconnects outstanding response waiters.
+- Completion retention is one failure-count/latest-error summary. Successes
+  do not allocate queued receipts or erase previous errors. Coalescing has a
+  bounded counter logged when the GUI drains background diagnostics.
+- Background failures now have an operation-neutral log prefix because
+  they include launch consumption as well as live writes. No payloads or
+  private terminal contents are added to logs.
+
+### Focused validation checkpoint
+
+- **23 persistence tests passed**, including real file-store publication,
+  1,000-to-one pending-save coalescing, stale rejection, barrier ordering,
+  ten storage failures followed by success, teardown draining, unvisited
+  agent draft preservation, and two clean relaunches.
+- Queue saturation tests deliberately park worker scheduling before starting
+  it; they do not replace file writes with fake success. The lock-contention
+  regression exercises the actual storage boundary.
+- Strict GTK binary/test Clippy is **not green**: six diagnostics remain in
+  unchanged application coordinator, agent-event, pane-runtime, shell, and
+  window-chrome code. The newly introduced worker warning was corrected;
+  no remaining diagnostic references the changed persistence code. These
+  unrelated findings were not suppressed or swept into this repair.
+- The first mutation pass exposed overlapping lifecycle booleans and a
+  missing queued-final-save shutdown case: 14 caught, 4 missed, 2 unviable,
+  4 timeouts. Replaced the booleans with explicit Open/Barrier/Closing/Stopped
+  states, added queued-barrier shutdown coverage, and tested the pressure
+  summary rather than incidental log formatting. The second pass left one
+  missed mutant that panicked only at worker exit after successfully saving;
+  the shutdown test now asserts the thread's join result as well as disk state.
+- Final mutation audit: **19 caught, 0 missed, 2 compiler-unviable, 5
+  timeouts**, 26 total in 3 minutes. The five mutations remove shutdown/work
+  or break the condition-variable wake condition; each hangs and is stopped
+  by the 20-second mutation test limit. The runner exits 3 for those timeouts,
+  not a product-test failure. Do not count the two unviable mutations as kills
+  (one requests an absent `Default` implementation, one creates an invalid
+  let-chain). The ordinary 23-test baseline completes in about 0.08 seconds.
+- Final product-only build **PASS**, dependency-age audit **PASS** (91
+  packages, zero exceptions), notice collection **PASS**. Existing private-X11
+  restore scenarios both **PASS** on that build: unvisited authenticated-agent
+  restoration through two relaunches, and unresolved Codex alias preservation
+  through two unvisited relaunches followed by launch on visit.
+- No full qualification or new matrix total is claimed. Jason's
+  installed/running client has not been replaced or stopped. The staged
+  executable is `build/gh163/bin/zentty-linux`.
+
+Reproduction commands (GUI and mutation commands need the existing host
+permission boundary):
+
+```sh
+cargo test -p zentty-linux --bin zentty-linux persistence_coordinator --offline --locked
+linux/tests/mutate-rust -p zentty-linux \
+  -f crates/zentty-linux/src/persistence_coordinator/worker.rs -j 4 \
+  --cargo-test-arg=--bin=zentty-linux --cargo-test-arg=persistence_coordinator \
+  --timeout 20 --output /tmp/gh163-persistence-mutants-complete
+ZENTTY_BUILD_SCOPE=product ZENTTY_BUILD_OUTPUT_DIR="$PWD/build/gh163" linux/scripts/build-local
+ZENTTY_LINUX_BINARY="$PWD/build/gh163/bin/zentty-linux" \
+  ZENTTY_UNVISITED_RESTORE_ONLY=true linux/tests/nested-x11 linux/tests/rust-session-restore
+ZENTTY_LINUX_BINARY="$PWD/build/gh163/bin/zentty-linux" \
+  ZENTTY_CODEX_ALIAS_RESTORE_ONLY=true linux/tests/nested-x11 linux/tests/rust-session-restore
+```
+
+Local logs are `/tmp/gh163-persistence-tests.log`,
+`/tmp/gh163-persistence-mutants{,-final,-complete}.log`,
+`/tmp/gh163-persistence-build-final.log`,
+`/tmp/gh163-persistence-clippy-final.log`,
+`/tmp/gh163-persistence-restore-final.log`, and
+`/tmp/gh163-persistence-alias-final.log`.

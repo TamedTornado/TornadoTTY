@@ -271,8 +271,8 @@ fn install_live_snapshot_source(
         if let Err(error) = persistence.flush_live_snapshot_if_due(now, reference_timestamp()) {
             eprintln!("zentty-linux: Failed to persist live restore snapshot: {error}");
         }
-        for error in persistence.drain_live_snapshot_errors() {
-            eprintln!("zentty-linux: Failed to persist live restore snapshot: {error}");
+        for error in persistence.drain_background_errors() {
+            eprintln!("zentty-linux: Background session persistence failed: {error}");
         }
         glib::ControlFlow::Continue
     })
