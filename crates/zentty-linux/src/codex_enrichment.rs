@@ -1,13 +1,21 @@
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use zentty_core::{
-    CodexTranscriptCacheKey, CodexTranscriptEnrichmentCandidate, CodexTranscriptQuestion,
+    CodexTranscriptEnrichmentCandidate, CodexTranscriptQuestion,
     codex_question_from_transcript_path, codex_transcript_cache_key,
     locate_recent_codex_transcript_path,
 };
+
+mod cache;
+use cache::{QuestionCache, TranscriptPaths};
+
+// Per window owner: include stale/cancelled threads until they actually exit.
+const MAX_WORKERS: usize = 4;
+const MAX_PENDING: usize = 32;
+const MAX_RESULTS_PER_TICK: usize = 4;
 
 const RETRY_DELAYS: [Duration; 5] = [
     Duration::ZERO,
@@ -35,6 +43,12 @@ struct PendingWorker {
     candidate: CodexTranscriptEnrichmentCandidate,
     generation: u64,
     cancellation: Arc<AtomicBool>,
+}
+
+struct ActiveWorker {
+    pane_id: String,
+    generation: u64,
+    thread: std::thread::JoinHandle<()>,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -67,12 +81,16 @@ pub(crate) struct CodexTranscriptEnricher {
     codex_home: PathBuf,
     delays: Vec<Duration>,
     pending_by_pane: BTreeMap<String, PendingWorker>,
-    transcript_by_session: BTreeMap<(String, String), PathBuf>,
-    cache: Arc<Mutex<HashMap<CodexTranscriptCacheKey, CodexTranscriptQuestion>>>,
-    sender: mpsc::Sender<WorkerResult>,
+    queued: VecDeque<String>,
+    active: Vec<ActiveWorker>,
+    transcript_by_session: TranscriptPaths,
+    cache: Arc<Mutex<QuestionCache>>,
+    sender: mpsc::SyncSender<WorkerResult>,
     receiver: mpsc::Receiver<WorkerResult>,
     next_generation: u64,
     shutting_down: bool,
+    rejected: u64,
+    last_pressure_report: Option<Instant>,
 }
 
 impl CodexTranscriptEnricher {
@@ -81,22 +99,32 @@ impl CodexTranscriptEnricher {
     }
 
     fn with_delays(codex_home: PathBuf, delays: Vec<Duration>) -> Self {
-        let (sender, receiver) = mpsc::channel();
+        let (sender, receiver) = mpsc::sync_channel(MAX_RESULTS_PER_TICK);
         Self {
             codex_home,
             delays,
             pending_by_pane: BTreeMap::new(),
-            transcript_by_session: BTreeMap::new(),
-            cache: Arc::new(Mutex::new(HashMap::new())),
+            queued: VecDeque::new(),
+            active: Vec::new(),
+            transcript_by_session: TranscriptPaths::default(),
+            cache: Arc::new(Mutex::new(QuestionCache::default())),
             sender,
             receiver,
             next_generation: 0,
             shutting_down: false,
+            rejected: 0,
+            last_pressure_report: None,
         }
     }
 
     pub(crate) fn schedule(&mut self, candidate: CodexTranscriptEnrichmentCandidate) -> bool {
         if self.shutting_down {
+            return false;
+        }
+        if !self.pending_by_pane.contains_key(&candidate.pane_id)
+            && self.pending_by_pane.len() >= MAX_PENDING
+        {
+            self.rejected = self.rejected.saturating_add(1);
             return false;
         }
         if let Some(pending) = self.pending_by_pane.get(&candidate.pane_id) {
@@ -108,21 +136,83 @@ impl CodexTranscriptEnricher {
         self.next_generation = self.next_generation.wrapping_add(1);
         let generation = self.next_generation;
         let cancellation = Arc::new(AtomicBool::new(false));
+        if !self.queued.contains(&candidate.pane_id) {
+            self.queued.push_back(candidate.pane_id.clone());
+        }
         self.pending_by_pane.insert(
             candidate.pane_id.clone(),
             PendingWorker {
-                candidate: candidate.clone(),
+                candidate,
                 generation,
-                cancellation: Arc::clone(&cancellation),
+                cancellation,
             },
         );
+        self.dispatch();
+        true
+    }
+
+    fn dispatch(&mut self) {
+        self.reap_finished();
+        while self.active.len() < MAX_WORKERS {
+            // A cancelled read still occupies its pane's slot until it exits.
+            // Skip that pane so replacements cannot monopolize all workers.
+            let Some(index) = self
+                .queued
+                .iter()
+                .position(|pane| !self.active.iter().any(|worker| &worker.pane_id == pane))
+            else {
+                break;
+            };
+            let pane_id = self
+                .queued
+                .remove(index)
+                .expect("selected queued pane exists");
+            let pending = self
+                .pending_by_pane
+                .get(&pane_id)
+                .expect("queued pane owns a candidate");
+            let candidate = pending.candidate.clone();
+            let generation = pending.generation;
+            let cancellation = Arc::clone(&pending.cancellation);
+            self.spawn(candidate, generation, cancellation);
+        }
+    }
+
+    fn reap_finished(&mut self) {
+        for index in (0..self.active.len()).rev() {
+            if !self.active[index].thread.is_finished() {
+                continue;
+            }
+            let worker = self.active.swap_remove(index);
+            if worker.thread.join().is_err() {
+                if self
+                    .pending_by_pane
+                    .get(&worker.pane_id)
+                    .is_some_and(|pending| pending.generation == worker.generation)
+                {
+                    self.pending_by_pane.remove(&worker.pane_id);
+                }
+                eprintln!(
+                    "zentty-linux: codex-transcript-worker-failed pane={} reason=panic",
+                    worker.pane_id
+                );
+            }
+        }
+    }
+
+    fn spawn(
+        &mut self,
+        candidate: CodexTranscriptEnrichmentCandidate,
+        generation: u64,
+        cancellation: Arc<AtomicBool>,
+    ) {
         let preferred_path = candidate
             .transcript_path
             .as_ref()
             .map(PathBuf::from)
             .or_else(|| {
                 self.transcript_by_session
-                    .get(&(candidate.pane_id.clone(), candidate.session_id.clone()))
+                    .get(&candidate.pane_id, &candidate.session_id)
                     .cloned()
             });
         let codex_home = self.codex_home.clone();
@@ -148,16 +238,32 @@ impl CodexTranscriptEnricher {
                     question,
                 });
             });
-        if spawn.is_err() {
-            self.pending_by_pane.remove(&pane_id);
-            return false;
+        match spawn {
+            Ok(thread) => self.active.push(ActiveWorker {
+                pane_id,
+                generation,
+                thread,
+            }),
+            Err(error) => {
+                self.pending_by_pane.remove(&pane_id);
+                eprintln!(
+                    "zentty-linux: codex-transcript-worker-failed pane={pane_id} reason=spawn error={error}"
+                );
+            }
         }
-        true
     }
 
     pub(crate) fn drain(&mut self) -> Vec<CodexTranscriptEnrichment> {
         let mut enrichments = Vec::new();
-        for result in self.receiver.try_iter() {
+        if self.shutting_down {
+            return enrichments;
+        }
+        if let Some(rejected) = self.take_pressure(Instant::now()) {
+            eprintln!(
+                "zentty-linux: codex-transcript-backpressure boundary=window rejected={rejected} pending-capacity={MAX_PENDING} worker-capacity={MAX_WORKERS}"
+            );
+        }
+        for result in self.receiver.try_iter().take(MAX_RESULTS_PER_TICK) {
             let pending = self.pending_by_pane.get(&result.candidate.pane_id);
             if completion_decision(
                 self.shutting_down,
@@ -173,10 +279,8 @@ impl CodexTranscriptEnricher {
                 continue;
             };
             self.transcript_by_session.insert(
-                (
-                    result.candidate.pane_id.clone(),
-                    result.candidate.session_id.clone(),
-                ),
+                result.candidate.pane_id.clone(),
+                result.candidate.session_id.clone(),
                 path,
             );
             enrichments.push(CodexTranscriptEnrichment {
@@ -184,10 +288,25 @@ impl CodexTranscriptEnricher {
                 question,
             });
         }
+        self.dispatch();
         enrichments
     }
 
+    fn take_pressure(&mut self, now: Instant) -> Option<u64> {
+        if self.rejected == 0
+            || self
+                .last_pressure_report
+                .is_some_and(|last| now.saturating_duration_since(last) < Duration::from_secs(5))
+        {
+            return None;
+        }
+        self.last_pressure_report = Some(now);
+        Some(std::mem::take(&mut self.rejected))
+    }
+
     pub(crate) fn cancel_pane(&mut self, pane_id: &str) -> bool {
+        self.queued.retain(|queued| queued != pane_id);
+        self.transcript_by_session.remove_pane(pane_id);
         let Some(pending) = self.pending_by_pane.remove(pane_id) else {
             return false;
         };
@@ -197,9 +316,12 @@ impl CodexTranscriptEnricher {
 
     pub(crate) fn shutdown(&mut self) {
         self.shutting_down = true;
+        self.queued.clear();
         for (_, pending) in std::mem::take(&mut self.pending_by_pane) {
             pending.cancellation.store(true, Ordering::Release);
         }
+        // Free result capacity without waiting for file I/O or joining live threads.
+        for _ in self.receiver.try_iter().take(MAX_RESULTS_PER_TICK) {}
     }
 
     #[cfg(test)]
@@ -219,7 +341,7 @@ fn resolve_with_retries(
     working_directory: Option<&str>,
     preferred_path: Option<&Path>,
     delays: &[Duration],
-    cache: &Mutex<HashMap<CodexTranscriptCacheKey, CodexTranscriptQuestion>>,
+    cache: &Mutex<QuestionCache>,
     cancellation: &AtomicBool,
 ) -> (Option<PathBuf>, Option<CodexTranscriptQuestion>) {
     for delay in delays {
@@ -260,6 +382,8 @@ fn resolve_with_retries(
 
 #[cfg(test)]
 mod tests {
+    mod limits;
+
     use super::{CodexTranscriptEnricher, CompletionDecision, completion_decision};
     use std::fs;
     use std::os::unix::fs::PermissionsExt;
@@ -295,6 +419,141 @@ mod tests {
             assert!(Instant::now() < deadline, "transcript enrichment timed out");
             std::thread::sleep(Duration::from_millis(2));
         }
+    }
+
+    #[test]
+    fn admission_is_bounded_before_the_ui_drains_completions() {
+        let root = temporary_directory("admission");
+        let mut enricher =
+            CodexTranscriptEnricher::with_delays(root.clone(), vec![Duration::from_millis(100)]);
+        for index in 0..32 {
+            assert!(enricher.schedule(CodexTranscriptEnrichmentCandidate {
+                pane_id: format!("pane-{index}"),
+                session_id: "session".to_owned(),
+                working_directory: None,
+                transcript_path: None,
+            }));
+        }
+        assert!(!enricher.schedule(CodexTranscriptEnrichmentCandidate {
+            pane_id: "overflow".to_owned(),
+            session_id: "session".to_owned(),
+            working_directory: None,
+            transcript_path: None,
+        }));
+        assert!(
+            enricher.schedule(CodexTranscriptEnrichmentCandidate {
+                pane_id: "pane-31".to_owned(),
+                session_id: "replacement".to_owned(),
+                working_directory: None,
+                transcript_path: None,
+            }),
+            "existing panes must still replace queued work at capacity"
+        );
+        assert!(enricher.cancel_pane("pane-31"));
+        assert!(!enricher.queued.iter().any(|pane| pane == "pane-31"));
+        assert!(enricher.queued.iter().any(|pane| pane == "pane-30"));
+        assert!(enricher.schedule(CodexTranscriptEnrichmentCandidate {
+            pane_id: "newly-admitted".to_owned(),
+            session_id: "session".to_owned(),
+            working_directory: None,
+            transcript_path: None,
+        }));
+        enricher.shutdown();
+        assert!(enricher.queued.is_empty());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn stalled_workers_keep_replacements_bounded_and_service_the_quiet_pane() {
+        let root = temporary_directory("stalled");
+        let transcript = transcript_path(&root);
+        fs::write(&transcript, r#"{"type":"function_call","name":"request_user_input","arguments":{"question":"Current question?"}}"#).unwrap();
+        let mut enricher = CodexTranscriptEnricher::with_delays(root.clone(), vec![Duration::ZERO]);
+        let cache = std::sync::Arc::clone(&enricher.cache);
+        // Hold the real cache boundary, not a substitute resolver. All four
+        // workers remain alive; cancellation must not pretend they have exited.
+        let gate = cache.lock().unwrap();
+        let candidate = |pane: &str, session: &str| CodexTranscriptEnrichmentCandidate {
+            pane_id: pane.to_owned(),
+            session_id: session.to_owned(),
+            working_directory: None,
+            transcript_path: Some(transcript.to_string_lossy().into_owned()),
+        };
+        for index in 0..super::MAX_WORKERS {
+            assert!(enricher.schedule(candidate(&format!("pane-{index}"), "original")));
+        }
+        assert!(enricher.schedule(candidate("quiet", "quiet-session")));
+        for index in 0..1000 {
+            assert!(enricher.schedule(candidate("pane-0", &format!("replacement-{index}"))));
+            assert_eq!(enricher.active.len(), super::MAX_WORKERS);
+            assert!(enricher.queued.len() <= 2);
+            assert_eq!(enricher.pending_count(), super::MAX_WORKERS + 1);
+        }
+        drop(gate);
+        let mut results = Vec::new();
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while results.len() < super::MAX_WORKERS + 1 {
+            let batch = enricher.drain();
+            assert!(batch.len() <= super::MAX_RESULTS_PER_TICK);
+            assert!(enricher.active.len() <= super::MAX_WORKERS);
+            results.extend(batch);
+            assert!(
+                Instant::now() < deadline,
+                "quiet or current pane failed to complete"
+            );
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        let replaced: Vec<_> = results
+            .iter()
+            .filter(|result| result.candidate.pane_id == "pane-0")
+            .collect();
+        assert_eq!(replaced.len(), 1);
+        assert_eq!(replaced[0].candidate.session_id, "replacement-999");
+        assert!(
+            results
+                .iter()
+                .any(|result| result.candidate.session_id == "quiet-session")
+        );
+        assert!(
+            results
+                .iter()
+                .all(|result| result.question.text == "Current question?")
+        );
+        enricher.cancel_pane("quiet");
+        assert!(
+            enricher
+                .transcript_by_session
+                .get("quiet", "quiet-session")
+                .is_none()
+        );
+        enricher.shutdown();
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn one_stalled_pane_cannot_consume_other_worker_slots() {
+        let root = temporary_directory("one-stalled");
+        let transcript = transcript_path(&root);
+        fs::write(&transcript, "{}").unwrap();
+        let mut enricher = CodexTranscriptEnricher::with_delays(root.clone(), vec![Duration::ZERO]);
+        let cache = std::sync::Arc::clone(&enricher.cache);
+        let gate = cache.lock().unwrap();
+        let candidate = |pane: &str, session: usize| CodexTranscriptEnrichmentCandidate {
+            pane_id: pane.to_owned(),
+            session_id: session.to_string(),
+            working_directory: None,
+            transcript_path: Some(transcript.to_string_lossy().into_owned()),
+        };
+        for session in 0..1000 {
+            assert!(enricher.schedule(candidate("noisy", session)));
+            assert_eq!(enricher.active.len(), 1);
+        }
+        assert!(enricher.schedule(candidate("quiet", 0)));
+        assert_eq!(enricher.active.len(), 2);
+        assert_eq!(enricher.active[1].pane_id, "quiet");
+        drop(gate);
+        enricher.shutdown();
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

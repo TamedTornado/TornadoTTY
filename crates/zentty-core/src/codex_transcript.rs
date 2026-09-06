@@ -124,10 +124,14 @@ fn read_transcript_tail(path: &Path) -> Option<String> {
     }
     let mut file = File::open(path).ok()?;
     let length = file.seek(SeekFrom::End(0)).ok()?;
+    read_captured_tail(&mut file, length)
+}
+
+fn read_captured_tail(file: &mut File, length: u64) -> Option<String> {
     let start = length.saturating_sub(MAX_TAIL_BYTES);
     file.seek(SeekFrom::Start(start)).ok()?;
     let mut bytes = Vec::new();
-    file.read_to_end(&mut bytes).ok()?;
+    file.take(length - start).read_to_end(&mut bytes).ok()?;
     if start > 0 {
         let newline = bytes.iter().position(|byte| *byte == b'\n')?;
         bytes.drain(..=newline);
@@ -257,4 +261,45 @@ fn string_at<'a>(value: &'a Value, keys: &[&str]) -> Option<&'a str> {
         .find_map(|key| value.get(*key).and_then(Value::as_str))
         .map(str::trim)
         .filter(|value| !value.is_empty())
+}
+
+#[cfg(test)]
+mod bounded_read_tests {
+    use super::*;
+    use std::io::Write;
+
+    #[test]
+    fn append_after_length_capture_does_not_expand_the_read() {
+        let path = std::env::temp_dir().join(format!(
+            "tornadotty-codex-tail-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let mut file = fs::OpenOptions::new()
+            .create_new(true)
+            .read(true)
+            .write(true)
+            .open(&path)
+            .unwrap();
+        // Unlink immediately so assertions cannot leave a fixture on disk.
+        fs::remove_file(path).unwrap();
+        for prefix_size in [0, usize::try_from(MAX_TAIL_BYTES).unwrap()] {
+            file.set_len(0).unwrap();
+            file.rewind().unwrap();
+            if prefix_size != 0 {
+                file.write_all(&vec![b'x'; prefix_size]).unwrap();
+                file.write_all(b"\n").unwrap();
+            }
+            file.write_all(b"captured\n").unwrap();
+            let captured_length = file.stream_position().unwrap();
+            file.write_all(b"appended after capture\n").unwrap();
+            assert_eq!(
+                read_captured_tail(&mut file, captured_length).as_deref(),
+                Some("captured\n")
+            );
+        }
+    }
 }

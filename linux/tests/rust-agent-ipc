@@ -91,8 +91,8 @@ cleanup() {
 trap cleanup EXIT
 
 case "${scenario}" in
-    full | installed-gemini | codex-review-routing | copilot-presentation | amp-plugin | cursor-hooks | droid-hooks | kimi-hooks | remaining-hooks | event-coalescing) ;;
-    *) fail "ZENTTY_AGENT_IPC_SCENARIO must be full, installed-gemini, codex-review-routing, copilot-presentation, amp-plugin, cursor-hooks, droid-hooks, kimi-hooks, remaining-hooks, or event-coalescing" ;;
+    full | installed-gemini | codex-enrichment | codex-review-routing | copilot-presentation | amp-plugin | cursor-hooks | droid-hooks | kimi-hooks | remaining-hooks | event-coalescing) ;;
+    *) fail "ZENTTY_AGENT_IPC_SCENARIO must be full, installed-gemini, codex-enrichment, codex-review-routing, copilot-presentation, amp-plugin, cursor-hooks, droid-hooks, kimi-hooks, remaining-hooks, or event-coalescing" ;;
 esac
 
 case "${backend}" in
@@ -1126,6 +1126,13 @@ run_event_coalescing() {
     state_directory=""
     private_home=""
 }
+
+if [[ "${scenario}" == codex-enrichment ]]; then
+    run_codex_title_transcript_enrichment
+    run_codex_enrichment_shutdown
+    echo "Rust Codex enrichment passed: ${backend}, transcript=real-file, helper=real-process, pty=real, gtk=real, shutdown=checked"
+    exit 0
+fi
 
 if [[ "${scenario}" == event-coalescing ]]; then
     run_event_coalescing

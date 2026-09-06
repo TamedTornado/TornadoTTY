@@ -89,9 +89,9 @@ No traffic targets Jason's client, and no installed binary is replaced.
 - Persistence was the next unbounded boundary; the September 6 entry below
   records its replacement and the distinction between startup and post-GUI
   shutdown waits.
-- Transcript enrichment still creates replacement threads and uses an
-  unbounded result channel. Generation/cancellation checks exist, but alone do
-  not impose a hard concurrency/retention bound.
+- Transcript enrichment's per-window worker/result/cache bounds are recorded
+  below. Whole-application lifetime bounds and discovery enumeration remain
+  part of the unfinished background-work audit.
 - Audit remaining blocking discovery and expensive GTK command paths. The
   four socket workers currently wait for product replies; several waiting
   commands can still delay other traffic despite bounded GUI ingress.
@@ -230,3 +230,103 @@ Local logs are `/tmp/gh163-persistence-tests.log`,
 `/tmp/gh163-persistence-clippy-final.log`,
 `/tmp/gh163-persistence-restore-final.log`, and
 `/tmp/gh163-persistence-alias-final.log`.
+
+## September 6 — transcript enrichment backpressure (#163)
+
+### Findings and repair
+
+- The old scheduler created a new thread for every changed candidate. Setting
+  the previous cancellation flag did not mean that thread had exited. Its
+  result channel, cached questions, and pane/session path hints were unbounded.
+  The new admission regression failed against that implementation: candidate
+  33 was accepted without a preceding GUI drain.
+- The existing per-window owner now retains at most **4 worker handles**,
+  including cancelled-but-still-running workers, **32 current pending panes**,
+  **4 queued results**, **64 cached questions**, and **32 path hints**.
+  Each pane can occupy only one actual worker slot. Queued replacements keep
+  one latest candidate in their original queue position; dispatch skips a
+  still-running pane so it cannot occupy the other worker slots.
+- The GUI reads at most four results per drain and joins only workers already
+  known to have exited. Shutdown cancels pending candidates and clears queued
+  work without waiting for file I/O. Generation/candidate checks still reject
+  stale results. A panicking worker removes only its own generation.
+- Overload rejects optional enrichment for newly arriving panes. It does not
+  clear or invent canonical agent attention; generic attention remains until
+  a later successful enrichment. There is no automatic retry loop for rejected
+  candidates. Existing pending panes may still replace their queued candidate
+  at capacity. Aggregate rejection diagnostics are limited to once per five
+  seconds; that interval controls logging only, not state correctness.
+- Cache eviction is bounded and oldest-first. Only the latest cached file
+  version and the current session hint for a pane are retained. Closing a pane
+  removes its hint even when it has no pending job. Eviction causes rediscovery,
+  not loss of canonical session/attention state.
+- Related real read-bound defect: `read_transcript_tail` sought near the old
+  EOF, then used `read_to_end`, which could follow concurrent appends beyond
+  the claimed 256 KiB boundary. Reads now stop at the captured length. A real
+  unlinked-file fixture appends between length capture and read, for both short
+  and greater-than-256-KiB files. Restoring the old unbounded read makes the
+  regression fail by including the appended text.
+
+### Focused evidence
+
+- **14 GTK-crate enrichment tests PASS**: real transcript retry/parse/cache,
+  full admission, queue replacement/cancellation, 1,000 replacements with
+  held cache access, quiet-pane service, single-pane worker quota, stale
+  completion, worker panic, owner drop, cache eviction and diagnostic limits.
+  The stall fixture locks the actual cache used by actual file workers; it
+  does not replace the resolver or fabricate successful parse results.
+- **Five core transcript integration tests and one captured-tail regression
+  PASS**. Captured-tail mutation audit: **9 caught, 0 missed, 0 unviable, 0
+  timeouts**, 52 seconds.
+- Initial scheduler/cache mutation audit: **41 caught, 5 missed, 5 unviable,
+  1 timeout**, 52 total. Added coverage for panic-generation cleanup, owner
+  drop and diagnostic rate/count semantics; final audit recorded separately.
+- Final scheduler/cache audit: **51 caught, 0 missed, 5 compiler-unviable,
+  1 timeout**, 57 total in four minutes. The timeout mutation inverted the
+  finished-thread check and joined a live worker while the test held its cache
+  lock: it is the GUI-blocking defect this guard prevents. The runner exits 3
+  for that 15-second timeout; ordinary tests have no hangs. Unviable mutations
+  requested nonexistent `Default` implementations; they are not counted as kills.
+- Final product build and dependency-age audit **PASS** (91 packages, zero
+  exceptions). Final private-X11 enrichment **and** pending-shutdown journeys
+  **PASS**. Build staged at `build/gh163/bin/zentty-linux`, not installed.
+- Strict Clippy remains non-green due to **six unchanged GTK findings and
+  two unchanged core findings**. The new scheduling ownership warning was
+  fixed; no remaining diagnostic points at changed enrichment/transcript code.
+- Reused the existing real GTK/PTY/IPC/transcript enrichment and pending-close
+  journeys, exposing them through `ZENTTY_AGENT_IPC_SCENARIO=codex-enrichment`
+  so this repair does not require the entire agent-adapter journey. No new
+  driver, fixture protocol, or qualification layer was introduced.
+
+### Remaining uncertainty and scope
+
+These are **per-window-owner** bounds, not a claim of four threads across all
+windows. Cancellation cannot interrupt an already blocked filesystem syscall.
+Discovery still collects directory entries before selecting its newest bounded
+candidate set; that allocation/scan boundary remains to audit. The broader
+cross-window lifetime, blocking-discovery, socket-worker, GTK command-budget,
+and PTY overload requirements in #163 are not closed by this change. No full
+qualification was run and Jason's installed/running client was not touched.
+
+Commands:
+
+```sh
+cargo test -p zentty-linux --bin zentty-linux codex_enrichment --offline --locked
+cargo test -p zentty-core --test codex_transcript --offline --locked
+cargo test -p zentty-core --lib append_after_length_capture --offline --locked
+linux/tests/mutate-rust -p zentty-linux \
+  -f crates/zentty-linux/src/codex_enrichment.rs \
+  -f crates/zentty-linux/src/codex_enrichment/cache.rs -j 4 \
+  --cargo-test-arg=--bin=zentty-linux --cargo-test-arg=codex_enrichment \
+  --timeout 15 --output /tmp/gh163-enrichment-mutants-final
+linux/tests/mutate-rust -p zentty-core -f crates/zentty-core/src/codex_transcript.rs \
+  --re read_captured_tail -j 4 --cargo-test-arg=--lib \
+  --cargo-test-arg=codex_transcript --timeout 15 --output /tmp/gh163-transcript-tail-mutants
+ZENTTY_LINUX_BINARY="$PWD/build/gh163/bin/zentty-linux" \
+  ZENTTY_AGENT_IPC_SCENARIO=codex-enrichment linux/tests/nested-x11 linux/tests/rust-agent-ipc
+```
+
+Local evidence: `/tmp/gh163-enrichment-{tests,clippy-final,build-final,gtk-final}.log`,
+`/tmp/gh163-enrichment-mutants{,-final}.log`,
+`/tmp/gh163-transcript-tail-red.log`, `/tmp/gh163-transcript-tail-mutants.log`,
+and `/tmp/gh163-enrichment-core-clippy.log`.
