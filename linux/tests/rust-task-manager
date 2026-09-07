@@ -60,7 +60,17 @@ product="${ZENTTY_PRODUCT_BINARY}"
 bundle_lib="${ZENTTY_PRODUCT_BUNDLE_LIB}"
 zentty_product_disable_lifecycle_confirmations
 mkdir -p "${state_directory}"
+# Opening the monitor must not depend on spawning a PATH-resolved utility on
+# GTK. Keep the real /proc and real CPU/memory workload; poison only getconf.
+cat >"${run_root}/getconf" <<'GETCONF'
+#!/usr/bin/env bash
+printf 'unexpected-getconf\n' >>"${ZENTTY_TASK_MANAGER_GETCONF_RECEIPT:?}"
+exit 86
+GETCONF
+chmod +x "${run_root}/getconf"
 
+PATH="${run_root}:${PATH}" \
+ZENTTY_TASK_MANAGER_GETCONF_RECEIPT="${run_root}/getconf.receipt" \
 GDK_SCALE=1 \
 GDK_DPI_SCALE=1 \
 LD_LIBRARY_PATH="${bundle_lib}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" \
@@ -115,7 +125,7 @@ activate_palette_query() {
 
 # A second real Ghostty pane proves the Task Manager aggregates live pane trees,
 # not merely the focused surface.
-activate_palette_query 'Add Pane Right'
+activate_palette_query 'Add Pane Right Without Resizing'
 for _ in $(seq 1 300); do
     [[ "$(grep -c '^root=' "${receipt}" 2>/dev/null || true)" -ge 2 ]] && break
     sleep 0.05
@@ -285,4 +295,5 @@ done
 grep -Fq 'zentty-linux: action=close-pane pane=' "${log}" ||
     fail "End Task did not use the existing pane close lifecycle"
 
-echo "rust-task-manager-${backend}: PASS real-proc real-ghostty-pty two-windows singleton-controller cross-window-focus worklane-group multi-pane search expand clipboard close unavailable-network-column-hidden"
+[[ ! -e "${run_root}/getconf.receipt" ]] || fail "Task Manager launched getconf"
+echo "rust-task-manager-${backend}: PASS real-proc real-ghostty-pty two-windows singleton-controller cross-window-focus worklane-group multi-pane search expand clipboard close unavailable-network-column-hidden no-getconf"

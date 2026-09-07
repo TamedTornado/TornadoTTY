@@ -954,6 +954,7 @@ version = "0.1.1"
 dependencies = [
  "gtk4",
  "libc",
+ "rustix",
  "serde_json",
  "sha2",
  "toml_edit",

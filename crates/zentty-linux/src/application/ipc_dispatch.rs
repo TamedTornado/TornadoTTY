@@ -215,8 +215,8 @@ mod tests {
             // removed from any transport queue until the next GTK tick.
             assert_eq!(turn.take_route(WORK_BUDGET), None);
             cursor = turn.next;
-            let queued: usize = queues.iter().map(|(_, rx)| rx.take_pressure().queued).sum();
-            assert_eq!(queued, 11 - service_turn);
+            let pending_count: usize = queues.iter().map(|(_, rx)| rx.take_pressure().queued).sum();
+            assert_eq!(pending_count, 11 - service_turn);
         }
         for messages in received {
             assert_eq!(

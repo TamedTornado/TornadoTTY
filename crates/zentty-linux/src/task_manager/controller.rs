@@ -28,11 +28,11 @@ impl TaskManagerController {
         sources: SourcesProvider,
         focus_pane: PaneAction,
         close_pane: PaneAction,
-    ) -> Result<Rc<Self>, String> {
+    ) -> Rc<Self> {
         let controller = Rc::new(Self {
             view: TaskManagerView::new(focus_pane, close_pane),
             sources,
-            sampler: RefCell::new(Some(ProcSampler::system()?)),
+            sampler: RefCell::new(None),
             probe_in_flight: Cell::new(false),
             previous_order: RefCell::new(Vec::new()),
             refresh_source: RefCell::new(None),
@@ -52,7 +52,7 @@ impl TaskManagerController {
             glib::ControlFlow::Continue
         });
         *controller.refresh_source.borrow_mut() = Some(source);
-        Ok(controller)
+        controller
     }
 
     pub(crate) fn show(controller: &Rc<Self>, parent: Option<&gtk::Window>) {
@@ -77,15 +77,16 @@ impl TaskManagerController {
         let sources = (controller.sources)();
         let root_pids = sources
             .iter()
+            .filter(|source| !source.is_remote)
             .filter_map(|source| source.root_pid)
             .collect::<Vec<_>>();
-        let Some(mut sampler) = controller.sampler.borrow_mut().take() else {
-            controller.probe_in_flight.set(false);
-            return;
-        };
+        let sampler = controller.sampler.borrow_mut().take();
         let weak = Rc::downgrade(controller);
         glib::spawn_future_local(async move {
             let worker_result = gio::spawn_blocking(move || {
+                // Initialization (including any auxv fallback read) belongs
+                // to the same single in-flight worker as process sampling.
+                let mut sampler = sampler.unwrap_or_else(ProcSampler::system);
                 let trees = sampler.sample(&root_pids);
                 (sampler, trees)
             })
@@ -117,12 +118,30 @@ impl TaskManagerController {
             .into_iter()
             .map(|row| (row.source.stable_id(), row))
             .collect::<BTreeMap<_, _>>();
-        let mut rows = sources
+        let sampled = sources
+            .into_iter()
+            .map(|source| (source.stable_id(), source))
+            .collect::<BTreeMap<_, _>>();
+        let mut rows = (self.sources)()
             .into_iter()
             .map(|source| {
                 let stable_id = source.stable_id();
-                let tree = source.root_pid.and_then(|pid| trees.get(&pid).cloned());
-                PaneRow::project(source, tree, previous.get(&stable_id))
+                let current_sample = sampled
+                    .get(&stable_id)
+                    .is_some_and(|old| old.same_process_owner(&source));
+                if !current_sample && sampled.contains_key(&stable_id) {
+                    eprintln!(
+                        "tornadotty: task-manager sample=discarded reason=owner-changed window={} pane={}",
+                        source.window_id, source.pane_id
+                    );
+                }
+                let tree = current_sample
+                    .then(|| source.root_pid.and_then(|pid| trees.get(&pid).cloned()))
+                    .flatten();
+                let previous = previous
+                    .get(&stable_id)
+                    .filter(|row| row.source.same_process_owner(&source));
+                PaneRow::project(source, tree, previous)
             })
             .collect::<Vec<_>>();
         stable_hot_sort_within_worklanes(&mut rows, &self.previous_order.borrow());
@@ -152,3 +171,6 @@ impl Drop for TaskManagerController {
         }
     }
 }
+
+#[cfg(test)]
+mod tests;

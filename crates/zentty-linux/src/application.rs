@@ -869,9 +869,7 @@ impl ApplicationCoordinator {
                 let Some(coordinator) = weak.upgrade() else {
                     return;
                 };
-                if let Err(error) = Self::show_task_manager(&coordinator, Some(&parent)) {
-                    eprintln!("zentty-linux: action=show-task-manager error={error}");
-                }
+                Self::show_task_manager(&coordinator, Some(&parent));
             });
         })
     }
@@ -879,7 +877,7 @@ impl ApplicationCoordinator {
     fn show_task_manager(
         coordinator: &Rc<RefCell<Self>>,
         parent: Option<&gtk::Window>,
-    ) -> Result<(), String> {
+    ) {
         let existing = coordinator.borrow().task_manager.clone();
         let controller = if let Some(existing) = existing {
             existing
@@ -917,12 +915,11 @@ impl ApplicationCoordinator {
                     ApplicationShell::close_task_manager_pane(&shell, pane_id);
                 }
             });
-            let controller = TaskManagerController::new(sources, focus, close)?;
+            let controller = TaskManagerController::new(sources, focus, close);
             coordinator.borrow_mut().task_manager = Some(Rc::clone(&controller));
             controller
         };
         TaskManagerController::show(&controller, parent);
-        Ok(())
     }
 
     fn move_pane_to_new_window(

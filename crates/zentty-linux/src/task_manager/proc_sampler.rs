@@ -2,7 +2,6 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fs::File;
 use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::time::{Duration, Instant};
 
 use super::model::{ProcessMetric, ProcessTree};
@@ -42,15 +41,15 @@ pub(crate) struct ProcSampler {
 }
 
 impl ProcSampler {
-    pub(crate) fn system() -> Result<Self, String> {
-        Ok(Self::at(
+    pub(crate) fn system() -> Self {
+        Self::at(
             PathBuf::from("/proc"),
-            getconf("CLK_TCK")?,
-            getconf("PAGESIZE")?,
-        ))
+            rustix::param::clock_ticks_per_second(),
+            rustix::param::page_size() as u64,
+        )
     }
 
-    fn at(proc_root: PathBuf, clock_ticks_per_second: u64, page_size: u64) -> Self {
+    pub(super) fn at(proc_root: PathBuf, clock_ticks_per_second: u64, page_size: u64) -> Self {
         Self {
             proc_root,
             clock_ticks_per_second,
@@ -135,28 +134,6 @@ impl ProcSampler {
         }
         samples
     }
-}
-
-fn getconf(name: &str) -> Result<u64, String> {
-    let output = Command::new("getconf")
-        .arg(name)
-        .output()
-        .map_err(|error| format!("could not run getconf {name}: {error}"))?;
-    if !output.status.success() {
-        return Err(format!("getconf {name} exited with {}", output.status));
-    }
-    parse_getconf_value(name, &output.stdout)
-}
-
-fn parse_getconf_value(name: &str, stdout: &[u8]) -> Result<u64, String> {
-    let value = String::from_utf8(stdout.to_vec())
-        .map_err(|error| format!("getconf {name} returned invalid UTF-8: {error}"))?;
-    value
-        .trim()
-        .parse::<u64>()
-        .ok()
-        .filter(|value| *value > 0)
-        .ok_or_else(|| format!("getconf {name} returned an invalid value"))
 }
 
 fn read_process(proc_root: &Path, pid: u32, page_size: u64) -> Option<ProbeSample> {
@@ -471,10 +448,9 @@ mod tests {
 
     #[test]
     fn clock_discovery_and_elapsed_cpu_boundaries_are_exact() {
-        assert!(getconf("CLK_TCK").expect("system clock ticks") > 1);
-        assert!(getconf("ZENTTY_UNKNOWN_GETCONF_VALUE").is_err());
-        assert!(parse_getconf_value("test", b"0\n").is_err());
-        assert_eq!(parse_getconf_value("test", b"1\n").unwrap(), 1);
+        let sampler = ProcSampler::system();
+        assert!(sampler.clock_ticks_per_second > 0);
+        assert!(sampler.page_size.is_power_of_two());
         let previous = PreviousSample {
             cpu_time_ticks: 100,
             sampled_at: Duration::from_secs(1),

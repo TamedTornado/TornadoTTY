@@ -20,6 +20,14 @@ pub(crate) struct PaneSource {
 }
 
 impl PaneSource {
+    pub(super) fn same_process_owner(&self, other: &Self) -> bool {
+        self.window_id == other.window_id
+            && self.worklane_id == other.worklane_id
+            && self.pane_id == other.pane_id
+            && self.root_pid == other.root_pid
+            && self.is_remote == other.is_remote
+    }
+
     pub(crate) fn stable_id(&self) -> String {
         format!("{}|{}", self.window_id, self.pane_id)
     }
