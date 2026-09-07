@@ -345,6 +345,7 @@ fn finish_shell_setup(
     create_initial_pane_surfaces(shell, initial_pane_ids, deferred_live_pane_id)?;
     shell.borrow().mount_background_restored_panes();
     finish_initial_render(shell);
+    bookmark_runtime::initialize(shell);
     Ok(())
 }
 

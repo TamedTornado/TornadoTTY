@@ -1095,6 +1095,11 @@ impl ApplicationCoordinator {
         if self.shutting_down || self.closing_ids.contains(id) {
             return Ok(());
         }
+        if self.shells.len() == 1
+            && let Some(shell) = self.shells.get(id)
+        {
+            shell.borrow().ensure_bookmark_storage_idle()?;
+        }
         let decision = self.window_set.close(id);
         if decision == CloseWindowDecision::UnknownWindow {
             return Ok(());
@@ -1136,6 +1141,9 @@ impl ApplicationCoordinator {
     fn quit_application(&mut self) -> Result<(), String> {
         if self.shutting_down {
             return Ok(());
+        }
+        if let Some(shell) = self.shells.values().next() {
+            shell.borrow().ensure_bookmark_storage_idle()?;
         }
         self.exit_snapshot = Some(self.snapshot());
         self.shutting_down = true;

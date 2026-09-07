@@ -8,12 +8,31 @@ use gtk::glib;
 use gtk::prelude::*;
 use zentty_core::{
     BookmarkStore, BookmarkStoreSnapshot, TemplateKind, TemplateRestoreFallback, WorkspaceTemplate,
-    WorkspaceTemplateCaptureContext, WorkspaceTemplateExportEnvelope,
+    WorkspaceTemplateExportEnvelope,
 };
 use zentty_linux::platform::{UserDirectory, resolve_user_path};
 
 use super::{ApplicationShell, pane_runtime::PaneRuntimeCoordinator};
 
+mod capture;
+mod storage;
+pub(super) fn initialize(shell: &Rc<RefCell<ApplicationShell>>) {
+    storage::initialize(shell);
+}
+
+impl ApplicationShell {
+    pub(crate) fn ensure_bookmark_storage_idle(&self) -> Result<(), String> {
+        if !storage::is_busy() {
+            return Ok(());
+        }
+        let message = "Bookmark storage is still working. Wait for it to finish, then close Tornado TTY again; your save has not been cancelled.";
+        self.restore_notice.show(message);
+        eprintln!("zentty-linux: bookmark-storage exit-refused=true");
+        Err(message.to_owned())
+    }
+}
+
+#[derive(Clone)]
 pub(super) struct BookmarkRuntime {
     store: BookmarkStore,
     snapshot: BookmarkStoreSnapshot,
@@ -21,17 +40,11 @@ pub(super) struct BookmarkRuntime {
 
 impl BookmarkRuntime {
     pub(super) fn load_default() -> Result<Self, String> {
-        let store = BookmarkStore::new_resolving_final_symlink(default_bookmark_path()?)
-            .map_err(|error| format!("could not resolve bookmark storage: {error}"))?;
-        let snapshot = store
-            .load()
-            .map_err(|error| format!("could not load bookmarks: {error}"))?;
-        if let Some(path) = &snapshot.quarantined_path {
-            eprintln!(
-                "zentty-linux: bookmarks quarantined-invalid-input path={}",
-                path.display()
-            );
-        }
+        let store = BookmarkStore::new(default_bookmark_path()?);
+        let snapshot = BookmarkStoreSnapshot {
+            templates: Vec::new(),
+            quarantined_path: None,
+        };
         Ok(Self { store, snapshot })
     }
 
@@ -40,10 +53,18 @@ impl BookmarkRuntime {
     }
 
     fn reload(&mut self) -> Result<(), String> {
+        self.store = BookmarkStore::new_resolving_final_symlink(self.store.path())
+            .map_err(|error| format!("could not resolve bookmark storage: {error}"))?;
         self.snapshot = self
             .store
             .load()
             .map_err(|error| format!("could not reload bookmarks: {error}"))?;
+        if let Some(path) = &self.snapshot.quarantined_path {
+            eprintln!(
+                "zentty-linux: bookmarks quarantined-invalid-input path={}",
+                path.display()
+            );
+        }
         Ok(())
     }
 }
@@ -53,64 +74,36 @@ pub(super) fn save_active(
     name: &str,
     kind: TemplateKind,
 ) -> Result<(), String> {
-    let now = now_iso8601()?;
-    let mut shell_ref = shell.borrow_mut();
+    let capture = capture::Capture::snapshot(&shell.borrow())?;
     let id = format!("template-{}", glib::uuid_string_random());
-    let template = capture_active_template(&shell_ref, &id, name, kind, &now)?;
-    shell_ref
-        .bookmark_runtime
-        .store
-        .upsert(template, &now)
-        .map_err(|error| format!("could not save template: {error}"))?;
-    shell_ref.bookmark_runtime.reload()?;
-    drop(shell_ref);
-    defer_sidebar_refresh(shell);
-    eprintln!("zentty-linux: bookmark-saved id={id} kind={kind:?}");
-    Ok(())
-}
-
-fn capture_active_template(
-    shell: &ApplicationShell,
-    id: &str,
-    name: &str,
-    kind: TemplateKind,
-    now: &str,
-) -> Result<WorkspaceTemplate, String> {
-    let projected = shell.state.to_window_recipe(&shell.window_template);
-    let worklane = projected
-        .worklanes
-        .iter()
-        .find(|worklane| worklane.id == shell.state.active_worklane_id())
-        .ok_or_else(|| "active worklane is absent from the workspace projection".to_owned())?;
-    let (commands, environments) = live_capture_context(shell, worklane);
-    Ok(WorkspaceTemplate::capture(
-        worklane,
-        kind,
-        name,
-        WorkspaceTemplateCaptureContext {
-            id,
-            now,
-            captured_readable_width: Some(f64::from(shell.pane_viewport_width())),
-            commands: &commands,
-            environments: &environments,
-        },
-    ))
+    let name = name.to_owned();
+    mutate_and_refresh(shell, "save-template", move |runtime, now| {
+        let template = capture.finish(&id, &name, kind, now);
+        runtime
+            .store
+            .upsert(template, now)
+            .map_err(|error| format!("could not save template: {error}"))?;
+        eprintln!("zentty-linux: bookmark-saved id={id} kind={kind:?}");
+        Ok(())
+    })
 }
 
 pub(super) fn activate(
     shell: &Rc<RefCell<ApplicationShell>>,
     template_id: &str,
 ) -> Result<(), String> {
-    let (worklane_id, pane_ids, fallbacks, now) = {
+    let (template, worklane_id, identities, directory, width, source) = {
         let mut shell_ref = shell.borrow_mut();
-        shell_ref.bookmark_runtime.reload()?;
         let template = shell_ref
             .bookmark_runtime
             .snapshot
             .template(template_id)
             .cloned()
             .ok_or_else(|| format!("bookmark {template_id:?} no longer exists"))?;
-        let fallback_directory = focused_fallback_directory(&shell_ref)?;
+        let pane_id = shell_ref.state.focused_pane_id().ok_or("No focused pane")?;
+        let source = super::pane_context::PaneContext::capture(&shell_ref, pane_id)
+            .ok_or("Focused pane disappeared")?;
+        let directory = source.working_directory.clone();
         let identity_count = template
             .columns
             .iter()
@@ -122,17 +115,67 @@ pub(super) fn activate(
         let worklane_id = format!("worklane-{}", shell_ref.next_worklane_number);
         shell_ref.next_worklane_number += 1;
         let readable_width = f64::from(shell_ref.pane_viewport_width());
-        let mut identities = identities.into_iter();
-        let restored = template
-            .restore(
-                &worklane_id,
-                &mut identities,
-                &fallback_directory,
-                readable_width,
-                readable_width,
-                command_is_available,
-            )
-            .map_err(|error| format!("could not restore bookmark: {error:?}"))?;
+        (
+            template,
+            worklane_id,
+            identities,
+            directory,
+            readable_width,
+            source,
+        )
+    };
+    let template_id = template_id.to_owned();
+    let recency_id = template_id.clone();
+    storage::run_with_after(
+        shell,
+        "activate-template",
+        move |runtime, _| {
+            if runtime.snapshot.template(&template.id) != Some(&template) {
+                return Err("Bookmark changed during restore. Reopen it and retry.".to_owned());
+            }
+            let fallback_directory = focused_fallback_directory(directory)?;
+            let mut identities = identities.into_iter();
+            template
+                .restore(
+                    &worklane_id,
+                    &mut identities,
+                    &fallback_directory,
+                    width,
+                    width,
+                    command_is_available,
+                )
+                .map_err(|error| format!("could not restore bookmark: {error:?}"))
+        },
+        move |shell, restored| {
+            let shell_ref = shell.borrow();
+            if !source.is_current(&shell_ref)
+                || shell_ref.state.focused_pane_id() != Some(source.pane_id.as_str())
+            {
+                return Err("The source pane changed during bookmark restore. Retry from the intended pane.".to_owned());
+            }
+            drop(shell_ref);
+            apply_restore(shell, &template_id, restored)
+        },
+        Some(Box::new(move |runtime, now| {
+            runtime
+                .store
+                .record_use(&recency_id, now)
+                .map(|_| ())
+                .map_err(|error| {
+                    format!("Worklane opened, but bookmark recency could not be saved: {error}")
+                })
+        })),
+    )
+}
+
+fn apply_restore(
+    shell: &Rc<RefCell<ApplicationShell>>,
+    template_id: &str,
+    restored: zentty_core::WorkspaceTemplateRestore,
+) -> Result<(), String> {
+    let previous = shell.borrow().state.clone();
+    let (pane_ids, fallbacks) = {
+        let mut shell_ref = shell.borrow_mut();
         let pane_ids = restored
             .recipe
             .columns
@@ -156,14 +199,7 @@ pub(super) fn activate(
                 shell_ref.pane_runtime.queue_prefill(&pane_id, prefill);
             }
         }
-        let now = now_iso8601()?;
-        shell_ref
-            .bookmark_runtime
-            .store
-            .record_use(template_id, &now)
-            .map_err(|error| format!("could not update bookmark recency: {error}"))?;
-        shell_ref.bookmark_runtime.reload()?;
-        (worklane_id, pane_ids, restored.fallbacks, now)
+        (pane_ids, restored.fallbacks)
     };
     let mut created: Vec<String> = Vec::new();
     for pane_id in &pane_ids {
@@ -172,12 +208,15 @@ pub(super) fn activate(
             let mut shell_ref = shell.borrow_mut();
             for created_id in &created {
                 let _ = shell_ref.pane_runtime.remove(created_id, false);
+                shell_ref.agent_events.unregister_pane(created_id);
             }
             for pending_id in &pane_ids {
-                shell_ref.pane_runtime.cancel_launch(pending_id);
-                shell_ref.pane_runtime.cancel_prefill(pending_id);
+                shell_ref.agent_events.unregister_pane(pending_id);
+                shell_ref.pane_runtime.cancel_failed_creation(pending_id);
             }
-            let _ = shell_ref.state.close_worklane(&worklane_id);
+            shell_ref.state = previous;
+            shell_ref.render();
+            shell_ref.focus_selected_surface();
             return Err(error);
         }
         created.push(pane_id.clone());
@@ -196,9 +235,10 @@ pub(super) fn activate(
         );
     }
     eprintln!(
-        "zentty-linux: bookmark-restored id={template_id} panes={} fallbacks={} at={now}",
+        "zentty-linux: bookmark-restored id={template_id} panes={} fallbacks={} at={}",
         pane_ids.len(),
-        fallbacks.len()
+        fallbacks.len(),
+        now_iso8601()?
     );
     Ok(())
 }
@@ -225,10 +265,12 @@ pub(super) fn rename(
     template_id: &str,
     name: &str,
 ) -> Result<(), String> {
-    mutate_and_refresh(shell, |runtime, now| {
+    let template_id = template_id.to_owned();
+    let name = name.to_owned();
+    mutate_and_refresh(shell, "rename-template", move |runtime, now| {
         runtime
             .store
-            .rename(template_id, name, now)
+            .rename(&template_id, &name, now)
             .map(|_| ())
             .map_err(|error| error.to_string())
     })
@@ -244,10 +286,11 @@ pub(super) fn edit(
     if edited.id != template_id {
         return Err("edited template identity does not match its action target".to_owned());
     }
-    mutate_and_refresh(shell, |runtime, now| {
+    let template_id = template_id.to_owned();
+    mutate_and_refresh(shell, "edit-template", move |runtime, now| {
         let existing = runtime
             .snapshot
-            .template(template_id)
+            .template(&template_id)
             .ok_or_else(|| format!("bookmark {template_id:?} no longer exists"))?;
         edited.created_at.clone_from(&existing.created_at);
         edited.pinned = existing.pinned;
@@ -263,15 +306,16 @@ pub(super) fn toggle_pin(
     shell: &Rc<RefCell<ApplicationShell>>,
     template_id: &str,
 ) -> Result<(), String> {
-    mutate_and_refresh(shell, |runtime, now| {
+    let template_id = template_id.to_owned();
+    mutate_and_refresh(shell, "toggle-template-pin", move |runtime, now| {
         let pinned = runtime
             .snapshot
-            .template(template_id)
+            .template(&template_id)
             .ok_or_else(|| format!("bookmark {template_id:?} no longer exists"))?
             .pinned;
         runtime
             .store
-            .set_pinned(template_id, !pinned, now)
+            .set_pinned(&template_id, !pinned, now)
             .map(|_| ())
             .map_err(|error| error.to_string())
     })
@@ -282,10 +326,11 @@ pub(super) fn duplicate(
     template_id: &str,
 ) -> Result<(), String> {
     let id = format!("template-{}", glib::uuid_string_random());
-    mutate_and_refresh(shell, |runtime, now| {
+    let template_id = template_id.to_owned();
+    mutate_and_refresh(shell, "duplicate-template", move |runtime, now| {
         runtime
             .store
-            .duplicate(template_id, &id, now)
+            .duplicate(&template_id, &id, now)
             .map(|_| ())
             .map_err(|error| error.to_string())
     })
@@ -295,48 +340,43 @@ pub(super) fn convert(
     shell: &Rc<RefCell<ApplicationShell>>,
     template_id: &str,
 ) -> Result<(), String> {
-    let now = now_iso8601()?;
     let id = format!("template-{}", glib::uuid_string_random());
-    let mut shell_ref = shell.borrow_mut();
-    shell_ref.bookmark_runtime.reload()?;
-    let source = shell_ref
-        .bookmark_runtime
-        .snapshot
-        .template(template_id)
-        .cloned()
-        .ok_or_else(|| format!("bookmark {template_id:?} no longer exists"))?;
-    let converted = match source.kind {
-        TemplateKind::Bookmark => {
-            let mut converted = source.into_portable_preset(&now);
-            converted.id.clone_from(&id);
-            converted.name = converted_name(&converted.name, TemplateKind::Preset);
-            converted.created_at.clone_from(&now);
-            converted.updated_at.clone_from(&now);
-            converted.pinned = false;
-            converted.last_used_at = None;
-            converted
-        }
-        TemplateKind::Preset => {
-            let mut converted = capture_active_template(
-                &shell_ref,
-                &id,
-                &converted_name(&source.name, TemplateKind::Bookmark),
-                TemplateKind::Bookmark,
-                &now,
-            )?;
-            converted.color = source.color;
-            converted
-        }
-    };
-    shell_ref
-        .bookmark_runtime
-        .store
-        .upsert(converted, &now)
-        .map_err(|error| error.to_string())?;
-    shell_ref.bookmark_runtime.reload()?;
-    drop(shell_ref);
-    defer_sidebar_refresh(shell);
-    Ok(())
+    let capture = capture::Capture::snapshot(&shell.borrow())?;
+    let template_id = template_id.to_owned();
+    mutate_and_refresh(shell, "convert-template", move |runtime, now| {
+        let source = runtime
+            .snapshot
+            .template(&template_id)
+            .cloned()
+            .ok_or_else(|| format!("bookmark {template_id:?} no longer exists"))?;
+        let converted = match source.kind {
+            TemplateKind::Bookmark => {
+                let mut converted = source.into_portable_preset(now);
+                converted.id.clone_from(&id);
+                converted.name = converted_name(&converted.name, TemplateKind::Preset);
+                now.clone_into(&mut converted.created_at);
+                now.clone_into(&mut converted.updated_at);
+                converted.pinned = false;
+                converted.last_used_at = None;
+                converted
+            }
+            TemplateKind::Preset => {
+                let mut converted = capture.finish(
+                    &id,
+                    &converted_name(&source.name, TemplateKind::Bookmark),
+                    TemplateKind::Bookmark,
+                    now,
+                );
+                converted.color = source.color;
+                converted
+            }
+        };
+        runtime
+            .store
+            .upsert(converted, now)
+            .map_err(|error| error.to_string())?;
+        Ok(())
+    })
 }
 
 fn converted_name(name: &str, kind: TemplateKind) -> String {
@@ -353,45 +393,42 @@ pub(super) fn delete(
     shell: &Rc<RefCell<ApplicationShell>>,
     template_id: &str,
 ) -> Result<(), String> {
-    mutate_and_refresh(shell, |runtime, now| {
+    let template_id = template_id.to_owned();
+    mutate_and_refresh(shell, "delete-template", move |runtime, now| {
         runtime
             .store
-            .delete(template_id, now)
+            .delete(&template_id, now)
             .map(|_| ())
             .map_err(|error| error.to_string())
     })
 }
 
 pub(super) fn update_linked(shell: &Rc<RefCell<ApplicationShell>>) -> Result<(), String> {
-    let now = now_iso8601()?;
-    let mut shell_ref = shell.borrow_mut();
-    shell_ref.bookmark_runtime.reload()?;
+    let shell_ref = shell.borrow();
+    let capture = capture::Capture::snapshot(&shell_ref)?;
     let origin_id = shell_ref
         .state
         .active_worklane()
         .bookmark_origin_id
         .clone()
         .ok_or_else(|| "active worklane is not linked to a bookmark".to_owned())?;
-    let existing = shell_ref
-        .bookmark_runtime
-        .snapshot
-        .template(&origin_id)
-        .cloned()
-        .ok_or_else(|| format!("linked bookmark {origin_id:?} no longer exists"))?;
-    let mut updated =
-        capture_active_template(&shell_ref, &origin_id, &existing.name, existing.kind, &now)?;
-    updated.created_at = existing.created_at;
-    updated.pinned = existing.pinned;
-    updated.last_used_at = existing.last_used_at;
-    shell_ref
-        .bookmark_runtime
-        .store
-        .upsert(updated, &now)
-        .map_err(|error| format!("could not update linked bookmark: {error}"))?;
-    shell_ref.bookmark_runtime.reload()?;
     drop(shell_ref);
-    defer_sidebar_refresh(shell);
-    Ok(())
+    mutate_and_refresh(shell, "update-linked-template", move |runtime, now| {
+        let existing = runtime
+            .snapshot
+            .template(&origin_id)
+            .cloned()
+            .ok_or_else(|| format!("linked bookmark {origin_id:?} no longer exists"))?;
+        let mut updated = capture.finish(&origin_id, &existing.name, existing.kind, now);
+        updated.created_at = existing.created_at;
+        updated.pinned = existing.pinned;
+        updated.last_used_at = existing.last_used_at;
+        runtime
+            .store
+            .upsert(updated, now)
+            .map_err(|error| format!("could not update linked bookmark: {error}"))?;
+        Ok(())
+    })
 }
 
 pub(super) fn unlink(shell: &Rc<RefCell<ApplicationShell>>) -> Result<(), String> {
@@ -402,6 +439,7 @@ pub(super) fn unlink(shell: &Rc<RefCell<ApplicationShell>>) -> Result<(), String
     }
     drop(shell_ref);
     defer_sidebar_refresh(shell);
+    eprintln!("zentty-linux: action=unlink-template result=ok");
     Ok(())
 }
 
@@ -427,33 +465,55 @@ pub(super) fn choose_import(shell: &Rc<RefCell<ApplicationShell>>) {
             let weak = weak.clone();
             glib::MainContext::default().spawn_local(async move {
                 let result = async {
-                    let (bytes, _) = file
-                        .load_contents_future()
+                    let bytes = read_import(&file)
                         .await
                         .map_err(|error| format!("could not read imported preset: {error}"))?;
-                    let now = now_iso8601()?;
                     let id = format!("template-{}", glib::uuid_string_random());
-                    let template = WorkspaceTemplateExportEnvelope::import(&bytes, &id, &now)
-                        .map_err(|error| format!("could not import preset: {error}"))?;
                     let shell = weak
                         .upgrade()
                         .ok_or_else(|| "window closed during preset import".to_owned())?;
-                    let mut shell_ref = shell.borrow_mut();
-                    shell_ref
-                        .bookmark_runtime
-                        .store
-                        .upsert(template, &now)
-                        .map_err(|error| format!("could not persist imported preset: {error}"))?;
-                    shell_ref.bookmark_runtime.reload()?;
-                    drop(shell_ref);
-                    defer_sidebar_refresh(&shell);
-                    Ok::<_, String>(())
+                    mutate_and_refresh(&shell, "import-template", move |runtime, now| {
+                        let template = WorkspaceTemplateExportEnvelope::import(&bytes, &id, now)
+                            .map_err(|error| format!("could not import preset: {error}"))?;
+                        runtime
+                            .store
+                            .upsert(template, now)
+                            .map_err(|error| format!("could not persist imported preset: {error}"))
+                    })
                 }
                 .await;
-                report_async_result("import-template", result);
+                if let Err(error) = result
+                    && let Some(shell) = weak.upgrade()
+                {
+                    storage::fail(&shell, "import-template", &error);
+                }
             });
         },
     );
+}
+
+async fn read_import(file: &gtk::gio::File) -> Result<Vec<u8>, String> {
+    let stream = file
+        .read_future(glib::Priority::DEFAULT)
+        .await
+        .map_err(|error| error.to_string())?;
+    let mut bytes = Vec::new();
+    loop {
+        // Read at most one byte beyond the store's existing limit, including
+        // for non-local Gio sources. Never load an unbounded file onto GTK.
+        let remaining = BookmarkStore::MAX_FILE_BYTES + 1 - bytes.len();
+        let chunk = stream
+            .read_bytes_future(remaining.min(64 * 1024), glib::Priority::DEFAULT)
+            .await
+            .map_err(|error| error.to_string())?;
+        if chunk.is_empty() {
+            return Ok(bytes);
+        }
+        bytes.extend_from_slice(&chunk);
+        if bytes.len() > BookmarkStore::MAX_FILE_BYTES {
+            return Err("Preset exceeds the 1 MiB import limit".to_owned());
+        }
+    }
 }
 
 #[allow(deprecated)]
@@ -556,22 +616,17 @@ fn defer_sidebar_refresh(shell: &Rc<RefCell<ApplicationShell>>) {
 
 fn mutate_and_refresh(
     shell: &Rc<RefCell<ApplicationShell>>,
-    mutation: impl FnOnce(&mut BookmarkRuntime, &str) -> Result<(), String>,
+    action: &'static str,
+    mutation: impl FnOnce(&mut BookmarkRuntime, &str) -> Result<(), String> + Send + 'static,
 ) -> Result<(), String> {
-    let now = now_iso8601()?;
-    let mut shell_ref = shell.borrow_mut();
-    mutation(&mut shell_ref.bookmark_runtime, &now)?;
-    shell_ref.bookmark_runtime.reload()?;
-    drop(shell_ref);
-    defer_sidebar_refresh(shell);
-    Ok(())
+    storage::run(shell, action, mutation, |_, ()| Ok(()))
 }
 
 fn live_capture_context(
     shell: &ApplicationShell,
     worklane: &zentty_core::WorklaneRecipe,
 ) -> (
-    BTreeMap<String, String>,
+    BTreeMap<String, u64>,
     BTreeMap<String, BTreeMap<String, String>>,
 ) {
     let mut commands = BTreeMap::new();
@@ -587,9 +642,7 @@ fn live_capture_context(
         else {
             continue;
         };
-        if let Some(command) = read_proc_command(pid) {
-            commands.insert(pane.id.clone(), command);
-        }
+        commands.insert(pane.id.clone(), pid);
     }
     (commands, environments)
 }
@@ -615,12 +668,9 @@ fn quote_proc_argument(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\\''"))
 }
 
-fn focused_fallback_directory(shell: &ApplicationShell) -> Result<String, String> {
-    shell
-        .state
-        .focused_pane_id()
-        .and_then(|pane_id| shell.state.effective_working_directory_for_pane(pane_id))
-        .map(str::to_owned)
+fn focused_fallback_directory(directory: Option<PathBuf>) -> Result<String, String> {
+    directory
+        .map(|path| path.to_string_lossy().into_owned())
         .filter(|path| Path::new(path).is_dir())
         .or_else(|| std::env::var_os("HOME").map(|path| path.to_string_lossy().into_owned()))
         .ok_or_else(|| "no focused working directory or HOME is available".to_owned())
@@ -675,6 +725,44 @@ mod tests {
     use std::ffi::OsStr;
     use std::path::PathBuf;
     use zentty_core::{TemplateKind, TemplateRestoreFallback};
+
+    #[test]
+    fn import_reads_real_files_without_truncation_and_rejects_oversize_or_missing_input() {
+        let directory = std::env::temp_dir().join(format!(
+            "bookmark-import-{}",
+            gtk::glib::uuid_string_random()
+        ));
+        std::fs::create_dir(&directory).unwrap();
+        let path = directory.join("preset");
+        let context = gtk::glib::MainContext::new();
+        context
+            .with_thread_default(|| {
+                let file = gtk::gio::File::for_path(&path);
+                for size in [
+                    0,
+                    17,
+                    zentty_core::BookmarkStore::MAX_FILE_BYTES,
+                    zentty_core::BookmarkStore::MAX_FILE_BYTES + 1,
+                ] {
+                    let bytes = vec![b'x'; size];
+                    std::fs::write(&path, &bytes).unwrap();
+                    let result = context.block_on(super::read_import(&file));
+                    if size > zentty_core::BookmarkStore::MAX_FILE_BYTES {
+                        assert!(result.is_err(), "oversized import was accepted");
+                    } else {
+                        assert_eq!(
+                            result.unwrap(),
+                            bytes,
+                            "valid import was truncated or changed"
+                        );
+                    }
+                }
+                std::fs::remove_file(&path).unwrap();
+                assert!(context.block_on(super::read_import(&file)).is_err());
+            })
+            .unwrap();
+        std::fs::remove_dir(directory).unwrap();
+    }
 
     #[test]
     fn bookmark_path_obeys_xdg_then_home_and_rejects_relative_roots() {

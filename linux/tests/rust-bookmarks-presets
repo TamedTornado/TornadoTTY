@@ -18,8 +18,13 @@ bookmarks="${XDG_CONFIG_HOME:?}/zentty/bookmarks.json"
 product_pid=""
 portal_wm_pid=""
 backend="${GDK_BACKEND:-}"
+trace_command=()
 
 fail() {
+    if [[ "${scenario}" == storage-responsiveness ]]; then
+        [[ ! -f "${restore_log}" ]] || tail -500 "${restore_log}" >&2
+        [[ ! -f "${run_root}/slow-read.log" ]] || tail -35 "${run_root}/slow-read.log" >&2
+    fi
     for log in "${first_log}" "${restore_log}" "${fallback_log}"; do
         [[ ! -f "${log}" ]] || tail -100 "${log}" >&2
     done
@@ -74,7 +79,7 @@ start_product() {
     local log="$1"
     (
         cd "${project}"
-        exec env \
+        exec "${trace_command[@]}" env \
             GDK_SCALE=1 \
             GDK_DPI_SCALE=1 \
             BOOKMARK_TEST_SECRET_DO_NOT_PERSIST='real-ambient-secret' \
@@ -84,7 +89,10 @@ start_product() {
             --no-session-restore
     ) >"${log}" 2>&1 &
     product_pid=$!
-    for _ in {1..240}; do
+    local ready_attempts=240 attempt
+    # The injected read takes three seconds; startup must beat that deadline.
+    [[ ${#trace_command[@]} == 0 ]] || ready_attempts=30
+    for ((attempt = 0; attempt < ready_attempts; attempt++)); do
         grep -Fq 'zentty-linux: terminal-ready-pane=pane-1' "${log}" && break
         sleep 0.05
     done
@@ -562,7 +570,7 @@ chooser_path() {
         for _ in {1..200}; do
             chooser_window="$(
                 xdotool search --onlyvisible --name \
-                    '^(Export Zentty preset|Import Zentty preset|Save File|Open File)$' \
+                    '^(Export Tornado TTY preset|Import Tornado TTY preset|Save File|Open File)$' \
                     2>/dev/null | tail -1 || true
             )"
             [[ "${chooser_window}" =~ ^[1-9][0-9]*$ ]] && break
@@ -665,7 +673,133 @@ run_import_export() {
     echo "Rust bookmark import/export passed: ${backend}, export-chooser=real, file=real, delete=physical, import-chooser=real, portable=persisted"
 }
 
+assert_terminal_input() {
+    local receipt="${run_root}/$1"
+    local started
+    started="$(date +%s%3N)"
+    # Xvfb can leave mousemove --sync waiting its 15-second timeout even
+    # though the pointer is already positioned. XTest requests are ordered;
+    # the real PTY receipt below, not pointer movement, is our response barrier.
+    xdotool mousemove --window "${ZENTTY_PRODUCT_WINDOW_ID}" 700 400 click 1
+    input_type "printf responsive > '${receipt}'"
+    input_key Return
+    for _ in {1..30}; do
+        [[ -s "${receipt}" ]] && break
+        sleep 0.05
+    done
+    [[ "$(cat "${receipt}" 2>/dev/null || true)" == responsive ]] ||
+        fail "PTY input stalled behind bookmark storage ($1)"
+    (( $(date +%s%3N) - started < 1500 )) || fail "input gesture exceeded 1.5 seconds ($1)"
+}
+
+confirm_window_close() {
+    local log="$1" before
+    before="$(grep -Fc 'confirmation shown title="Quit Tornado TTY?"' "${log}" || true)"
+    input_key ctrl+shift+w
+    zentty_product_wait_for_log_count "${log}" 'confirmation shown title="Quit Tornado TTY?"' \
+        "$((before + 1))" 'quit confirmation did not open' 30 || fail 'quit confirmation unavailable'
+    input_key Return
+}
+
+run_storage_responsiveness() {
+    [[ "${backend}" == x11 ]] || fail "slow storage scenario requires isolated X11"
+    command -v strace >/dev/null || fail "slow storage scenario requires strace"
+    start_product "${first_log}"
+    save_named_bookmark "${first_log}" 'Slow storage'
+    stop_product
+    # Delay real reads, without replacing their results or adding product hooks.
+    trace_command=(strace -D -f -qq -tt -o "${run_root}/slow-read.log"
+        -P "${bookmarks}" -e trace=read -e signal=none -e inject=read:delay_enter=3s)
+    start_product "${restore_log}"
+    zentty_product_wait_for_log "${restore_log}" 'shell-signal pane=pane-1 kind=shell-state state=prompt' \
+        'real shell did not reach its first prompt' 60 || fail 'shell startup did not finish'
+    ! grep -Fq 'action=load-bookmarks result=ok' "${restore_log}" || fail 'slow startup probe missed the pending read'
+    assert_terminal_input startup
+    zentty_product_wait_for_log "${restore_log}" 'action=load-bookmarks result=ok' \
+        'background initial load did not finish' 600 || fail 'initial load failed'
+    grep -Fq '(DELAYED)' "${run_root}/slow-read.log" || fail 'bookmark reads were not delayed'
+
+    focus_filtered_template "${restore_log}" 'Slow storage'
+    before="$(action_count "${restore_log}" toggle-template-pin)"
+    open_template_action "${restore_log}" toggle-template-pin
+    assert_terminal_input saving
+    confirm_window_close "${restore_log}"
+    zentty_product_wait_for_log "${restore_log}" 'bookmark-storage exit-refused=true' \
+        'closing the last window abandoned the accepted save' 30 || fail 'pending save was not protected at exit'
+    # Refuse rather than queue a second mutation behind slow storage.
+    focus_filtered_template "${restore_log}" 'Slow storage'
+    input_key Return
+    zentty_product_wait_for_log "${restore_log}" 'This request was not queued or saved' \
+        'concurrent mutation was not refused visibly' || fail 'mutation admission failed'
+    wait_for_action_after "${restore_log}" toggle-template-pin "${before}" 900
+    jq_wait '(.templates | length) == 1 and .templates[0].pinned' || fail 'pending save lost or busy mutation ran'
+
+    focus_filtered_template "${restore_log}" 'Slow storage'
+    before="$(action_count "${restore_log}" duplicate-template)"
+    open_template_action "${restore_log}" duplicate-template
+    wait_for_action_after "${restore_log}" duplicate-template "${before}" 900
+    jq_wait '(.templates | length) == 2' || fail 'explicit retry failed'
+
+    focus_filtered_template "${restore_log}" 'Slow storage'
+    local accepted_before started
+    accepted_before="$(grep -Fc 'action=activate-template accepted=true' "${restore_log}" || true)"
+    input_key Return
+    zentty_product_wait_for_log_count "${restore_log}" 'action=activate-template accepted=true' \
+        "$((accepted_before + 1))" 'restore was not admitted' 30 || fail 'restore was not admitted'
+    # Change the source directory while its restore is waiting on disk.
+    started="$(date +%s%3N)"
+    xdotool mousemove --window "${ZENTTY_PRODUCT_WINDOW_ID}" 700 400 click 1
+    input_type "cd /; printf changed > '${run_root}/changed-directory'"
+    input_key Return
+    for _ in {1..30}; do
+        [[ -s "${run_root}/changed-directory" ]] && break
+        sleep 0.05
+    done
+    [[ -s "${run_root}/changed-directory" ]] || fail 'source pane unresponsive during restore'
+    (( $(date +%s%3N) - started < 1500 )) || fail 'source change exceeded 1.5 seconds'
+    zentty_product_wait_for_log "${restore_log}" 'source pane changed during bookmark restore' \
+        'stale restore was not rejected' 900 || fail 'stale restore applied'
+    ! grep -Fq 'bookmark-restored id=' "${restore_log}" || fail 'rejected restore created a worklane'
+    jq -e 'all(.templates[]; .lastUsedAt == null)' "${bookmarks}" >/dev/null || fail 'rejected restore recorded use'
+    stop_product
+    trace_command=()
+
+    start_product "${fallback_log}"
+    zentty_product_wait_for_log "${fallback_log}" 'action=load-bookmarks result=ok' \
+        'reload did not finish' || fail 'reload failed'
+    cp "${bookmarks}" "${run_root}/before-failure.json"
+    # Directory in place of lock is a real storage error, even for root.
+    rm "${bookmarks%.json}.lock"
+    mkdir "${bookmarks%.json}.lock"
+    focus_filtered_template "${fallback_log}" 'Slow storage'
+    open_template_action "${fallback_log}" delete-template
+    zentty_product_wait_for_log "${fallback_log}" 'action-error-notice action=delete-template visible=true' \
+        'storage failure was not shown' || fail 'storage failure invisible'
+    cmp "${bookmarks}" "${run_root}/before-failure.json" || fail 'failed operation changed bookmarks'
+    assert_terminal_input failure
+    rmdir "${bookmarks%.json}.lock"
+    focus_filtered_template "${fallback_log}" 'Slow storage'
+    before="$(action_count "${fallback_log}" delete-template)"
+    open_template_action "${fallback_log}" delete-template
+    wait_for_action_after "${fallback_log}" delete-template "${before}"
+    jq_wait '(.templates | length) == 1' || fail 'storage recovery did not save'
+    xdotool mousemove --window "${ZENTTY_PRODUCT_WINDOW_ID}" 700 400 click 1
+    confirm_window_close "${fallback_log}"
+    for _ in {1..100}; do
+        kill -0 "${product_pid}" 2>/dev/null || break
+        sleep 0.05
+    done
+    ! kill -0 "${product_pid}" 2>/dev/null || fail 'last window remained blocked after storage finished'
+    wait "${product_pid}" || fail 'normal exit failed'
+    product_pid=""
+    echo 'Rust bookmark storage passed: slow startup/save PTY responsive, concurrent request refused, retry saved, stale restore rejected, failed storage visible and non-destructive'
+}
+
 case "${scenario}" in
+    storage-responsiveness)
+        run_storage_responsiveness
+        exit 0
+        ;;
     management)
         run_management
         exit 0
@@ -735,7 +869,7 @@ grep -Fq "zentty-linux: surface-config pane=pane-3 cwd=${canonical_project}" "${
     fail "restored real PTY did not use the bookmarked directory"
 grep -Eq 'zentty-linux: bookmark-restored id=.* panes=1 fallbacks=0 ' "${restore_log}" ||
     fail "restore receipt did not prove one pane and no fallback"
-jq -e '.templates[0].lastUsedAt | type == "string" and length > 0' "${bookmarks}" >/dev/null ||
+jq_wait '.templates[0].lastUsedAt | type == "string" and length > 0' ||
     fail "template activation did not persist recency"
 stop_product
 

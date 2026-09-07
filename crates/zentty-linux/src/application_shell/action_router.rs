@@ -1933,7 +1933,7 @@ fn install_bookmark_file_actions(
 
 fn report_bookmark_result(action: &str, result: Result<(), String>) {
     match result {
-        Ok(()) => eprintln!("zentty-linux: action={action} result=ok"),
+        Ok(()) => eprintln!("zentty-linux: action={action} accepted=true"),
         Err(error) => eprintln!("zentty-linux: action={action} failed: {error}"),
     }
 }
