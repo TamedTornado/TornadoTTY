@@ -9,6 +9,7 @@ bundle_lib="${bundle_root}/lib"
 state_dir=""
 log=""
 product_pid=""
+close_tracer_pid=""
 status_notifier_pid=""
 window_manager_pid=""
 window_manager_log=""
@@ -30,6 +31,10 @@ fail() {
 }
 
 cleanup() {
+    if [[ "${close_tracer_pid}" =~ ^[1-9][0-9]*$ ]]; then
+        sudo -n kill -INT "${close_tracer_pid}" 2>/dev/null || true
+        wait "${close_tracer_pid}" 2>/dev/null || true
+    fi
     if [[ "${product_pid}" =~ ^[1-9][0-9]*$ ]]; then
         kill -TERM "${product_pid}" 2>/dev/null || true
         wait "${product_pid}" 2>/dev/null || true
@@ -66,7 +71,8 @@ done
 if [[ "${backend}" == x11 ]]; then
     command -v xprop >/dev/null || fail "xprop is required for X11 toplevel identity"
     if [[ "${ZENTTY_MULTI_WINDOW_LIFECYCLE_ONLY:-false}" == true ||
-        "${ZENTTY_MULTI_WINDOW_WINDOW_STATE_ONLY:-false}" == true ]]; then
+        "${ZENTTY_MULTI_WINDOW_WINDOW_STATE_ONLY:-false}" == true ||
+        "${ZENTTY_MULTI_WINDOW_CLOSE_INSPECTION_ONLY:-false}" == true ]]; then
         command -v openbox >/dev/null || fail "openbox is required for native X11 lifecycle state"
         window_manager_log="$(mktemp)"
         openbox --sm-disable >"${window_manager_log}" 2>&1 &
@@ -786,6 +792,78 @@ capture_fullscreen_wayland_visual() {
 # windows and real Ghostty PTYs. The rest of this already-large multi-window
 # qualification keeps confirmations disabled so its unrelated transaction and
 # restoration assertions remain independently diagnostic.
+if [[ "${ZENTTY_MULTI_WINDOW_CLOSE_INSPECTION_ONLY:-false}" == true ]]; then
+    [[ "${backend}" == x11 ]] || fail "slow close inspection requires isolated X11"
+    command -v strace >/dev/null || fail "slow close inspection requires strace"
+    sudo -n true || fail "Yama-safe attachment to the private product requires noninteractive sudo"
+    launch_command='printf "%s\n" "$$" > "${ZENTTY_FLEET_TRANSITION_FIFO%/*}/close-pid-${ZENTTY_PANE_ID}"; trap "exec /bin/sleep 30" USR1; while IFS= read -r value; do printf "\033]2;%s\a" "$value"; done'
+    start_product
+    first_window="${ZENTTY_PRODUCT_WINDOW_ID}"
+    create_second_window false
+    second_window="${ZENTTY_PRODUCT_WINDOW_ID}"
+    pid_receipt="${state_dir}/close-pid-pane-window-2"
+    for _ in {1..100}; do
+        [[ ! -s "${pid_receipt}" ]] || break
+        sleep 0.05
+    done
+    [[ -s "${pid_receipt}" ]] || fail "controlled PTY PID missing"
+    read -r target_pid < "${pid_receipt}"
+    [[ "${target_pid}" =~ ^[1-9][0-9]*$ ]] || fail "invalid controlled PID"
+    # Trace only this isolated product. Yama forbids sibling attachment as an
+    # ordinary user; sudo grants ptrace, not a product capability or state hook.
+    sudo -n strace -f -p "${product_pid}" -o "${state_dir}/close-trace" \
+        -P "/proc/${target_pid}/comm" -e trace=read -e inject=read:delay_enter=3s \
+        2>"${state_dir}/trace-attached" &
+    close_tracer_pid=$!
+    zentty_product_wait_for_log "${state_dir}/trace-attached" 'attached' \
+        'private process tracer did not attach' || fail 'ptrace unavailable'
+    execute_palette_action 'Close Worklane' 'Close Worklane'
+    ZENTTY_PRODUCT_WINDOW_ID="${first_window}"
+    xdotool windowactivate --sync "${first_window}"
+    zentty_product_type "${backend}" 'close-inspection-survivor'
+    zentty_product_key "${backend}" Return
+    zentty_product_wait_for_log "${log}" \
+        'title-pane=pane-1 value=close-inspection-survivor' \
+        'process inspection blocked sibling PTY input' 30 || fail 'GTK blocked by close inspection'
+    ZENTTY_PRODUCT_WINDOW_ID="${second_window}"
+    xdotool windowactivate --sync "${second_window}"
+    execute_palette_action 'Split the focused pane vertically' 'New Pane Below'
+    zentty_product_wait_for_log "${log}" 'close-request ignored=stale-inspection' \
+        'changed worklane accepted old process inspection' 300 || fail 'stale target closed'
+    grep -Fq '(DELAYED)' "${state_dir}/close-trace" || fail 'real proc read was not delayed'
+    ! grep -Fq 'action=close-worklane id=' "${log}" || fail 'worklane closed despite changed membership'
+    sudo -n kill -INT "${close_tracer_pid}"
+    wait "${close_tracer_pid}" || true
+    close_tracer_pid=""
+
+    # Keep the same PID and the same "running" risk while changing its actual
+    # command after the dialog appears. A boolean-only check misses this exec.
+    execute_palette_action 'Close Worklane' 'Close Worklane'
+    zentty_product_wait_for_log "${log}" 'confirmation shown title="Close this worklane?"' \
+        'retry did not present confirmation' || fail 'confirmation missing'
+    kill -USR1 "${target_pid}"
+    for _ in {1..100}; do
+        [[ "$(cat "/proc/${target_pid}/comm")" != sleep ]] || break
+        sleep 0.05
+    done
+    [[ "$(cat "/proc/${target_pid}/comm")" == sleep ]] || fail 'controlled foreground exec failed'
+    reply_to_confirmation Return
+    zentty_product_wait_for_log "${log}" 'close-request ignored=stale-callback' \
+        'accepted dialog did not revalidate actual process identity' || fail 'changed workload closed'
+    ! grep -Fq 'action=close-worklane id=' "${log}" || fail 'stale confirmation removed worklane'
+    execute_palette_action 'Close Worklane' 'Close Worklane'
+    zentty_product_wait_for_log_count "${log}" 'confirmation shown title="Close this worklane?"' 2 \
+        'fresh retry did not present confirmation' || fail 'fresh confirmation missing'
+    reply_to_confirmation Return
+    zentty_product_wait_for_log "${log}" 'action=close-worklane id=worklane-window-2 panes=2' \
+        'fresh confirmation did not close exact two-pane worklane' || fail 'confirmed close failed'
+    ZENTTY_PRODUCT_WINDOW_ID="${first_window}"
+    xdotool windowactivate --sync "${first_window}"
+    type_and_expect_title 'confirmed-close-survivor' pane-1
+    echo 'Rust close inspection passed: responsive-sibling-PTY stale-membership stale-exec confirmed-exact-worklane'
+    exit 0
+fi
+
 if [[ "${ZENTTY_MULTI_WINDOW_WINDOW_STATE_ONLY:-false}" == true ]]; then
 # Keep native window-state qualification independent from destructive-close
 # dialogs. Fullscreen changes compositor geometry and pointer-enter timing; it
@@ -1005,7 +1083,7 @@ zentty_product_prepare_input "${backend}" "${log}" || fail "could not retarget s
 focus_outer_wayland_pane pane-1
 type_and_expect_title "window-close-confirmed-survivor" "pane-1"
 zentty_product_close_window "${backend}"
-zentty_product_wait_for_log "${log}" 'zentty-linux: confirmation shown title="Quit Zentty?"' \
+zentty_product_wait_for_log "${log}" 'zentty-linux: confirmation shown title="Quit Tornado TTY?"' \
     "Quit did not present its source confirmation" || fail "quit confirmation missing"
 reply_to_confirmation Escape
 zentty_product_wait_for_log_count "${log}" 'zentty-linux: confirmation accepted=false' 2 \
@@ -1015,7 +1093,7 @@ assert_confirmation_focus pane-1
 type_and_expect_title "quit-cancelled" "pane-1"
 accepted_before="$(grep -Fc 'zentty-linux: confirmation accepted=true' "${log}" || true)"
 zentty_product_close_window "${backend}"
-zentty_product_wait_for_log_count "${log}" 'zentty-linux: confirmation shown title="Quit Zentty?"' 2 \
+zentty_product_wait_for_log_count "${log}" 'zentty-linux: confirmation shown title="Quit Tornado TTY?"' 2 \
     "second Quit did not present confirmation" || fail "second quit confirmation missing"
 reply_to_confirmation Return
 zentty_product_wait_for_log_count "${log}" 'zentty-linux: confirmation accepted=true' "$((accepted_before + 1))" \

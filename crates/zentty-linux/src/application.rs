@@ -6,11 +6,12 @@ use std::time::Duration;
 use gtk::prelude::*;
 use gtk::{gdk, glib};
 use zentty_agent_ipc::ServerIpcReply;
-use zentty_core::{AppConfig, CloseEvidence, CloseTarget, WindowRecipe};
+use zentty_core::{AppConfig, CloseTarget, WindowRecipe};
 use zentty_ghostty::GhosttyRuntime;
 use zentty_tmux_compat::TmuxCompatReply;
 
 use crate::agent_runtime::AgentRuntime;
+use crate::application_shell::close_runtime::CloseSnapshot;
 use crate::application_shell::{ApplicationHandlers, ApplicationRuntimes, ApplicationShell};
 use crate::config_reload::{ConfigDirectoryWatch, ConfigReloadAuthority, ReloadDecision};
 use crate::config_store::ConfigSnapshot;
@@ -432,9 +433,9 @@ impl ApplicationCoordinator {
         });
         let weak = Rc::downgrade(coordinator);
         let evidence_id = id.to_owned();
-        let close_window_evidence_handler: Rc<dyn Fn() -> CloseEvidence> = Rc::new(move || {
+        let close_window_evidence_handler: Rc<dyn Fn() -> CloseSnapshot> = Rc::new(move || {
             let Some(coordinator) = weak.upgrade() else {
-                return CloseEvidence::new(
+                return CloseSnapshot::new(
                     CloseTarget::Window {
                         window_id: evidence_id.clone(),
                     },
@@ -447,7 +448,7 @@ impl ApplicationCoordinator {
             } else {
                 coordinator.shells.get(&evidence_id).map_or_else(
                     || {
-                        CloseEvidence::new(
+                        CloseSnapshot::new(
                             CloseTarget::Window {
                                 window_id: evidence_id.clone(),
                             },
@@ -476,12 +477,12 @@ impl ApplicationCoordinator {
             });
         });
         let weak = Rc::downgrade(coordinator);
-        let quit_evidence_handler: Rc<dyn Fn() -> CloseEvidence> = Rc::new(move || {
+        let quit_evidence_handler: Rc<dyn Fn() -> CloseSnapshot> = Rc::new(move || {
             weak.upgrade().map_or_else(
-                || CloseEvidence::new(CloseTarget::Application, Vec::new()),
+                || CloseSnapshot::new(CloseTarget::Application, Vec::new()),
                 |coordinator| {
                     coordinator.try_borrow().map_or_else(
-                        |_| CloseEvidence::new(CloseTarget::Application, Vec::new()),
+                        |_| CloseSnapshot::new(CloseTarget::Application, Vec::new()),
                         |coordinator| coordinator.application_close_evidence(),
                     )
                 },
@@ -1143,8 +1144,8 @@ impl ApplicationCoordinator {
         Ok(())
     }
 
-    fn application_close_evidence(&self) -> CloseEvidence {
-        CloseEvidence::new(
+    fn application_close_evidence(&self) -> CloseSnapshot {
+        CloseSnapshot::new(
             CloseTarget::Application,
             self.shells
                 .values()

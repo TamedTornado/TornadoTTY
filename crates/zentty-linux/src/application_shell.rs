@@ -30,7 +30,7 @@ use gtk::gdk;
 use gtk::glib;
 use gtk::prelude::*;
 use zentty_core::{
-    AgentPhase, AppConfig, CloseEvidence, ClosePaneOutcome, ColumnRecipe, CommandPaletteItem,
+    AgentPhase, AppConfig, ClosePaneOutcome, ColumnRecipe, CommandPaletteItem,
     GlobalSearchCoordinator, GlobalSearchDirection, PaneColumnState, PaneCrossWindowTransfer,
     PaneLayoutPolicy, PaneMoveSplitAxis, PaneMoveTarget, PaneRecipe, PaneReference,
     PaneResizeDirection, PaneRestoreDraft, PaneWindowTransfer, ServerPortRule,
@@ -47,7 +47,7 @@ mod agent_lifecycle_signal;
 mod application_commands;
 mod bookmark_runtime;
 mod clipboard_actions;
-mod close_runtime;
+pub(crate) mod close_runtime;
 mod global_search;
 pub(crate) mod open_with_runtime;
 mod pane_action_recovery;
@@ -222,11 +222,11 @@ pub(crate) struct ApplicationShell {
     worklane_destination_groups: Vec<sidebar::WorklaneDestinationGroup>,
     show_task_manager_handler: Option<Rc<dyn Fn()>>,
     close_window_handler: Option<Rc<dyn Fn()>>,
-    close_window_evidence_handler: Option<Rc<dyn Fn() -> CloseEvidence>>,
+    close_window_evidence_handler: Option<Rc<dyn Fn() -> close_runtime::CloseSnapshot>>,
     quit_handler: Option<Rc<dyn Fn()>>,
-    quit_evidence_handler: Option<Rc<dyn Fn() -> CloseEvidence>>,
+    quit_evidence_handler: Option<Rc<dyn Fn() -> close_runtime::CloseSnapshot>>,
     application_action_handler: Option<Rc<dyn Fn(ApplicationAction)>>,
-    pending_close_evidence: RefCell<Option<CloseEvidence>>,
+    pending_close_evidence: RefCell<Option<close_runtime::CloseSnapshot>>,
     self_handle: RefCell<Weak<RefCell<Self>>>,
 }
 
@@ -237,9 +237,9 @@ pub(crate) struct ApplicationHandlers {
     pub(crate) move_pane_to_new_window: Rc<dyn Fn(String)>,
     pub(crate) show_task_manager: Rc<dyn Fn()>,
     pub(crate) close_window: Rc<dyn Fn()>,
-    pub(crate) close_window_evidence: Rc<dyn Fn() -> CloseEvidence>,
+    pub(crate) close_window_evidence: Rc<dyn Fn() -> close_runtime::CloseSnapshot>,
     pub(crate) quit: Rc<dyn Fn()>,
-    pub(crate) quit_evidence: Rc<dyn Fn() -> CloseEvidence>,
+    pub(crate) quit_evidence: Rc<dyn Fn() -> close_runtime::CloseSnapshot>,
     pub(crate) application_action: Rc<dyn Fn(ApplicationAction)>,
 }
 

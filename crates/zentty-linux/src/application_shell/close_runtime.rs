@@ -1,14 +1,15 @@
-use std::fs;
-use std::path::Path;
 use std::rc::Rc;
 
 use gtk::glib;
 use zentty_core::{
-    AgentPhase, CloseDecision, CloseEvidence, ClosePaneEvidence, CloseReason, CloseTarget,
-    decide_close,
+    AgentPhase, CloseDecision, ClosePaneEvidence, CloseReason, CloseTarget, decide_close,
 };
 
 use super::ApplicationShell;
+
+mod inspection;
+pub(crate) use inspection::CloseSnapshot;
+use inspection::{ClosePaneSnapshot, InspectedClose, Permit};
 
 impl ApplicationShell {
     fn focus_terminal_after_confirmation(shell: &Rc<std::cell::RefCell<Self>>) {
@@ -56,13 +57,13 @@ impl ApplicationShell {
         eprintln!("zentty-linux: confirmation focus-pending reason=window-inactive");
     }
 
-    pub(super) fn pane_close_evidence(&self, pane_id: &str) -> CloseEvidence {
+    pub(super) fn pane_close_evidence(&self, pane_id: &str) -> CloseSnapshot {
         let worklane_id = self.state.worklane_id_for_pane(pane_id);
         let panes = worklane_id
             .and_then(|_| self.close_pane_evidence(pane_id))
             .into_iter()
             .collect();
-        CloseEvidence::new(
+        CloseSnapshot::new(
             CloseTarget::Pane {
                 window_id: self.window_template.id.clone(),
                 worklane_id: worklane_id.unwrap_or_default().to_owned(),
@@ -72,7 +73,7 @@ impl ApplicationShell {
         )
     }
 
-    pub(super) fn worklane_close_evidence(&self, worklane_id: &str) -> CloseEvidence {
+    pub(super) fn worklane_close_evidence(&self, worklane_id: &str) -> CloseSnapshot {
         let panes = self
             .state
             .worklanes()
@@ -83,7 +84,7 @@ impl ApplicationShell {
             .flat_map(|column| &column.panes)
             .filter_map(|pane| self.close_pane_evidence(&pane.id))
             .collect();
-        CloseEvidence::new(
+        CloseSnapshot::new(
             CloseTarget::Worklane {
                 window_id: self.window_template.id.clone(),
                 worklane_id: worklane_id.to_owned(),
@@ -92,7 +93,7 @@ impl ApplicationShell {
         )
     }
 
-    pub(crate) fn window_close_evidence(&self) -> CloseEvidence {
+    pub(crate) fn window_close_evidence(&self) -> CloseSnapshot {
         let panes = self
             .state
             .worklanes()
@@ -101,7 +102,7 @@ impl ApplicationShell {
             .flat_map(|column| &column.panes)
             .filter_map(|pane| self.close_pane_evidence(&pane.id))
             .collect();
-        CloseEvidence::new(
+        CloseSnapshot::new(
             CloseTarget::Window {
                 window_id: self.window_template.id.clone(),
             },
@@ -109,15 +110,9 @@ impl ApplicationShell {
         )
     }
 
-    fn close_pane_evidence(&self, pane_id: &str) -> Option<ClosePaneEvidence> {
+    fn close_pane_evidence(&self, pane_id: &str) -> Option<ClosePaneSnapshot> {
         let pane = self.state.pane(pane_id)?;
-        let agent_status = self
-            .state
-            .sidebar_summaries()
-            .into_iter()
-            .flat_map(|worklane| worklane.pane_rows)
-            .find(|summary| summary.pane_id == pane_id)
-            .and_then(|summary| summary.agent_status);
+        let agent_status = self.state.pane_agent_status(pane_id);
         let has_active_agent = agent_status.as_ref().is_some_and(|status| {
             matches!(
                 status.phase,
@@ -127,24 +122,23 @@ impl ApplicationShell {
                     | AgentPhase::UnresolvedStop
             )
         });
-        let has_running_process = self
-            .pane_runtime
-            .surface(pane_id)
-            .and_then(zentty_ghostty::GhosttySurface::foreground_process_id)
-            .is_some_and(process_requires_confirmation);
-        Some(ClosePaneEvidence {
-            pane_id: pane_id.to_owned(),
-            has_running_process,
-            has_active_agent,
-            has_session_history: pane
-                .last_run_command
-                .as_deref()
-                .is_some_and(has_user_session_history)
-                || agent_status.is_some(),
+        Some(ClosePaneSnapshot {
+            identity: super::pane_context::PaneContext::capture(self, pane_id)?,
+            window_id: self.window_template.id.clone(),
+            evidence: ClosePaneEvidence {
+                pane_id: pane_id.to_owned(),
+                has_running_process: false,
+                has_active_agent,
+                has_session_history: pane
+                    .last_run_command
+                    .as_deref()
+                    .is_some_and(has_user_session_history)
+                    || agent_status.is_some(),
+            },
         })
     }
 
-    fn current_close_evidence(&self, target: &CloseTarget) -> CloseEvidence {
+    fn current_close_evidence(&self, target: &CloseTarget) -> CloseSnapshot {
         match target {
             CloseTarget::Pane { pane_id, .. } => self.pane_close_evidence(pane_id),
             CloseTarget::Worklane { worklane_id, .. } => self.worklane_close_evidence(worklane_id),
@@ -162,31 +156,102 @@ impl ApplicationShell {
 
     pub(super) fn request_close_action(
         shell: &Rc<std::cell::RefCell<Self>>,
-        evidence: &CloseEvidence,
+        snapshot: &CloseSnapshot,
         confirmation_enabled: bool,
         action: Rc<dyn Fn()>,
     ) {
-        match decide_close(evidence.clone(), confirmation_enabled) {
-            CloseDecision::StaleTarget => {
+        {
+            let shell_ref = shell.borrow();
+            let mut pending = shell_ref.pending_close_evidence.borrow_mut();
+            if pending.is_some() {
+                eprintln!(
+                    "zentty-linux: close-request ignored=pending target={:?}",
+                    snapshot.target
+                );
+                return;
+            }
+            if snapshot.panes.is_empty() || shell_ref.shutting_down {
                 eprintln!(
                     "zentty-linux: close-request ignored=stale target={:?}",
-                    evidence.target
+                    snapshot.target
                 );
+                return;
             }
-            CloseDecision::CloseNow => action(),
+            // Disabled confirmation does not require process classification.
+            // No asynchronous boundary is introduced on this explicit policy.
+            if confirmation_enabled {
+                *pending = Some(snapshot.clone());
+            }
+        }
+        if !confirmation_enabled {
+            action();
+            return;
+        }
+        let snapshot = snapshot.clone();
+        Self::inspect_close(shell, snapshot.clone(), move |shell, inspected| {
+            Self::present_close_decision(shell, snapshot, inspected, action);
+        });
+    }
+
+    fn reject_pending_close(shell: &Rc<std::cell::RefCell<Self>>, reason: &str) {
+        let shell = shell.borrow();
+        shell.pending_close_evidence.borrow_mut().take();
+        eprintln!("zentty-linux: close-request ignored={reason}");
+        if !shell.shutting_down {
+            shell.restore_notice.show("Close was not applied. The pane changed or process inspection was unavailable. Retry the close action.");
+        }
+    }
+
+    fn inspect_close(
+        shell: &Rc<std::cell::RefCell<Self>>,
+        snapshot: CloseSnapshot,
+        ready: impl FnOnce(&Rc<std::cell::RefCell<Self>>, InspectedClose) + 'static,
+    ) {
+        let Some(permit) = Permit::acquire() else {
+            Self::reject_pending_close(shell, "inspection-busy");
+            return;
+        };
+        let weak = Rc::downgrade(shell);
+        glib::spawn_future_local(async move {
+            let source = snapshot.clone();
+            let result = gtk::gio::spawn_blocking(move || {
+                let _permit = permit;
+                source.inspect()
+            })
+            .await;
+            let Some(shell) = weak.upgrade() else { return };
+            let current = {
+                let shell = shell.borrow();
+                !shell.shutting_down
+                    && shell.pending_close_evidence.borrow().as_ref() == Some(&snapshot)
+                    && shell.current_close_evidence(&snapshot.target) == snapshot
+            };
+            if !current {
+                Self::reject_pending_close(&shell, "stale-inspection");
+                return;
+            }
+            match result {
+                Ok(inspected) => ready(&shell, inspected),
+                Err(_) => Self::reject_pending_close(&shell, "inspection-worker-panic"),
+            }
+        });
+    }
+
+    fn present_close_decision(
+        shell: &Rc<std::cell::RefCell<Self>>,
+        snapshot: CloseSnapshot,
+        inspected: InspectedClose,
+        action: Rc<dyn Fn()>,
+    ) {
+        match decide_close(inspected.evidence.clone(), true) {
+            CloseDecision::StaleTarget => {
+                Self::reject_pending_close(shell, "stale-target");
+            }
+            CloseDecision::CloseNow => {
+                shell.borrow().pending_close_evidence.borrow_mut().take();
+                action();
+            }
             CloseDecision::Confirm { reason, evidence } => {
-                let shell_ref = shell.borrow();
-                let mut pending = shell_ref.pending_close_evidence.borrow_mut();
-                if let Some(existing) = pending.as_ref() {
-                    eprintln!(
-                        "zentty-linux: close-request ignored=pending existing={:?} requested={:?}",
-                        existing.target, evidence.target
-                    );
-                    return;
-                }
-                *pending = Some(evidence.clone());
-                drop(pending);
-                drop(shell_ref);
                 let (title, detail, accept_label) = prompt_text(&evidence.target, reason);
                 let dialog = gtk::AlertDialog::builder()
                     .modal(true)
@@ -209,61 +274,69 @@ impl ApplicationShell {
                             .pending_close_evidence
                             .borrow()
                             .as_ref()
-                            .is_some_and(|pending| pending == &evidence);
+                            .is_some_and(|pending| pending == &snapshot);
                         let accepted = response == Ok(1);
                         eprintln!("zentty-linux: confirmation accepted={accepted}");
                         if !was_pending {
                             return;
                         }
-                        if !accepted {
-                            shell.borrow().pending_close_evidence.borrow_mut().take();
+                        if !accepted
+                            || matches!(
+                                snapshot.target,
+                                CloseTarget::Pane { .. } | CloseTarget::Worklane { .. }
+                            )
+                        {
                             let weak = Rc::downgrade(&shell);
                             glib::idle_add_local_once(move || {
-                                // AlertDialog completes transient teardown
-                                // after invoking the choose callback. Restore
-                                // on the next main-loop turn, or wait for the
-                                // compositor's parent-window activation event.
+                                // Return pane input while inspection is pending,
+                                // but never re-present a window being closed.
                                 if let Some(shell) = weak.upgrade() {
                                     Self::focus_terminal_after_confirmation(&shell);
                                 }
                             });
-                            return;
                         }
-                        let current = shell.borrow().current_close_evidence(&evidence.target);
-                        if !same_close_evidence(&evidence, &current) {
+                        if !accepted {
                             shell.borrow().pending_close_evidence.borrow_mut().take();
-                            eprintln!(
-                                "zentty-linux: close-request ignored=stale-callback target={:?}",
-                                evidence.target
-                            );
                             return;
                         }
-                        let weak = Rc::downgrade(&shell);
-                        glib::idle_add_local_once(move || {
-                            let Some(shell) = weak.upgrade() else {
+                        Self::inspect_close(&shell, snapshot.clone(), move |shell, current| {
+                            if current != inspected {
+                                Self::reject_pending_close(shell, "stale-callback");
+                                Self::focus_terminal_after_confirmation(shell);
                                 return;
-                            };
-                            let still_pending = shell
-                                .borrow()
-                                .pending_close_evidence
-                                .borrow_mut()
-                                .take()
-                                .is_some_and(|pending| pending == evidence);
-                            if still_pending {
-                                let restores_survivor = matches!(
-                                    evidence.target,
-                                    CloseTarget::Pane { .. } | CloseTarget::Worklane { .. }
-                                );
-                                action();
-                                // A confirmed pane/worklane close may leave a
-                                // surviving surface in this window. The modal
-                                // transient owned focus while the action
-                                // rendered that survivor, so restore it once
-                                // the compositor reactivates the parent.
-                                if restores_survivor {
-                                    Self::focus_terminal_after_confirmation(&shell);
-                                }
                             }
+                            let weak = Rc::downgrade(shell);
+                            glib::idle_add_local_once(move || {
+                                let Some(shell) = weak.upgrade() else {
+                                    return;
+                                };
+                                let still_pending = shell
+                                    .borrow()
+                                    .pending_close_evidence
+                                    .borrow_mut()
+                                    .take()
+                                    .is_some_and(|pending| pending == snapshot);
+                                let unchanged = !shell.borrow().shutting_down
+                                    && shell.borrow().current_close_evidence(&snapshot.target)
+                                        == snapshot;
+                                if still_pending && unchanged {
+                                    let restores_survivor = matches!(
+                                        evidence.target,
+                                        CloseTarget::Pane { .. } | CloseTarget::Worklane { .. }
+                                    );
+                                    action();
+                                    // A confirmed pane/worklane close may leave a
+                                    // surviving surface in this window. The modal
+                                    // transient owned focus while the action
+                                    // rendered that survivor, so restore it once
+                                    // the compositor reactivates the parent.
+                                    if restores_survivor {
+                                        Self::focus_terminal_after_confirmation(&shell);
+                                    }
+                                } else {
+                                    Self::reject_pending_close(&shell, "stale-before-commit");
+                                }
+                            });
                         });
                     },
                 );
@@ -271,10 +344,6 @@ impl ApplicationShell {
             }
         }
     }
-}
-
-fn same_close_evidence(expected: &CloseEvidence, current: &CloseEvidence) -> bool {
-    expected == current
 }
 
 fn prompt_text(
@@ -317,20 +386,6 @@ fn prompt_text(
     }
 }
 
-fn process_requires_confirmation(process_id: u64) -> bool {
-    let Ok(process_id) = u32::try_from(process_id) else {
-        return true;
-    };
-    let root = Path::new("/proc").join(process_id.to_string());
-    let Ok(comm) = fs::read_to_string(root.join("comm")) else {
-        return true;
-    };
-    let Ok(command_line) = fs::read(root.join("cmdline")) else {
-        return true;
-    };
-    !looks_like_idle_shell(comm.trim(), &command_line)
-}
-
 fn looks_like_idle_shell(comm: &str, command_line: &[u8]) -> bool {
     let executable = comm.rsplit('/').next().unwrap_or(comm);
     let is_shell = matches!(
@@ -352,25 +407,7 @@ fn has_user_session_history(command: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{has_user_session_history, looks_like_idle_shell, same_close_evidence};
-    use zentty_core::{CloseEvidence, ClosePaneEvidence, CloseTarget};
-
-    fn evidence(panes: &[(&str, bool)]) -> CloseEvidence {
-        CloseEvidence::new(
-            CloseTarget::Window {
-                window_id: "window-1".to_owned(),
-            },
-            panes
-                .iter()
-                .map(|(pane_id, running)| ClosePaneEvidence {
-                    pane_id: (*pane_id).to_owned(),
-                    has_running_process: *running,
-                    has_active_agent: false,
-                    has_session_history: false,
-                })
-                .collect(),
-        )
-    }
+    use super::{has_user_session_history, looks_like_idle_shell};
 
     #[test]
     fn interactive_shells_are_idle_but_command_shells_are_live_work() {
@@ -387,21 +424,5 @@ mod tests {
         ));
         assert!(!has_user_session_history("_zentty_ensure_wrapper_path"));
         assert!(has_user_session_history("cargo test"));
-    }
-
-    #[test]
-    fn accepted_request_rejects_replaced_target_or_changed_risk() {
-        assert!(same_close_evidence(
-            &evidence(&[("pane-a", false), ("pane-b", false)]),
-            &evidence(&[("pane-b", false), ("pane-a", false)])
-        ));
-        assert!(!same_close_evidence(
-            &evidence(&[("pane-a", false)]),
-            &evidence(&[("pane-a", false), ("pane-b", false)])
-        ));
-        assert!(!same_close_evidence(
-            &evidence(&[("pane-a", false)]),
-            &evidence(&[("pane-a", true)])
-        ));
     }
 }
