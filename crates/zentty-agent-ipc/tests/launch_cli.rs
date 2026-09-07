@@ -149,7 +149,7 @@ fn real_cli_execs_codex_with_ephemeral_hooks_and_original_arguments() {
     assert!(receipt.contains("hooks.PermissionRequest="), "{receipt}");
     assert!(receipt.contains("hooks.state="), "{receipt}");
     assert!(
-        receipt.contains(r#"tui.notifications=["approval-requested"]"#),
+        receipt.contains(r#"tui.notifications=["approval-requested","agent-turn-complete"]"#),
         "{receipt}"
     );
     assert!(

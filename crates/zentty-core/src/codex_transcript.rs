@@ -8,6 +8,10 @@ use std::time::SystemTime;
 const MAX_TAIL_BYTES: u64 = 256 * 1024;
 const MAX_TRANSCRIPT_CANDIDATES: usize = 12;
 const MAX_SESSION_DAY_DIRECTORIES: usize = 4;
+const MAX_DISCOVERY_ENTRIES: usize = 4096;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct CodexTranscriptDiscoveryLimit;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CodexTranscriptQuestion {
@@ -72,24 +76,48 @@ pub fn locate_recent_codex_transcript_path(
     codex_home: &Path,
     working_directory: &str,
 ) -> Option<PathBuf> {
+    discover_recent_codex_transcript_path(codex_home, working_directory)
+        .ok()
+        .flatten()
+}
+
+/// Searches at most 4096 directory entries across the entire traversal, before
+/// metadata filtering. Exhaustion returns no partial choice: directory order
+/// is unspecified and a partial result need not be the newest session.
+///
+/// # Errors
+/// Returns `CodexTranscriptDiscoveryLimit` when the entry budget is exceeded.
+pub fn discover_recent_codex_transcript_path(
+    codex_home: &Path,
+    working_directory: &str,
+) -> Result<Option<PathBuf>, CodexTranscriptDiscoveryLimit> {
+    let mut remaining = MAX_DISCOVERY_ENTRIES;
     let normalized_working_directory = normalize_path(Path::new(working_directory));
     let sessions = codex_home.join("sessions");
-    let mut day_directories = directory_children(&sessions)
-        .into_iter()
-        .flat_map(|year| directory_children(&year))
-        .flat_map(|month| directory_children(&month))
-        .collect::<Vec<_>>();
+    let mut day_directories = Vec::new();
+    for year in directory_children(&sessions, &mut remaining)? {
+        for month in directory_children(&year, &mut remaining)? {
+            for day in directory_children(&month, &mut remaining)? {
+                day_directories.push(day);
+                day_directories.sort_by(|left, right| right.cmp(left));
+                day_directories.truncate(MAX_SESSION_DAY_DIRECTORIES);
+            }
+        }
+    }
     day_directories.sort_by(|left, right| right.cmp(left));
     day_directories.truncate(MAX_SESSION_DAY_DIRECTORIES);
 
-    let mut candidates = day_directories
-        .into_iter()
-        .flat_map(|day| regular_jsonl_children(&day))
-        .collect::<Vec<_>>();
-    candidates.sort_by(|left, right| right.1.cmp(&left.1).then_with(|| right.0.cmp(&left.0)));
-    candidates.truncate(MAX_TRANSCRIPT_CANDIDATES);
+    let mut candidates = Vec::new();
+    for day in day_directories {
+        for candidate in regular_jsonl_children(&day, &mut remaining)? {
+            candidates.push(candidate);
+            candidates
+                .sort_by(|left, right| right.1.cmp(&left.1).then_with(|| right.0.cmp(&left.0)));
+            candidates.truncate(MAX_TRANSCRIPT_CANDIDATES);
+        }
+    }
 
-    candidates.into_iter().find_map(|(path, _)| {
+    Ok(candidates.into_iter().find_map(|(path, _)| {
         let text = read_transcript_tail(&path)?;
         if !transcript_matches_working_directory(&text, &normalized_working_directory)
             || codex_question_from_transcript_text(&text).is_none()
@@ -97,7 +125,7 @@ pub fn locate_recent_codex_transcript_path(
             return None;
         }
         Some(path)
-    })
+    }))
 }
 
 /// Returns the source-compatible file identity used to invalidate cached
@@ -190,25 +218,44 @@ fn is_question_tool_name(value: Option<&str>) -> bool {
     )
 }
 
-fn directory_children(path: &Path) -> Vec<PathBuf> {
+fn bounded_entries(
+    path: &Path,
+    remaining: &mut usize,
+) -> Result<Vec<fs::DirEntry>, CodexTranscriptDiscoveryLimit> {
     let Ok(children) = fs::read_dir(path) else {
-        return Vec::new();
+        return Ok(Vec::new());
     };
-    children
-        .filter_map(Result::ok)
+    let mut entries = Vec::new();
+    for entry in children {
+        *remaining = remaining
+            .checked_sub(1)
+            .ok_or(CodexTranscriptDiscoveryLimit)?;
+        if let Ok(entry) = entry {
+            entries.push(entry);
+        }
+    }
+    Ok(entries)
+}
+
+fn directory_children(
+    path: &Path,
+    remaining: &mut usize,
+) -> Result<Vec<PathBuf>, CodexTranscriptDiscoveryLimit> {
+    Ok(bounded_entries(path, remaining)?
+        .into_iter()
         .map(|entry| entry.path())
         .filter(|path| {
             fs::symlink_metadata(path).is_ok_and(|metadata| metadata.file_type().is_dir())
         })
-        .collect()
+        .collect())
 }
 
-fn regular_jsonl_children(path: &Path) -> Vec<(PathBuf, Option<SystemTime>)> {
-    let Ok(children) = fs::read_dir(path) else {
-        return Vec::new();
-    };
-    children
-        .filter_map(Result::ok)
+fn regular_jsonl_children(
+    path: &Path,
+    remaining: &mut usize,
+) -> Result<Vec<(PathBuf, Option<SystemTime>)>, CodexTranscriptDiscoveryLimit> {
+    Ok(bounded_entries(path, remaining)?
+        .into_iter()
         .map(|entry| entry.path())
         .filter(|path| {
             path.extension()
@@ -221,7 +268,7 @@ fn regular_jsonl_children(path: &Path) -> Vec<(PathBuf, Option<SystemTime>)> {
                 .is_file()
                 .then(|| (path, metadata.modified().ok()))
         })
-        .collect()
+        .collect())
 }
 
 fn transcript_matches_working_directory(text: &str, working_directory: &Path) -> bool {

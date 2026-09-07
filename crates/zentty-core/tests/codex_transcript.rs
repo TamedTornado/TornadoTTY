@@ -21,6 +21,34 @@ fn fixture() -> std::path::PathBuf {
 }
 
 #[test]
+fn oversized_discovery_does_not_choose_an_arbitrary_partial_result() {
+    let root = fixture();
+    let day = root.join("sessions/2026/09/07");
+    fs::create_dir_all(&day).unwrap();
+    fs::write(day.join("question.jsonl"), concat!(
+        "{\"cwd\":\"/work\"}\n",
+        "{\"type\":\"function_call\",\"name\":\"request_user_input\",\"arguments\":{\"question\":\"Pick?\"}}\n"
+    )).unwrap();
+    assert!(locate_recent_codex_transcript_path(&root, "/work").is_some());
+    // Non-transcript entries must count too: filtering before accounting still
+    // allows an arbitrarily large directory traversal and metadata work.
+    for index in 0..4092 {
+        fs::write(day.join(format!("noise-{index}")), b"").unwrap();
+    }
+    assert!(
+        locate_recent_codex_transcript_path(&root, "/work").is_some(),
+        "exactly 4096 entries still fit"
+    );
+    fs::write(day.join("one-too-many"), b"").unwrap();
+    assert_eq!(
+        zentty_core::discover_recent_codex_transcript_path(&root, "/work"),
+        Err(zentty_core::CodexTranscriptDiscoveryLimit)
+    );
+    assert!(locate_recent_codex_transcript_path(&root, "/work").is_none());
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn extracts_the_newest_source_shaped_question_and_formats_decision_options() {
     const SOURCE: &str = include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),

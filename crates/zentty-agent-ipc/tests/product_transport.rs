@@ -70,6 +70,12 @@ fn running_server_with_limits(
     let socket = root.join("runtime/instance.sock");
     let mut registry = PaneTokenRegistry::default();
     registry.register(token, target).unwrap();
+    registry
+        .register(
+            "quiet-token",
+            AgentTarget::new("window-2", "lane-2", "quiet-pane"),
+        )
+        .unwrap();
     let (event_sender, _event_receiver) = zentty_agent_ipc::ingress_channel(128, 16);
     let (tmux_sender, _tmux_receiver) = zentty_agent_ipc::ingress_channel(32, 4);
     let (server_sender, _server_receiver) = zentty_agent_ipc::ingress_channel(32, 4);
@@ -84,6 +90,97 @@ fn running_server_with_limits(
     )
     .unwrap();
     (root, socket, server, product_receiver)
+}
+
+#[test]
+fn saturated_reply_admission_rejects_before_dispatch_and_shutdown_does_not_wait_for_gui() {
+    let (root, socket, server, receiver) = running_server();
+    let mut clients = Vec::new();
+    let mut held = Vec::new();
+    for _ in 0..8 {
+        let socket = socket.clone();
+        clients.push(std::thread::spawn(move || {
+            AgentIpcClient::send_application(
+                &socket,
+                "caller-token",
+                &ApplicationRequest::new(ProductIpcKind::Discover, "panes", vec![]).unwrap(),
+                None,
+            )
+        }));
+        held.push(receiver.recv_timeout(Duration::from_secs(1)).unwrap());
+    }
+    let error = AgentIpcClient::send_application(
+        &socket,
+        "caller-token",
+        &ApplicationRequest::new(ProductIpcKind::Discover, "panes", vec![]).unwrap(),
+        None,
+    )
+    .unwrap_err();
+    assert!(
+        matches!(error, AgentIpcError::Remote { ref code, category: ApplicationErrorCategory::ProductUnavailable, .. } if code == "ingress_full")
+    );
+    assert!(matches!(
+        receiver.try_recv(),
+        Err(std::sync::mpsc::TryRecvError::Empty)
+    ));
+    let started = std::time::Instant::now();
+    server.shutdown().unwrap();
+    assert!(started.elapsed() < Duration::from_secs(1));
+    for request in held {
+        assert!(request.respond(empty_reply()).is_err());
+    }
+    for client in clients {
+        assert!(client.join().unwrap().is_err());
+    }
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn waiting_for_gui_replies_does_not_occupy_connection_readers() {
+    let (root, socket, server, receiver) = running_server();
+    let mut clients = Vec::new();
+    let mut held = Vec::new();
+    for _ in 0..AgentIpcServer::CONNECTION_WORKERS {
+        let socket = socket.clone();
+        clients.push(std::thread::spawn(move || {
+            AgentIpcClient::send_application(
+                &socket,
+                "caller-token",
+                &ApplicationRequest::new(ProductIpcKind::Discover, "panes", vec![]).unwrap(),
+                None,
+            )
+        }));
+        held.push(receiver.recv_timeout(Duration::from_secs(1)).unwrap());
+    }
+    let quiet_socket = socket.clone();
+    let quiet = std::thread::spawn(move || {
+        AgentIpcClient::send_application(
+            &quiet_socket,
+            "quiet-token",
+            &ApplicationRequest::new(ProductIpcKind::Discover, "panes", vec![]).unwrap(),
+            None,
+        )
+    });
+    let next = receiver.recv_timeout(Duration::from_millis(500)).ok();
+    let served_while_others_waited = next.is_some();
+    if let Some(request) = next {
+        request.respond(empty_reply()).unwrap();
+    }
+    for request in held {
+        request.respond(empty_reply()).unwrap();
+    }
+    drop(receiver);
+    for client in clients {
+        client.join().unwrap().unwrap();
+    }
+    let quiet_result = quiet.join().unwrap();
+    server.shutdown().unwrap();
+    std::fs::remove_dir_all(root).unwrap();
+    assert!(
+        served_while_others_waited,
+        "four GUI replies starved the next connection"
+    );
+    assert!(quiet_result.unwrap().error().is_none());
 }
 
 #[test]

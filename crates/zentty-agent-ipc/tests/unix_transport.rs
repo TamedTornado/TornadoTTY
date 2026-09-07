@@ -19,6 +19,48 @@ fn temporary_socket() -> (std::path::PathBuf, std::path::PathBuf) {
 }
 
 #[test]
+fn trickling_bytes_cannot_extend_a_connection_read_deadline() {
+    use std::io::{Read, Write};
+    let (root, socket) = temporary_socket();
+    let (sender, _receiver) = zentty_agent_ipc::ingress_channel(128, 16);
+    let server = AgentIpcServer::start(
+        &socket,
+        Arc::new(Mutex::new(PaneTokenRegistry::default())),
+        sender,
+    )
+    .unwrap();
+    let mut client = UnixStream::connect(&socket).unwrap();
+    client
+        .set_read_timeout(Some(Duration::from_secs(2)))
+        .unwrap();
+    let mut writer = client.try_clone().unwrap();
+    let started = std::time::Instant::now();
+    let producer = std::thread::spawn(move || {
+        for _ in 0..12 {
+            if writer.write_all(b" ").is_err() {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        let _ = writer.shutdown(std::net::Shutdown::Write);
+    });
+    let mut response = Vec::new();
+    client.read_to_end(&mut response).unwrap();
+    let elapsed = started.elapsed();
+    producer.join().unwrap();
+    server.shutdown().unwrap();
+    std::fs::remove_dir_all(root).unwrap();
+    assert!(
+        elapsed < Duration::from_millis(500),
+        "trickle reset read deadline: {elapsed:?}"
+    );
+    assert!(
+        !response.is_empty(),
+        "deadline should produce a transport error response"
+    );
+}
+
+#[test]
 fn pane_tokens_are_distinct_256_bit_os_random_capabilities() {
     let first = generate_pane_token().unwrap();
     let second = generate_pane_token().unwrap();

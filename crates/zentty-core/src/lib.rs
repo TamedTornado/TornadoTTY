@@ -152,8 +152,9 @@ pub use codex_title::{
     codex_activity_title_frame, stable_codex_terminal_title,
 };
 pub use codex_transcript::{
-    CodexTranscriptCacheKey, CodexTranscriptQuestion, codex_question_from_transcript_path,
-    codex_question_from_transcript_text, codex_transcript_cache_key,
+    CodexTranscriptCacheKey, CodexTranscriptDiscoveryLimit, CodexTranscriptQuestion,
+    codex_question_from_transcript_path, codex_question_from_transcript_text,
+    codex_transcript_cache_key, discover_recent_codex_transcript_path,
     locate_recent_codex_transcript_path,
 };
 pub use command_palette::{

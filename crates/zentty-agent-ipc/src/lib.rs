@@ -6,7 +6,9 @@ mod ingress;
 mod integrations;
 mod launch;
 mod presentation;
+mod replies;
 mod server;
+use replies::{PendingReply, ReplyQueue, ReplyReceiver};
 
 pub use cli::{CliProductCommand, parse_product_cli};
 pub use discovery::{
@@ -814,9 +816,12 @@ fn serve(
 ) {
     let (connections, receiver) = mpsc::sync_channel(AgentIpcServer::MAX_PENDING_CONNECTIONS);
     let receiver = Arc::new(Mutex::new(receiver));
+    let (replies, reply_receiver) = ReplyQueue::new();
     thread::scope(|scope| {
+        scope.spawn(move || ReplyQueue::run(reply_receiver, running));
         for _ in 0..AgentIpcServer::CONNECTION_WORKERS {
             let receiver = Arc::clone(&receiver);
+            let replies = &replies;
             scope.spawn(move || {
                 while running.load(Ordering::Acquire) {
                     let stream = receiver
@@ -832,6 +837,7 @@ fn serve(
                                 tmux_sender,
                                 server_sender,
                                 product_sender,
+                                replies,
                             );
                         }
                         Err(mpsc::RecvTimeoutError::Timeout) => {}
@@ -859,6 +865,7 @@ fn handle_connection(
     tmux_sender: Option<&IngressSender<AuthenticatedTmuxRequest>>,
     server_sender: Option<&IngressSender<AuthenticatedServerRequest>>,
     product_sender: Option<&IngressSender<AuthenticatedProductRequest>>,
+    replies: &ReplyQueue,
 ) {
     let _ = stream.set_read_timeout(Some(AgentIpcServer::CONNECTION_TIMEOUT));
     let _ = stream.set_write_timeout(Some(AgentIpcServer::CONNECTION_TIMEOUT));
@@ -869,7 +876,20 @@ fn handle_connection(
         tmux_sender,
         server_sender,
         product_sender,
+        replies,
     );
+    match result {
+        Ok(ReceivedRequest::Pending(reply)) => replies.enqueue(stream, reply),
+        Ok(ReceivedRequest::Complete(response)) => {
+            let _ = stream.write_all(&response_bytes(Ok(response)));
+        }
+        Err(error) => {
+            let _ = stream.write_all(&response_bytes(Err(error)));
+        }
+    }
+}
+
+fn response_bytes(result: Result<ReceivedResponse, AgentIpcError>) -> Vec<u8> {
     let response = match result {
         Ok(ReceivedResponse { id, reply: None }) => WireResponse {
             version: 1,
@@ -956,9 +976,7 @@ fn handle_connection(
             }),
         },
     };
-    if let Ok(bytes) = serde_json::to_vec(&response) {
-        let _ = stream.write_all(&bytes);
-    }
+    serde_json::to_vec(&response).unwrap_or_default()
 }
 
 fn application_capabilities() -> Vec<String> {
@@ -972,6 +990,11 @@ fn application_capabilities() -> Vec<String> {
 struct ReceivedResponse {
     id: String,
     reply: Option<ProductReply>,
+}
+
+enum ReceivedRequest {
+    Complete(ReceivedResponse),
+    Pending(PendingReply),
 }
 
 struct ProductReply {
@@ -1035,11 +1058,9 @@ fn receive_request(
     tmux_sender: Option<&IngressSender<AuthenticatedTmuxRequest>>,
     server_sender: Option<&IngressSender<AuthenticatedServerRequest>>,
     product_sender: Option<&IngressSender<AuthenticatedProductRequest>>,
-) -> Result<ReceivedResponse, AgentIpcError> {
-    let mut frame = Vec::new();
-    stream
-        .take(u64::try_from(AgentIpcServer::MAX_FRAME_READ_BYTES).unwrap_or(u64::MAX))
-        .read_to_end(&mut frame)?;
+    replies: &ReplyQueue,
+) -> Result<ReceivedRequest, AgentIpcError> {
+    let frame = read_request_frame(stream)?;
     if frame.len() > AgentIpcServer::MAX_FRAME_BYTES {
         return Err(AgentIpcError::InvalidRequest(
             "request exceeds transport limit".to_owned(),
@@ -1068,10 +1089,10 @@ fn receive_request(
                 .map_err(pane_token_rejection)?;
             drop(registry);
             sender.send(authenticated).map_err(ingress_rejection)?;
-            Ok(ReceivedResponse {
+            Ok(ReceivedRequest::Complete(ReceivedResponse {
                 id: request.id,
                 reply: None,
-            })
+            }))
         }
         ("tmux_compat", Some(subcommand)) => {
             let target = registry
@@ -1089,6 +1110,7 @@ fn receive_request(
                 AgentIpcError::Rejected("tmux compatibility handler unavailable".to_owned())
             })?;
             let (responder, response) = mpsc::sync_channel(1);
+            let reservation = replies.reserve(&target.pane_id)?;
             tmux_sender
                 .send(AuthenticatedTmuxRequest {
                     target,
@@ -1096,22 +1118,18 @@ fn receive_request(
                     responder,
                 })
                 .map_err(ingress_rejection)?;
-            let reply = response
-                .recv_timeout(AgentIpcServer::TMUX_REPLY_TIMEOUT)
-                .map_err(|_| {
-                    AgentIpcError::Rejected("tmux compatibility response timed out".to_owned())
-                })?;
-            Ok(ReceivedResponse {
-                id: request.id,
-                reply: Some(reply.into()),
-            })
+            Ok(ReceivedRequest::Pending(PendingReply::new(
+                request.id,
+                ReplyReceiver::Tmux(response),
+                reservation,
+            )))
         }
         ("server", Some(subcommand)) => {
             let target = registry
                 .authenticate_target(&token)
                 .map_err(pane_token_rejection)?;
             drop(registry);
-            receive_server_request(request, target, &subcommand, server_sender)
+            receive_server_request(request, target, &subcommand, server_sender, replies)
         }
         ("discover" | "pane", Some(subcommand)) => {
             let authenticated = registry
@@ -1124,10 +1142,36 @@ fn receive_request(
                 authenticated.authority,
                 &subcommand,
                 product_sender,
+                replies,
             )
         }
         _ => Err(AgentIpcError::Rejected("unsupported IPC route".to_owned())),
     }
+}
+
+fn read_request_frame(stream: &mut UnixStream) -> Result<Vec<u8>, AgentIpcError> {
+    let deadline = std::time::Instant::now() + AgentIpcServer::CONNECTION_TIMEOUT;
+    let mut frame = Vec::with_capacity(AgentIpcServer::MAX_FRAME_READ_BYTES);
+    let mut buffer = [0_u8; 8192];
+    while frame.len() < AgentIpcServer::MAX_FRAME_READ_BYTES {
+        let remaining = deadline
+            .checked_duration_since(std::time::Instant::now())
+            .filter(|remaining| !remaining.is_zero())
+            .ok_or_else(|| {
+                std::io::Error::new(std::io::ErrorKind::TimedOut, "IPC frame deadline exceeded")
+            })?;
+        stream.set_read_timeout(Some(remaining))?;
+        let capacity = buffer
+            .len()
+            .min(AgentIpcServer::MAX_FRAME_READ_BYTES - frame.len());
+        match stream.read(&mut buffer[..capacity]) {
+            Ok(0) => break,
+            Ok(count) => frame.extend_from_slice(&buffer[..count]),
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
+            Err(error) => return Err(error.into()),
+        }
+    }
+    Ok(frame)
 }
 
 fn receive_product_request(
@@ -1136,7 +1180,8 @@ fn receive_product_request(
     authority: CapabilityAuthority,
     subcommand: &str,
     product_sender: Option<&IngressSender<AuthenticatedProductRequest>>,
-) -> Result<ReceivedResponse, AgentIpcError> {
+    replies: &ReplyQueue,
+) -> Result<ReceivedRequest, AgentIpcError> {
     if let Some(version) = request.application_api_version
         && version != APPLICATION_API_VERSION
     {
@@ -1157,6 +1202,7 @@ fn receive_product_request(
     let product_sender = product_sender
         .ok_or_else(|| AgentIpcError::Rejected("product command handler unavailable".to_owned()))?;
     let (responder, response) = mpsc::sync_channel(1);
+    let reservation = replies.reserve(&target.pane_id)?;
     product_sender
         .send(AuthenticatedProductRequest {
             target: ApplicationTarget::new(target.window_id, target.worklane_id, target.pane_id),
@@ -1168,13 +1214,11 @@ fn receive_product_request(
             responder,
         })
         .map_err(ingress_rejection)?;
-    let reply = response
-        .recv_timeout(AgentIpcServer::APPLICATION_REPLY_TIMEOUT)
-        .map_err(|_| AgentIpcError::Rejected("product command response timed out".to_owned()))?;
-    Ok(ReceivedResponse {
-        id: request.id,
-        reply: Some(reply.into()),
-    })
+    Ok(ReceivedRequest::Pending(PendingReply::new(
+        request.id,
+        ReplyReceiver::Product(response),
+        reservation,
+    )))
 }
 
 fn receive_server_request(
@@ -1182,13 +1226,15 @@ fn receive_server_request(
     target: AgentTarget,
     subcommand: &str,
     server_sender: Option<&IngressSender<AuthenticatedServerRequest>>,
-) -> Result<ReceivedResponse, AgentIpcError> {
+    replies: &ReplyQueue,
+) -> Result<ReceivedRequest, AgentIpcError> {
     let payload = ServerIpcRequest::new(subcommand, request.arguments)
         .map_err(|error| AgentIpcError::Rejected(error.to_string()))?;
     let server_sender = server_sender.ok_or_else(|| {
         AgentIpcError::Rejected("development-server handler unavailable".to_owned())
     })?;
     let (responder, response) = mpsc::sync_channel(1);
+    let reservation = replies.reserve(&target.pane_id)?;
     server_sender
         .send(AuthenticatedServerRequest {
             target,
@@ -1196,13 +1242,11 @@ fn receive_server_request(
             responder,
         })
         .map_err(ingress_rejection)?;
-    let reply = response
-        .recv_timeout(AgentIpcServer::TMUX_REPLY_TIMEOUT)
-        .map_err(|_| AgentIpcError::Rejected("development-server response timed out".to_owned()))?;
-    Ok(ReceivedResponse {
-        id: request.id,
-        reply: Some(reply.into()),
-    })
+    Ok(ReceivedRequest::Pending(PendingReply::new(
+        request.id,
+        ReplyReceiver::Server(response),
+        reservation,
+    )))
 }
 
 fn ingress_rejection<T: IngressMessage>(error: IngressSendError<T>) -> AgentIpcError {

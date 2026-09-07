@@ -15,6 +15,53 @@ fn candidate() -> CodexTranscriptEnrichmentCandidate {
 }
 
 #[test]
+fn closed_windows_cannot_release_still_running_workers_from_the_shared_budget() {
+    let root = super::temporary_directory("cross-window-workers");
+    let path = super::transcript_path(&root);
+    std::fs::write(&path, r#"{"type":"function_call","name":"request_user_input","arguments":{"question":"Still bounded?"}}"#).unwrap();
+    let mut first = CodexTranscriptEnricher::new(root.clone());
+    let mut second = CodexTranscriptEnricher::new(root.clone());
+    first.delays = vec![Duration::ZERO];
+    second.delays = vec![Duration::ZERO];
+    let mut requests = Vec::new();
+    // Hold actual file-worker cache access, not a substituted resolver.
+    let cache = Arc::clone(&first.cache);
+    let guard = cache.lock().unwrap();
+    for index in 0..super::super::MAX_WORKERS {
+        let mut request = candidate();
+        request.pane_id = format!("first-{index}");
+        request.transcript_path = Some(path.to_string_lossy().into_owned());
+        assert!(first.schedule(request));
+    }
+    for index in 0..super::super::MAX_WORKERS {
+        let mut request = candidate();
+        request.pane_id = format!("second-{index}");
+        request.transcript_path = Some(path.to_string_lossy().into_owned());
+        requests.push(request.clone());
+        assert!(second.schedule(request));
+    }
+    assert!(
+        second.active.is_empty(),
+        "a second window must share the actual worker bound"
+    );
+    drop(first);
+    // Thread-owned permits are checked separately with a deterministic blocked
+    // worker. Here cancellation may already have let an unstarted read exit.
+    drop(guard);
+    let deadline = Instant::now() + Duration::from_secs(3);
+    let mut completed = 0;
+    while completed < requests.len() {
+        completed += second.drain().len();
+        assert!(
+            Instant::now() < deadline,
+            "other window did not recover after workers exited"
+        );
+        std::thread::yield_now();
+    }
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn a_panicking_worker_removes_only_its_own_generation() {
     for generation in [1, 2] {
         let mut enricher = CodexTranscriptEnricher::with_delays(PathBuf::new(), Vec::new());

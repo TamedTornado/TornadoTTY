@@ -6,14 +6,18 @@ use std::time::{Duration, Instant};
 use zentty_core::{
     CodexTranscriptEnrichmentCandidate, CodexTranscriptQuestion,
     codex_question_from_transcript_path, codex_transcript_cache_key,
-    locate_recent_codex_transcript_path,
+    discover_recent_codex_transcript_path,
 };
 
 mod cache;
+mod worker_budget;
 use cache::{QuestionCache, TranscriptPaths};
+use worker_budget::{WorkerBudget, WorkerPermit};
 
-// Per window owner: include stale/cancelled threads until they actually exit.
+// Process-wide: include detached, stale and cancelled threads until they exit.
 const MAX_WORKERS: usize = 4;
+static WORKER_BUDGET: std::sync::LazyLock<Arc<WorkerBudget>> =
+    std::sync::LazyLock::new(|| Arc::new(WorkerBudget::default()));
 const MAX_PENDING: usize = 32;
 const MAX_RESULTS_PER_TICK: usize = 4;
 
@@ -37,6 +41,7 @@ struct WorkerResult {
     generation: u64,
     transcript_path: Option<PathBuf>,
     question: Option<CodexTranscriptQuestion>,
+    discovery_limited: bool,
 }
 
 struct PendingWorker {
@@ -83,6 +88,7 @@ pub(crate) struct CodexTranscriptEnricher {
     pending_by_pane: BTreeMap<String, PendingWorker>,
     queued: VecDeque<String>,
     active: Vec<ActiveWorker>,
+    worker_budget: Arc<WorkerBudget>,
     transcript_by_session: TranscriptPaths,
     cache: Arc<Mutex<QuestionCache>>,
     sender: mpsc::SyncSender<WorkerResult>,
@@ -90,15 +96,29 @@ pub(crate) struct CodexTranscriptEnricher {
     next_generation: u64,
     shutting_down: bool,
     rejected: u64,
+    discovery_limited: u64,
     last_pressure_report: Option<Instant>,
 }
 
 impl CodexTranscriptEnricher {
     pub(crate) fn new(codex_home: PathBuf) -> Self {
-        Self::with_delays(codex_home, RETRY_DELAYS.to_vec())
+        Self::with_budget(
+            codex_home,
+            RETRY_DELAYS.to_vec(),
+            Arc::clone(&WORKER_BUDGET),
+        )
     }
 
+    #[cfg(test)]
     fn with_delays(codex_home: PathBuf, delays: Vec<Duration>) -> Self {
+        Self::with_budget(codex_home, delays, Arc::new(WorkerBudget::default()))
+    }
+
+    fn with_budget(
+        codex_home: PathBuf,
+        delays: Vec<Duration>,
+        worker_budget: Arc<WorkerBudget>,
+    ) -> Self {
         let (sender, receiver) = mpsc::sync_channel(MAX_RESULTS_PER_TICK);
         Self {
             codex_home,
@@ -106,6 +126,7 @@ impl CodexTranscriptEnricher {
             pending_by_pane: BTreeMap::new(),
             queued: VecDeque::new(),
             active: Vec::new(),
+            worker_budget,
             transcript_by_session: TranscriptPaths::default(),
             cache: Arc::new(Mutex::new(QuestionCache::default())),
             sender,
@@ -113,6 +134,7 @@ impl CodexTranscriptEnricher {
             next_generation: 0,
             shutting_down: false,
             rejected: 0,
+            discovery_limited: 0,
             last_pressure_report: None,
         }
     }
@@ -163,6 +185,9 @@ impl CodexTranscriptEnricher {
             else {
                 break;
             };
+            let Some(permit) = self.worker_budget.acquire() else {
+                break;
+            };
             let pane_id = self
                 .queued
                 .remove(index)
@@ -174,7 +199,7 @@ impl CodexTranscriptEnricher {
             let candidate = pending.candidate.clone();
             let generation = pending.generation;
             let cancellation = Arc::clone(&pending.cancellation);
-            self.spawn(candidate, generation, cancellation);
+            self.spawn(candidate, generation, cancellation, permit);
         }
     }
 
@@ -205,6 +230,7 @@ impl CodexTranscriptEnricher {
         candidate: CodexTranscriptEnrichmentCandidate,
         generation: u64,
         cancellation: Arc<AtomicBool>,
+        permit: WorkerPermit,
     ) {
         let preferred_path = candidate
             .transcript_path
@@ -223,7 +249,8 @@ impl CodexTranscriptEnricher {
         let spawn = std::thread::Builder::new()
             .name("zentty-codex-transcript".to_owned())
             .spawn(move || {
-                let (transcript_path, question) = resolve_with_retries(
+                let _permit = permit;
+                let (transcript_path, question, discovery_limited) = resolve_with_retries(
                     &codex_home,
                     candidate.working_directory.as_deref(),
                     preferred_path.as_deref(),
@@ -236,6 +263,7 @@ impl CodexTranscriptEnricher {
                     generation,
                     transcript_path,
                     question,
+                    discovery_limited,
                 });
             });
         match spawn {
@@ -259,11 +287,18 @@ impl CodexTranscriptEnricher {
             return enrichments;
         }
         if let Some(rejected) = self.take_pressure(Instant::now()) {
+            let discovery_limited = std::mem::take(&mut self.discovery_limited);
             eprintln!(
-                "zentty-linux: codex-transcript-backpressure boundary=window rejected={rejected} pending-capacity={MAX_PENDING} worker-capacity={MAX_WORKERS}"
+                "zentty-linux: codex-transcript-backpressure boundary=enrichment rejected={rejected} discovery-limited={discovery_limited} pending-capacity={MAX_PENDING} process-worker-capacity={MAX_WORKERS}"
             );
         }
         for result in self.receiver.try_iter().take(MAX_RESULTS_PER_TICK) {
+            if result.discovery_limited {
+                // Aggregate using the owner's existing pressure reporting,
+                // never print paths or emit one record per rejected file.
+                self.rejected = self.rejected.saturating_add(1);
+                self.discovery_limited = self.discovery_limited.saturating_add(1);
+            }
             let pending = self.pending_by_pane.get(&result.candidate.pane_id);
             if completion_decision(
                 self.shutting_down,
@@ -343,7 +378,7 @@ fn resolve_with_retries(
     delays: &[Duration],
     cache: &Mutex<QuestionCache>,
     cancellation: &AtomicBool,
-) -> (Option<PathBuf>, Option<CodexTranscriptQuestion>) {
+) -> (Option<PathBuf>, Option<CodexTranscriptQuestion>, bool) {
     for delay in delays {
         if cancellation.load(Ordering::Acquire) {
             break;
@@ -352,22 +387,33 @@ fn resolve_with_retries(
         if cancellation.load(Ordering::Acquire) {
             break;
         }
+        let mut discovery_limited = false;
         let path = preferred_path
             .filter(|path| codex_transcript_cache_key(path).is_some())
             .map(Path::to_path_buf)
             .or_else(|| {
                 working_directory.and_then(|working_directory| {
-                    locate_recent_codex_transcript_path(codex_home, working_directory)
+                    if let Ok(path) =
+                        discover_recent_codex_transcript_path(codex_home, working_directory)
+                    {
+                        path
+                    } else {
+                        discovery_limited = true;
+                        None
+                    }
                 })
             });
         let Some(path) = path else {
+            if discovery_limited {
+                return (None, None, true);
+            }
             continue;
         };
         let Some(key) = codex_transcript_cache_key(&path) else {
             continue;
         };
         if let Some(question) = cache.lock().ok().and_then(|cache| cache.get(&key).cloned()) {
-            return (Some(path), Some(question));
+            return (Some(path), Some(question), false);
         }
         let Some(question) = codex_question_from_transcript_path(&path) else {
             continue;
@@ -375,9 +421,9 @@ fn resolve_with_retries(
         if let Ok(mut cache) = cache.lock() {
             cache.insert(key, question.clone());
         }
-        return (Some(path), Some(question));
+        return (Some(path), Some(question), false);
     }
-    (None, None)
+    (None, None, false)
 }
 
 #[cfg(test)]
