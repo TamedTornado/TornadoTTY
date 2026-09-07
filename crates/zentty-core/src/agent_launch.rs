@@ -658,7 +658,7 @@ fn codex_plan(
         "-c".to_owned(),
         "tui.notification_method=osc9".to_owned(),
         "-c".to_owned(),
-        r#"tui.notifications=["approval-requested"]"#.to_owned(),
+        r#"tui.notifications=["approval-requested","agent-turn-complete"]"#.to_owned(),
         "-c".to_owned(),
         r#"tui.notification_condition="always""#.to_owned(),
         "-c".to_owned(),

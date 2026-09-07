@@ -99,14 +99,12 @@ fn codex_hooks_map_source_lifecycle_without_inventing_post_policy_approval() {
         let question = reduce(adapt_codex_hook(payload.to_string().as_bytes(), None).unwrap());
         assert_eq!(question.phase, AgentPhase::NeedsInput, "{tool}");
     }
-    let stopped = reduce(
-        adapt_codex_hook(
-            br#"{"hook_event_name":"Stop","session_id":"codex-a"}"#,
-            None,
-        )
-        .unwrap(),
-    );
-    assert_eq!(stopped.phase, AgentPhase::Idle);
+    let stopped = adapt_codex_hook(
+        br#"{"hook_event_name":"Stop","session_id":"codex-a"}"#,
+        None,
+    )
+    .unwrap();
+    assert!(stopped.is_empty());
 
     assert!(SOURCE.contains("case \"PermissionRequest\""));
     assert!(SOURCE.contains("case \"PreCompact\""));
@@ -146,7 +144,7 @@ fn codex_positional_aliases_each_preserve_their_source_transition() {
         ("prompt-submit", Some("agent.running")),
         ("pre-compact", Some("agent.compacting")),
         ("post-compact", Some("agent.compacted")),
-        ("stop", Some("agent.idle")),
+        ("stop", None),
     ] {
         let payload = serde_json::json!({
             "hook_event_name": alias,
@@ -167,6 +165,100 @@ fn codex_positional_aliases_each_preserve_their_source_transition() {
             None => assert!(events.is_empty(), "{alias}"),
         }
     }
+}
+
+#[test]
+fn small_harness_stop_retains_its_own_completion_contract() {
+    let status = reduce(
+        adapt_small_harness_hook(br#"{"hook_event_name":"Stop","session_id":"small"}"#, None)
+            .unwrap(),
+    );
+    assert_eq!(status.agent_name, "Small Harness");
+    assert_eq!(status.phase, AgentPhase::Idle);
+}
+
+#[test]
+fn codex_goal_turn_boundary_waits_for_the_tuis_attention_decision() {
+    let target = AgentTarget::new("window", "lane", "pane");
+    let attention_target = AttentionTarget::new("window", "lane", "pane");
+    let mut store = AgentStatusStore::default();
+    let mut inbox = AttentionInbox::default();
+    let mut apply = |events, now| {
+        for event in events {
+            store.apply(
+                AuthenticatedAgentEvent {
+                    target: target.clone(),
+                    pane_token: "token".to_owned(),
+                    event,
+                },
+                now,
+            );
+        }
+        inbox.observe(attention_target.clone(), store.status_for(&target), now);
+        inbox.advance(now + 30_000);
+        assert!(
+            inbox.items().is_empty(),
+            "a turn boundary is not human attention"
+        );
+        assert!(inbox.drain_deliveries().is_empty());
+    };
+    apply(
+        adapt_codex_hook(
+            br#"{"hook_event_name":"PreToolUse","session_id":"goal","tool_name":"shell"}"#,
+            None,
+        )
+        .unwrap(),
+        1,
+    );
+    apply(
+        adapt_codex_hook(br#"{"hook_event_name":"Stop","session_id":"goal"}"#, None).unwrap(),
+        40_000,
+    );
+    apply(
+        adapt_codex_notify(br#"{"type":"agent-turn-complete","thread-id":"goal"}"#).unwrap(),
+        80_000,
+    );
+    drop(apply);
+    assert_eq!(
+        store.status_for(&target).unwrap().phase,
+        AgentPhase::Running
+    );
+
+    // Codex omits this callback during goal continuation. Once it really waits
+    // for the user, the same Ghostty channel used by approvals delivers it.
+    assert!(store.apply_terminal_notification("pane", None, Some("Work finished"), 120_000));
+    let status = store.status_for(&target).unwrap();
+    assert!(status.requires_attention());
+    assert_eq!(status.text.as_deref(), Some("Work finished"));
+    assert_ne!(
+        status.interaction,
+        zentty_core::AgentInteractionKind::Approval
+    );
+    inbox.observe(attention_target.clone(), Some(status), 120_000);
+    inbox.advance(150_000);
+    assert_eq!(inbox.drain_deliveries().len(), 1);
+    assert!(!store.apply_terminal_notification("pane", None, Some("Work finished"), 150_001));
+    inbox.observe(attention_target.clone(), store.status_for(&target), 150_001);
+    inbox.advance(180_000);
+    assert!(inbox.drain_deliveries().is_empty());
+    for event in adapt_codex_hook(
+        br#"{"hook_event_name":"PreToolUse","session_id":"goal","tool_name":"shell"}"#,
+        None,
+    )
+    .unwrap()
+    {
+        store.apply(
+            AuthenticatedAgentEvent {
+                target: target.clone(),
+                pane_token: "token".to_owned(),
+                event,
+            },
+            190_000,
+        );
+    }
+    inbox.observe(attention_target, store.status_for(&target), 190_000);
+    assert!(!store.status_for(&target).unwrap().requires_attention());
+    assert_eq!(inbox.unresolved_count(), 0);
 }
 
 #[test]
@@ -209,14 +301,14 @@ fn codex_permission_request_notifies_only_after_a_semantic_terminal_notification
     assert!(inbox.items().is_empty());
     assert!(inbox.drain_deliveries().is_empty());
 
-    // TornadoTTY constrains Codex's OSC 9 channel to approval-requested events,
-    // so this parsed Ghostty callback exists only after review reaches a user.
+    // Codex emits this only after review reaches a user. OSC 9 deliberately
+    // does not let us distinguish approval from other genuine human attention.
     assert!(store.apply_terminal_notification("pane", None, Some("Run cargo test?"), 30_001,));
     let status = store.status_for(&target).unwrap();
     assert_eq!(status.phase, AgentPhase::NeedsInput);
     assert_eq!(
         status.interaction,
-        zentty_core::AgentInteractionKind::Approval
+        zentty_core::AgentInteractionKind::GenericInput
     );
     assert_eq!(status.text.as_deref(), Some("Run cargo test?"));
     assert!(status.requires_attention());
@@ -374,22 +466,17 @@ fn codex_notify_maps_turn_completion_and_human_interaction_without_auto_review_n
         env!("CARGO_MANIFEST_DIR"),
         "/../../Zentty/AppState/Agent/EventAdapters/CodexNotifyEventAdapter.swift"
     ));
-    let idle = reduce(
+    assert!(
         adapt_codex_notify(br#"{"type":"agent-turn-complete","session_id":"codex-notify-a"}"#)
-            .unwrap(),
+            .unwrap()
+            .is_empty()
     );
-    assert_eq!(idle.phase, AgentPhase::Idle);
 
-    let installed_payload = reduce(
-        adapt_codex_notify(
+    let installed_payload = adapt_codex_notify(
             br#"{"type":"agent-turn-complete","thread-id":"b5f6c1c2-1111-2222-3333-444455556666","turn-id":"turn-1","last-assistant-message":"Done"}"#,
         )
-        .unwrap(),
-    );
-    assert_eq!(
-        installed_payload.session_id,
-        "b5f6c1c2-1111-2222-3333-444455556666"
-    );
+        .unwrap();
+    assert!(installed_payload.is_empty());
 
     for (payload, expected_kind, expected_text) in [
         (

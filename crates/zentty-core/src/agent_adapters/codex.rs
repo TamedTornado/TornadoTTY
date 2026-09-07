@@ -145,8 +145,8 @@ pub fn adapt_small_harness_hook(
 fn is_pre_policy_codex_permission_request(hook: &str, extended_lifecycle: bool) -> bool {
     // Codex emits PermissionRequest before routing it to either the automatic
     // reviewer or the user, and the payload does not identify that reviewer.
-    // Managed Codex launches instead restrict Codex's parsed OSC 9 channel to
-    // semantic approval-requested events. Small Harness owns different hook
+    // Managed Codex launches instead use Codex's TUI attention decision via
+    // parsed OSC 9. Small Harness owns different hook
     // semantics and retains its PermissionRequest transition.
     !extended_lifecycle && hook == "PermissionRequest"
 }
@@ -253,6 +253,9 @@ fn adapt_codex_family_hook(
             None,
             None,
         )?,
+        // A turn can stop immediately before automatic goal continuation or
+        // queued input. Only the TUI knows whether it is waiting for a human.
+        "Stop" if !extended_lifecycle => return Ok(Vec::new()),
         "Stop" => canonical(
             "agent.idle",
             agent_name,
@@ -367,10 +370,9 @@ pub fn adapt_codex_notify(bytes: &[u8]) -> Result<Vec<AgentEvent>, AgentAdapterE
     );
     let transcript_path = string_at(&payload, &["transcript_path", "transcriptPath"]);
     if payload_type == "agent-turn-complete" {
-        return Ok(vec![
-            canonical("agent.idle", "Codex", None, session.as_deref(), None, None)?
-                .with_transcript_path(transcript_path),
-        ]);
+        // This legacy hook fires before the TUI's goal/follow-up decision.
+        // Managed launches deliver genuine attention through the TUI instead.
+        return Ok(Vec::new());
     }
 
     let message = string_at(

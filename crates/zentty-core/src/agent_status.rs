@@ -412,13 +412,16 @@ impl AgentStatusStore {
             .get_mut(pane_id)
             .and_then(|sessions| sessions.get_mut(&session_id))?;
         let changed = status.phase != AgentPhase::NeedsInput
-            || status.interaction != AgentInteractionKind::Approval
+            || status.interaction != AgentInteractionKind::GenericInput
             || status.text.as_deref() != Some(notification_text);
         if !changed {
             return Some(false);
         }
         status.phase = AgentPhase::NeedsInput;
-        status.interaction = AgentInteractionKind::Approval;
+        // OSC 9 carries display text, not Codex's notification enum. Both
+        // genuine completion and human approval are attention, but assigning
+        // an approval subtype here would invent information we did not receive.
+        status.interaction = AgentInteractionKind::GenericInput;
         status.text = Some(notification_text.to_owned());
         status.updated_at = now;
         let lifecycle = self
@@ -433,8 +436,8 @@ impl AgentStatusStore {
     }
 
     /// Reconciles parsed terminal notifications with an existing managed agent.
-    /// Codex launches restrict OSC 9 to its semantic `approval-requested`
-    /// notification kind, so no notification text parsing is required. Gemini
+    /// Codex's TUI gates completion on goal/queued-input continuation and gates
+    /// approval on actual human review. Its OSC 9 carries no subtype. Gemini
     /// owns two legacy notification phrases which remain deliberately narrow.
     pub fn apply_terminal_notification(
         &mut self,

@@ -217,11 +217,11 @@ done
 grep -Fxq 'response=ATTENTION42' "${receipt}" ||
     fail "typing after inbox activation did not reach the routed PTY"
 zentty_product_wait_for_log "${log}" \
-    'sidebar-agent-status pane=pane-window-2 phase=Idle interaction=None attention=false' \
-    "agent completion did not resolve visible attention" || fail "resolution failed"
+    'sidebar-agent-status pane=pane-window-2 phase=NeedsInput interaction=GenericInput attention=true' \
+    "agent completion did not reach the terminal attention route" || fail "completion attention missing"
 zentty_product_wait_for_log "${log}" \
     'attention-inbox window=window-2 items=3' \
-    "completion did not create source-compatible ready history" || fail "ready history missing"
+    "completion did not create new attention history" || fail "completion history missing"
 zentty_product_wait_for_log_count "${log}" \
     'result=suppressed reason=actively-viewed window=window-2 worklane=worklane-window-2 pane=pane-window-2' 2 \
     "focused completion incorrectly escaped to the desktop" || fail "completion suppression failed"

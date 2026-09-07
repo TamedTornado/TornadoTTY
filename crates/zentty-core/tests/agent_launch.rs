@@ -493,7 +493,8 @@ fn codex_plan_injects_all_source_hook_events_and_trust_state() {
     assert!(
         plan.arguments
             .iter()
-            .any(|value| value == r#"tui.notifications=["approval-requested"]"#)
+            .any(|value| value
+                == r#"tui.notifications=["approval-requested","agent-turn-complete"]"#)
     );
     assert!(
         plan.arguments

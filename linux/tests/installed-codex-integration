@@ -167,9 +167,11 @@ for _ in {1..200}; do
 done
 notify_session="$(jq -er 'select(.type == "agent-turn-complete") | .["thread-id"] | select(test("^[0-9a-f-]{36}$"))' "${notify_receipt}")" ||
     fail "installed Codex did not invoke the configured notify observer"
-zentty_product_wait_for_log "${log}" "kind=agent.idle session=${notify_session}" \
-    "installed Codex did not invoke the notify callback after its completed turn" ||
-    fail "real Codex completion callback missing"
+zentty_product_wait_for_log "${log}" "phase=NeedsInput interaction=GenericInput attention=true" \
+    "installed Codex TUI did not request attention after its completed turn" ||
+    fail "real Codex terminal completion notification missing"
+zentty_product_wait_for_log "${log}" 'terminal-notification pane=pane-1' \
+    "real Codex notification did not cross Ghostty" || fail "terminal callback missing"
 grep -Fq '"path":"/v1/responses"' "${model_receipt}" ||
     fail "controlled endpoint did not retain a sanitized Responses receipt"
 close_product
@@ -238,7 +240,7 @@ zentty_product_wait_for_log "${log}" \
     "authenticated Codex hook did not retain the selected session directory" ||
     fail "real Codex effective directory projection missing"
 zentty_product_wait_for_log "${log}" \
-    "zentty-linux: agent-event pane=pane-1 worklane=worklane-1 kind=agent.idle session=${session_id}" \
+    'zentty-linux: terminal-notification pane=pane-1' \
     "controlled resumed Codex turn did not complete" ||
     fail "real Codex resumed-turn completion missing"
 zentty_product_type x11 /exit

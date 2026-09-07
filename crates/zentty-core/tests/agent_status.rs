@@ -478,7 +478,7 @@ fn gemini_terminal_notifications_reconcile_only_source_owned_attention_and_compl
 }
 
 #[test]
-fn codex_terminal_approval_notification_requires_an_existing_codex_session() {
+fn codex_terminal_attention_notification_requires_an_existing_codex_session() {
     let mut store = AgentStatusStore::default();
     assert!(!store.apply_terminal_notification("pane-shell", None, Some("Run cargo test?"), 999,));
     assert!(store.status_for_pane("pane-shell").is_none());
@@ -494,7 +494,7 @@ fn codex_terminal_approval_notification_requires_an_existing_codex_session() {
     let status = store.status_for_pane("pane-codex").unwrap();
     assert_eq!(status.session_id, "codex-review");
     assert_eq!(status.phase, AgentPhase::NeedsInput);
-    assert_eq!(status.interaction, AgentInteractionKind::Approval);
+    assert_eq!(status.interaction, AgentInteractionKind::GenericInput);
     assert_eq!(status.text.as_deref(), Some("Run cargo test?"));
     assert!(
         !store.apply_terminal_notification("pane-codex", None, Some("Run cargo test?"), 1_002,)
@@ -524,7 +524,7 @@ fn codex_terminal_approval_notification_requires_an_existing_codex_session() {
         .status_for_pane("pane-interaction")
         .unwrap();
     assert_eq!(status.phase, AgentPhase::NeedsInput);
-    assert_eq!(status.interaction, AgentInteractionKind::Approval);
+    assert_eq!(status.interaction, AgentInteractionKind::GenericInput);
     assert_eq!(status.text.as_deref(), Some("Run cargo test?"));
 }
 

@@ -240,7 +240,7 @@ run_adapter() {
         if grep -Fq 'kind=agent.needs-input session=codex-e2e' "${log}" ||
             grep -Fq 'sidebar-agent-status pane=pane-1 phase=NeedsInput' "${log}" ||
             grep -Fq 'desktop-attention id=' "${log}"; then
-            fail "pre-policy Codex PermissionRequest incorrectly escaped as human attention"
+            fail "Codex goal boundary or pre-policy PermissionRequest incorrectly escaped as human attention"
         fi
         printf 'route-review-to-user\n' >"${codex_permission_gate}"
     fi
@@ -515,14 +515,12 @@ run_codex_lifecycle() {
         'zentty-linux: codex-terminal-gesture=Interrupted' \
         "physical Ctrl-C was not observed by the product"
     zentty_product_wait_for_log "${log}" \
-        'kind=agent.idle session=codex-lifecycle-e2e' \
-        "controlled Codex did not deliver the late idle event"
-    if grep -Fq 'Codex · Idle' "${log}"; then
-        fail "late Codex idle escaped interrupt suppression"
-    fi
-    zentty_product_wait_for_log "${log}" \
         'kind=agent.running session=codex-lifecycle-e2e' \
         "controlled Codex did not deliver recovery activity"
+    if grep -Fq 'kind=agent.idle session=codex-lifecycle-e2e' "${log}" ||
+        grep -Fq 'Codex · Idle' "${log}"; then
+        fail "late Codex completion hook escaped as human attention"
+    fi
     zentty_product_wait_for_log "${log}" \
         'sidebar-agent-status pane=pane-1 phase=Running interaction=None attention=false' \
         "new Codex activity did not clear interrupt suppression"
@@ -544,8 +542,8 @@ run_codex_review_routing() {
         codex \
         'codex' \
         codex-permission \
-        'zentty-linux: sidebar-agent-status pane=pane-1 phase=NeedsInput interaction=Approval attention=true' \
-        'interaction=GenericInput attention=true'
+        'zentty-linux: sidebar-agent-status pane=pane-1 phase=NeedsInput interaction=GenericInput attention=true' \
+        'interaction=Approval attention=true'
 }
 
 run_agent_status_lifecycle() {
@@ -680,8 +678,8 @@ run_codex_osc_progress() {
     product_pid=$!
 
     zentty_product_wait_for_log "${log}" \
-        'kind=agent.idle session=codex-progress-e2e' \
-        "Codex progress profile did not establish idle state"
+        'sidebar-agent-status pane=pane-1 phase=NeedsInput interaction=GenericInput attention=true' \
+        "Codex progress profile did not establish waiting-for-human state"
     zentty_product_wait_for_log "${log}" \
         'zentty-linux: terminal-progress pane=pane-1 state=indeterminate progress=none' \
         "real OSC 9;4 progress did not cross the Ghostty embedding boundary"

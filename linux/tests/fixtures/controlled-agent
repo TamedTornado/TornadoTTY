@@ -154,16 +154,15 @@ case "${profile}" in
             '{"type":"question","session_id":"attention-inbox-e2e","message":"Allow the controlled deployment?"}'
         IFS= read -r response
         printf 'response=%s\n' "${response}" >"${receipt}"
-        "${helper}" codex-notify \
-            '{"type":"agent-turn-complete","session_id":"attention-inbox-e2e"}'
+        printf '\033]9;Controlled deployment finished\007'
         ;;
     codex-permission)
         require_helper
         codex_has_hook PermissionRequest "$@" || fail "Codex PermissionRequest hook is missing"
         codex_has_hook state "$@" || fail "Codex hook state is missing"
         printf '%s\n' "$@" | grep -Fq 'notify=[' || fail "Codex notify callback is missing"
-        printf '%s\n' "$@" | grep -Fq 'tui.notifications=["approval-requested"]' ||
-            fail "Codex semantic approval notification filter is missing"
+        printf '%s\n' "$@" | grep -Fq 'tui.notifications=["approval-requested","agent-turn-complete"]' ||
+            fail "Codex semantic attention notification filter is missing"
         printf '%s\n' "$@" | grep -Fq 'tui.notification_condition="always"' ||
             fail "Codex semantic approval notification delivery is not focus-independent"
         permission_gate="${ZENTTY_CONTROLLED_CODEX_PERMISSION_GATE:-}"
@@ -172,6 +171,11 @@ case "${profile}" in
         printf '%s' \
             '{"hook_event_name":"PreToolUse","session_id":"codex-e2e","tool_name":"shell"}' |
             "${helper}" ipc agent-event --adapter=codex
+        # Real Codex emits both completion hooks at goal boundaries, but its
+        # TUI omits the terminal notification when it will continue working.
+        printf '%s' '{"hook_event_name":"Stop","session_id":"codex-e2e"}' |
+            "${helper}" ipc agent-event --adapter=codex
+        "${helper}" codex-notify '{"type":"agent-turn-complete","thread-id":"codex-e2e"}'
         printf '%s' \
             '{"session_id":"codex-e2e","turn_id":"turn-e2e","transcript_path":null,"cwd":"/tmp","hook_event_name":"PermissionRequest","model":"gpt-5.6","permission_mode":"default","tool_name":"shell","tool_input":{"command":"cargo test"}}' |
             "${helper}" ipc agent-event --adapter=codex
@@ -233,9 +237,7 @@ case "${profile}" in
         printf '%s' \
             '{"hook_event_name":"PreToolUse","session_id":"codex-progress-e2e","tool_name":"shell"}' |
             "${helper}" ipc agent-event --adapter=codex
-        printf '%s' \
-            '{"type":"agent-turn-complete","session_id":"codex-progress-e2e"}' |
-            "${helper}" codex-notify
+        printf '\033]9;Controlled work finished\007'
         sleep 0.2
         printf '\033]9;4;3\007'
         sleep 0.2

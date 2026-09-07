@@ -421,7 +421,7 @@ fn codex_notify_accepts_stdin_and_only_surfaces_transport_failure_in_debug_mode(
     command.arg("codex-notify");
     let output = run_with_input(
         command,
-        br#"{"type":"agent-turn-complete","session_id":"codex-stdin"}"#,
+        br#"{"type":"question","session_id":"codex-stdin","message":"Choose a target?"}"#,
     );
     assert!(output.status.success());
     let received = harness
@@ -433,14 +433,14 @@ fn codex_notify_accepts_stdin_and_only_surfaces_transport_failure_in_debug_mode(
     statuses.apply(received, 1);
     assert_eq!(
         statuses.status_for(&target).unwrap().phase,
-        AgentPhase::Idle
+        AgentPhase::NeedsInput
     );
 
     for debug in [false, true] {
         let mut command = Command::new(env!("CARGO_BIN_EXE_zentty"));
         command
             .arg("codex-notify")
-            .arg(r#"{"type":"agent-turn-complete"}"#)
+            .arg(r#"{"type":"question","message":"Choose a target?"}"#)
             .env("ZENTTY_INSTANCE_SOCKET", "/missing/zentty.sock")
             .env("ZENTTY_PANE_TOKEN", "token");
         if debug {
@@ -456,6 +456,29 @@ fn codex_notify_accepts_stdin_and_only_surfaces_transport_failure_in_debug_mode(
             assert!(output.stderr.is_empty());
         }
     }
+}
+
+#[test]
+fn codex_completion_hooks_do_not_send_premature_attention_over_the_real_socket() {
+    let harness = Harness::start();
+    let mut stop = harness.command();
+    stop.args(["ipc", "agent-event", "--adapter=codex"]);
+    assert!(
+        run_with_input(stop, br#"{"hook_event_name":"Stop","session_id":"goal"}"#)
+            .status
+            .success()
+    );
+    let mut complete = harness.command();
+    complete.arg("codex-notify");
+    assert!(
+        run_with_input(
+            complete,
+            br#"{"type":"agent-turn-complete","thread-id":"goal"}"#
+        )
+        .status
+        .success()
+    );
+    assert!(harness.receiver.try_recv().is_err());
 }
 
 #[test]
