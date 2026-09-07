@@ -95,7 +95,7 @@ pub fn stable_codex_terminal_title(value: &str) -> Option<String> {
 
 /// Locates Codex's activity spinner without treating arbitrary Braille text as
 /// animation. The glyph must be the standalone token immediately following a
-/// Working, Thinking, or Starting phase word.
+/// Working, Thinking, or Starting phase word, or the Compacting UI overlay.
 #[must_use]
 pub fn codex_activity_spinner_range(value: &str) -> Option<Range<usize>> {
     let leading_bytes = value.len().saturating_sub(value.trim_start().len());
@@ -108,7 +108,7 @@ pub fn codex_activity_spinner_range(value: &str) -> Option<Range<usize>> {
     let phase = trimmed.get(..phase_bytes)?;
     if !matches!(
         phase.to_ascii_lowercase().as_str(),
-        "working" | "thinking" | "starting"
+        "working" | "thinking" | "starting" | "compacting"
     ) {
         return None;
     }

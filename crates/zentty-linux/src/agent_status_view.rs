@@ -8,6 +8,10 @@ pub(crate) struct AgentStatusPresentation {
 
 pub(crate) fn present(status: &PaneAgentStatus) -> AgentStatusPresentation {
     let state = match status.phase {
+        _ if status.is_compacting() => status.progress.map_or_else(
+            || "Compacting".to_owned(),
+            |progress| format!("Compacting ({}/{})", progress.done, progress.total),
+        ),
         AgentPhase::Starting => "Starting".to_owned(),
         AgentPhase::Running => status.progress.map_or_else(
             || status.text.clone().unwrap_or_else(|| "Running".to_owned()),

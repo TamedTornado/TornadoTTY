@@ -226,6 +226,54 @@ fn real_terminal_titles_reconcile_agent_state_used_by_sidebar_summaries() {
 }
 
 #[test]
+fn compaction_overrides_live_activity_without_renaming_panes_or_lanes() {
+    let mut state = WorkspaceState::new("lane", "pane");
+    state.set_worklane_title("lane", Some("Bro"));
+    state.set_pane_title("pane", "Working · Bro | Tasks 2/5");
+    let event = |kind: &str| {
+        AuthenticatedAgentEvent {
+        target: AgentTarget::new("window", "lane", "pane"),
+        pane_token: "token".to_owned(),
+        event: AgentEvent::parse(format!(
+            r#"{{"version":1,"event":"{kind}","agent":{{"name":"Codex"}},"session":{{"id":"bro"}},"progress":{{"done":2,"total":5}}}}"#
+        ).as_bytes()).unwrap(),
+    }
+    };
+    state.apply_agent_event(event("task.progress"), 0);
+    state.apply_agent_event(event("agent.compacting"), 1);
+    let summary = state.sidebar_summaries().remove(0);
+    assert_eq!(summary.top_label.as_deref(), Some("Bro"));
+    assert_eq!(summary.primary_text, "Compacting · Bro | Tasks 2/5");
+    assert_eq!(summary.pane_rows[0].primary_text, summary.primary_text);
+    assert_eq!(
+        state.pane("pane").unwrap().live_title,
+        "Working · Bro | Tasks 2/5"
+    );
+    assert_eq!(
+        summary.pane_rows[0]
+            .agent_status
+            .as_ref()
+            .unwrap()
+            .progress
+            .unwrap()
+            .done,
+        2
+    );
+
+    state.set_pane_custom_title("pane", Some("My shell"));
+    assert_eq!(
+        state.sidebar_summaries()[0].pane_rows[0].primary_text,
+        "My shell"
+    );
+    state.set_pane_custom_title("pane", None);
+    state.apply_agent_event(event("agent.compacted"), 2);
+    assert_eq!(
+        state.sidebar_summaries()[0].primary_text,
+        "Working · Bro | Tasks 2/5"
+    );
+}
+
+#[test]
 fn identical_running_events_do_not_mutate_canonical_agent_state() {
     let mut state = WorkspaceState::new("worklane-a", "pane-a");
     let running = || {

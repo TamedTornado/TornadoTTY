@@ -1379,8 +1379,12 @@ pub(crate) fn update_codex_activity_titles(
         for pane in &summary.pane_rows {
             let name = widget_name("pane-title", &pane.pane_id);
             if let Some(text) = titles.get(&pane.pane_id) {
+                let text = pane
+                    .agent_status
+                    .as_ref()
+                    .map_or_else(|| text.clone(), |status| status.activity_title(text));
                 rendered_activity |=
-                    crate::activity_title::show_activity(sidebar.upcast_ref(), &name, text);
+                    crate::activity_title::show_activity(sidebar.upcast_ref(), &name, &text);
             }
         }
     }
@@ -2550,6 +2554,74 @@ mod tests {
             }],
             is_active: true,
             color: Some(WorklaneColor::Blue),
+        }
+    }
+
+    #[test]
+    fn compaction_survives_animation_and_returns_to_working_in_real_widgets() {
+        gtk::init().expect("GTK");
+        let mut state = zentty_core::WorkspaceState::new("lane-a", "pane-a");
+        state.set_worklane_title("lane-a", Some("Bro"));
+        state.set_pane_title("pane-a", "Working · Bro | Tasks 2/5");
+        let event = |kind: &str| {
+            zentty_core::AuthenticatedAgentEvent {
+            target: zentty_core::AgentTarget::new("window-a", "lane-a", "pane-a"),
+            pane_token: "token".to_owned(),
+            event: zentty_core::AgentEvent::parse(format!(
+                r#"{{"version":1,"event":"{kind}","agent":{{"name":"Codex"}},"session":{{"id":"bro"}},"progress":{{"done":2,"total":5}}}}"#
+            ).as_bytes()).unwrap(),
+        }
+        };
+        state.apply_agent_event(event("task.progress"), 1);
+        let summaries = state.sidebar_summaries();
+        let sidebar = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        let window = gtk::Window::new();
+        sidebar.append(&make_worklane_card(
+            &window,
+            &summaries[0],
+            &summaries,
+            0,
+            ClipboardConfig::default(),
+            &[],
+            "window-a",
+            None,
+            None,
+        ));
+        let label = |name: &str| super::find_named_label(sidebar.upcast_ref(), name).unwrap();
+        for (kind, expected, time) in [
+            ("agent.compacting", "Compacting", 2),
+            ("agent.compacted", "Running", 3),
+        ] {
+            state.apply_agent_event(event(kind), time);
+            let summaries = state.sidebar_summaries();
+            assert!(super::update_metadata(&sidebar, &summaries));
+            assert_eq!(
+                label("zentty-pane-agent-status-pane-a").text(),
+                format!("Codex · {expected} (2/5)")
+            );
+            assert_eq!(label("zentty-worklane-custom-title-lane-a").text(), "Bro");
+            for frame in 0..10 {
+                let animated =
+                    zentty_core::codex_activity_title_frame("Working ⠋ Bro | Tasks 2/5", frame)
+                        .unwrap();
+                let titles = std::collections::BTreeMap::from([("pane-a".to_owned(), animated)]);
+                assert!(super::update_codex_activity_titles(
+                    &sidebar, &summaries, &titles
+                ));
+                let prefix = if expected == "Compacting" {
+                    "Compacting "
+                } else {
+                    "Working "
+                };
+                assert_eq!(
+                    label("zentty-pane-title-pane-a-activity-prefix").text(),
+                    prefix
+                );
+                assert_eq!(
+                    label("zentty-pane-title-pane-a-activity-suffix").text(),
+                    " Bro | Tasks 2/5"
+                );
+            }
         }
     }
 

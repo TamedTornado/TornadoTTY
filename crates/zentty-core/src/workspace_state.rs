@@ -686,6 +686,17 @@ impl WorkspaceState {
         self.select_worklane_and_pane(&target.worklane_id, &target.pane_id)
     }
 
+    fn pane_presentation_title(&self, pane: &PaneState) -> String {
+        let title = pane.display_title();
+        if pane.custom_title.is_none()
+            && pane.ssh_connection_label.is_none()
+            && let Some(status) = self.pane_agent_status(&pane.id)
+        {
+            return status.activity_title(title);
+        }
+        title.to_owned()
+    }
+
     #[must_use]
     pub fn sidebar_summaries(&self) -> Vec<SidebarWorklaneSummary> {
         self.worklanes
@@ -703,7 +714,7 @@ impl WorkspaceState {
                     .find(|pane| Some(pane.id.as_str()) == focused_pane_id)
                     .map_or_else(
                         || "shell".to_owned(),
-                        |pane| pane.display_title().to_owned(),
+                        |pane| self.pane_presentation_title(pane),
                     );
                 SidebarWorklaneSummary {
                     worklane_id: worklane.id.clone(),
@@ -715,7 +726,7 @@ impl WorkspaceState {
                         .flat_map(|column| &column.panes)
                         .map(|pane| SidebarPaneSummary {
                             pane_id: pane.id.clone(),
-                            primary_text: pane.display_title().to_owned(),
+                            primary_text: self.pane_presentation_title(pane),
                             custom_title: pane.custom_title.clone(),
                             working_directory: self
                                 .effective_working_directory_for_pane(&pane.id)

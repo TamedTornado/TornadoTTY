@@ -119,6 +119,35 @@ pub struct PaneAgentStatus {
 }
 
 impl PaneAgentStatus {
+    /// Shared fleet/sidebar interpretation of the existing running substatus.
+    #[must_use]
+    pub fn is_compacting(&self) -> bool {
+        matches!(self.phase, AgentPhase::Starting | AgentPhase::Running)
+            && self.text.as_deref().is_some_and(|text| {
+                let lowered = text.to_ascii_lowercase();
+                lowered.contains("compact") || lowered.contains("summariz")
+            })
+    }
+
+    /// Overlay a known Codex activity title without changing its durable identity.
+    #[must_use]
+    pub fn activity_title(&self, title: &str) -> String {
+        if self.is_compacting()
+            && self.agent_name.eq_ignore_ascii_case("codex")
+            && crate::classify_codex_terminal_title(title).is_some_and(|signal| {
+                matches!(
+                    signal.phase,
+                    crate::CodexTitlePhase::Starting | crate::CodexTitlePhase::Running
+                )
+            })
+        {
+            let title = title.trim_start();
+            let phase_end = title.find(char::is_whitespace).unwrap_or(title.len());
+            return format!("Compacting{}", &title[phase_end..]);
+        }
+        title.to_owned()
+    }
+
     #[must_use]
     pub fn requires_attention(&self) -> bool {
         self.phase == AgentPhase::NeedsInput && self.interaction != AgentInteractionKind::None

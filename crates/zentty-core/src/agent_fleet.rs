@@ -256,17 +256,10 @@ fn fleet_state(status: &PaneAgentStatus) -> FleetState {
     match status.phase {
         AgentPhase::NeedsInput => FleetState::Waiting,
         AgentPhase::UnresolvedStop => FleetState::Stopped,
-        AgentPhase::Starting | AgentPhase::Running if is_compacting(status.text.as_deref()) => {
+        AgentPhase::Starting | AgentPhase::Running if status.is_compacting() => {
             FleetState::Compacting
         }
         AgentPhase::Starting | AgentPhase::Running => FleetState::Active,
         AgentPhase::Idle => FleetState::Idle,
     }
-}
-
-fn is_compacting(text: Option<&str>) -> bool {
-    text.is_some_and(|text| {
-        let lowered = text.to_ascii_lowercase();
-        lowered.contains("compact") || lowered.contains("summariz")
-    })
 }

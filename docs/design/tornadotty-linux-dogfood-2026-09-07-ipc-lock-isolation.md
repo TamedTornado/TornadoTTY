@@ -62,3 +62,25 @@ No full qualification, installation or live-client interruption. Staged only in
 `build/gh163-ipc`. #163 remains open: count limits do not prove a wall-clock GTK
 budget or per-pane sustained-rate fairness, and PTY overload/content correctness
 and remaining blocking monitor work still need their own acceptance evidence.
+
+## #181 — compaction visible in the sidebar
+
+Jason observed Bro compacting in the gear dropdown while its lane/pane still
+said Working. The fleet recognized compaction text; the sidebar status preferred
+task progress over that text, and pane titles/animation still used the generic
+Codex live title. Shared the existing compaction predicate between fleet and
+sidebar. Known generic Codex activity titles now get a presentation-only
+Compacting prefix; the spinner renderer supports that overlay. Saved lane names,
+custom pane names, source live titles and progress remain unchanged. Completion
+removes the overlay naturally from current state; no extra timer or stored flag.
+
+Regression RED before repair: sidebar still Working. GREEN after repair:
+123 core integration tests (workspace state, agent status, fleet), plus a private
+X11 GTK test feeding real parsed events into workspace state and updating the
+actual sidebar widgets. It checks Compacting (2/5), the unchanged Bro name,
+all ten spinner frames retaining Compacting, and return to Working/Running.
+The first core test incorrectly tried to establish progress through a compaction
+event; corrected the fixture to send the real task.progress event first.
+Build/package notices/age audit and diff checks pass. Existing Clippy findings
+remain outside this repair; no new suppressions. No full qualification.
+Staged at `build/gh181-compaction`, not installed; live QA remains pending.
