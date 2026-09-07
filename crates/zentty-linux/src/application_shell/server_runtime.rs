@@ -20,6 +20,8 @@ use crate::config_store::ConfigStore;
 use crate::server_discovery::{PaneProcessContext, process_start_time, scan_listeners_at};
 
 const PROBE_INTERVAL: Duration = Duration::from_secs(2);
+static PROBE_WORKERS: std::sync::LazyLock<std::sync::Arc<crate::worker_budget::WorkerBudget<2>>> =
+    std::sync::LazyLock::new(|| std::sync::Arc::new(crate::worker_budget::WorkerBudget::default()));
 
 pub(super) struct ServerRuntime {
     pub(super) probe_source: Option<glib::SourceId>,
@@ -467,6 +469,9 @@ pub(super) fn set_port_ignored(shell: &Rc<RefCell<ApplicationShell>>, origin: &s
 }
 
 fn request_probe(shell: &Rc<RefCell<ApplicationShell>>) {
+    let Some(permit) = PROBE_WORKERS.acquire() else {
+        return;
+    };
     let (sources, discover_docker) = {
         let mut shell = shell.borrow_mut();
         if shell.shutting_down
@@ -505,15 +510,34 @@ fn request_probe(shell: &Rc<RefCell<ApplicationShell>>) {
         shell.server_runtime.probe_in_flight = true;
         (sources, discover_docker)
     };
+    let generation = shell.borrow().topology_generation();
+    let identities = sources
+        .iter()
+        .filter_map(|source| {
+            super::pane_context::PaneContext::capture(&shell.borrow(), &source.pane_id)
+        })
+        .collect::<Vec<_>>();
     let weak = Rc::downgrade(shell);
     glib::spawn_future_local(async move {
-        let result = gio::spawn_blocking(move || probe(&sources, discover_docker)).await;
+        let result = gio::spawn_blocking(move || {
+            let _permit = permit;
+            probe(&sources, discover_docker)
+        })
+        .await;
         let Some(shell) = weak.upgrade() else {
             return;
         };
         let mut shell = shell.borrow_mut();
         shell.server_runtime.probe_in_flight = false;
         if shell.shutting_down || !shell.config.server_detection.passive_detection_enabled {
+            return;
+        }
+        if shell.topology_generation() != generation
+            || !identities
+                .iter()
+                .all(|identity| identity.is_current(&shell))
+        {
+            eprintln!("tornadotty: server-scan result=discarded reason=pane-state-changed");
             return;
         }
         match result {

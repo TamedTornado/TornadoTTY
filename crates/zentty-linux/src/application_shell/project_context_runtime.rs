@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
-use gtk::{gio, gio::prelude::*, glib};
+use gtk::{gio, glib};
 use zentty_core::{
     ChecksState, ProjectContext, ProjectIconCache, ProjectIconLookup, PullRequestState,
     SystemProjectContextResolver,
@@ -14,9 +14,14 @@ use zentty_linux::platform::open_uri;
 use super::ApplicationShell;
 use super::pane_context::PaneContext;
 
+mod watch;
+use watch::ProjectWatch;
+
 const PROBE_INTERVAL: Duration = Duration::from_secs(2);
 const BACKGROUND_REFRESH_INTERVAL: Duration = Duration::from_secs(90);
 const MAX_PANES_PER_PROBE: usize = 24;
+static PROBE_WORKERS: std::sync::LazyLock<std::sync::Arc<crate::worker_budget::WorkerBudget<2>>> =
+    std::sync::LazyLock::new(|| std::sync::Arc::new(crate::worker_budget::WorkerBudget::default()));
 
 #[derive(Default)]
 pub(super) struct ProjectContextRuntime {
@@ -30,11 +35,6 @@ pub(super) struct ProjectContextRuntime {
     icon_invalidations: BTreeSet<PathBuf>,
     pub(super) icons: BTreeMap<String, PathBuf>,
     watches: BTreeMap<String, ProjectWatch>,
-}
-
-struct ProjectWatch {
-    targets: Vec<PathBuf>,
-    monitors: Vec<gio::FileMonitor>,
 }
 
 #[derive(Clone, Debug)]
@@ -53,6 +53,19 @@ pub(super) fn install(shell: &Rc<RefCell<ApplicationShell>>) -> glib::SourceId {
         };
         if shell.borrow().shutting_down {
             return glib::ControlFlow::Break;
+        }
+        {
+            let mut shell = shell.borrow_mut();
+            let changed = shell
+                .project_context_runtime
+                .watches
+                .iter()
+                .filter(|(_, watch)| watch.take_changed())
+                .map(|(pane_id, _)| pane_id.clone())
+                .collect::<Vec<_>>();
+            for pane_id in changed {
+                mark_pane_for_refresh(&mut shell, &pane_id);
+            }
         }
         request_probe(&shell);
         glib::ControlFlow::Continue
@@ -178,6 +191,9 @@ fn safe_http_url(url: &str) -> bool {
 }
 
 fn request_probe(shell: &Rc<RefCell<ApplicationShell>>) {
+    let Some(permit) = PROBE_WORKERS.acquire() else {
+        return;
+    };
     let sources = {
         let mut shell = shell.borrow_mut();
         if shell.shutting_down || shell.project_context_runtime.probe_in_flight {
@@ -207,6 +223,7 @@ fn request_probe(shell: &Rc<RefCell<ApplicationShell>>) {
     let weak = Rc::downgrade(shell);
     glib::spawn_future_local(async move {
         let result = gio::spawn_blocking(move || {
+            let _permit = permit;
             probe(sources, apply_icon_invalidations(icon_cache, invalidations))
         })
         .await;
@@ -337,50 +354,22 @@ fn sync_watches(shell: &Rc<RefCell<ApplicationShell>>) {
         {
             cancel_watch(watch);
         }
-        let mut monitors = Vec::new();
-        for (index, target) in targets.iter().enumerate() {
-            let file = gio::File::for_path(target);
-            let monitor = if index == 0 {
-                file.monitor_directory(gio::FileMonitorFlags::NONE, gio::Cancellable::NONE)
-            } else {
-                file.monitor_file(gio::FileMonitorFlags::NONE, gio::Cancellable::NONE)
-            };
-            let Ok(monitor) = monitor else {
-                eprintln!(
-                    "zentty-linux: project-context pane={pane_id} watch={} result=unavailable",
-                    target.display()
-                );
-                continue;
-            };
-            let weak = Rc::downgrade(shell);
-            let event_pane_id = pane_id.clone();
-            monitor.connect_changed(move |_, _, _, _| {
-                let Some(shell) = weak.upgrade() else {
-                    return;
-                };
-                let mut shell = shell.borrow_mut();
-                if shell.shutting_down || shell.state.pane(&event_pane_id).is_none() {
-                    return;
-                }
-                mark_pane_for_refresh(&mut shell, &event_pane_id);
-                eprintln!(
-                    "zentty-linux: project-context pane={event_pane_id} refresh=filesystem-event-requested"
-                );
-            });
-            monitors.push(monitor);
-        }
+        let Some(watch) = ProjectWatch::new(targets) else {
+            eprintln!(
+                "tornadotty: project-watch pane={pane_id} capacity=128 fallback=periodic-probe"
+            );
+            continue;
+        };
         shell
             .borrow_mut()
             .project_context_runtime
             .watches
-            .insert(pane_id, ProjectWatch { targets, monitors });
+            .insert(pane_id, watch);
     }
 }
 
 fn cancel_watch(watch: ProjectWatch) {
-    for monitor in watch.monitors {
-        monitor.cancel();
-    }
+    drop(watch);
 }
 
 fn watch_targets(context: &ProjectContext) -> Vec<PathBuf> {
@@ -650,8 +639,8 @@ mod tests {
     use std::path::PathBuf;
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::Duration;
+    use std::time::Instant;
 
-    use gtk::{gio, gio::prelude::*};
     use zentty_core::{
         ChecksState, GitReference, ProjectContext, ProjectIconCache, ProjectIconLookup,
         PullRequestState, PullRequestSummary, ReviewContext,
@@ -811,15 +800,17 @@ mod tests {
             NEXT_DIRECTORY.fetch_add(1, Ordering::Relaxed)
         ));
         fs::create_dir_all(&directory).unwrap();
-        let monitor = gio::File::for_path(&directory)
-            .monitor_directory(gio::FileMonitorFlags::NONE, gio::Cancellable::NONE)
-            .unwrap();
-        let observed = monitor.clone();
-        cancel_watch(ProjectWatch {
-            targets: vec![directory.clone()],
-            monitors: vec![monitor],
-        });
-        assert!(observed.is_cancelled());
+        let watch = ProjectWatch::new(vec![directory.clone()]).unwrap();
+        watch.wait_registered_for_test();
+        fs::write(directory.join("changed"), "first").unwrap();
+        let until = Instant::now() + Duration::from_secs(3);
+        while !watch.take_changed() {
+            assert!(Instant::now() < until);
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        let id = watch.id_for_test();
+        cancel_watch(watch);
+        ProjectWatch::assert_cancelled_for_test(id);
         fs::remove_dir_all(directory).unwrap();
     }
 

@@ -91,8 +91,8 @@ cleanup() {
 trap cleanup EXIT
 
 case "${scenario}" in
-    full | installed-gemini | codex-enrichment | codex-review-routing | copilot-presentation | amp-plugin | cursor-hooks | droid-hooks | kimi-hooks | remaining-hooks | event-coalescing) ;;
-    *) fail "ZENTTY_AGENT_IPC_SCENARIO must be full, installed-gemini, codex-enrichment, codex-review-routing, copilot-presentation, amp-plugin, cursor-hooks, droid-hooks, kimi-hooks, remaining-hooks, or event-coalescing" ;;
+    full | installed-gemini | codex-enrichment | codex-review-routing | copilot-presentation | amp-plugin | cursor-hooks | droid-hooks | kimi-hooks | remaining-hooks | event-coalescing | overload) ;;
+    *) fail "ZENTTY_AGENT_IPC_SCENARIO must be full, installed-gemini, codex-enrichment, codex-review-routing, copilot-presentation, amp-plugin, cursor-hooks, droid-hooks, kimi-hooks, remaining-hooks, event-coalescing, or overload" ;;
 esac
 
 case "${backend}" in
@@ -1145,6 +1145,12 @@ if [[ "${scenario}" == codex-enrichment ]]; then
     exit 0
 fi
 
+if [[ "${scenario}" == overload ]]; then
+    # shellcheck source=linux/tests/lib/agent-overload
+    source "${repo_root}/linux/tests/lib/agent-overload"
+    run_agent_overload
+    exit 0
+fi
 if [[ "${scenario}" == event-coalescing ]]; then
     run_event_coalescing
     echo "Rust event coalescing passed: ${backend}, helper=real-process, transport=real-unix-socket, pty=real, gtk=real, sibling-input=during-traffic, bounded-growth=checked"

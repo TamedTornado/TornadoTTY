@@ -10,9 +10,9 @@ use zentty_core::{
 };
 
 mod cache;
-mod worker_budget;
 use cache::{QuestionCache, TranscriptPaths};
-use worker_budget::{WorkerBudget, WorkerPermit};
+type WorkerBudget = crate::worker_budget::WorkerBudget<MAX_WORKERS>;
+type WorkerPermit = crate::worker_budget::WorkerPermit<MAX_WORKERS>;
 
 // Process-wide: include detached, stale and cancelled threads until they exit.
 const MAX_WORKERS: usize = 4;

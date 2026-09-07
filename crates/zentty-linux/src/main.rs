@@ -1,6 +1,7 @@
 #![forbid(unsafe_code)]
 
 mod about_catalog;
+mod worker_budget;
 mod about_view;
 mod activity_title;
 mod agent_fleet;

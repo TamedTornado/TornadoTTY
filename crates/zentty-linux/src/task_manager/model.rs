@@ -6,6 +6,7 @@ const MEMORY_UNITS: [&str; 5] = ["B", "KiB", "MiB", "GiB", "TiB"];
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct PaneSource {
+    pub(crate) topology_generation: u64,
     pub(crate) window_id: String,
     pub(crate) window_title: String,
     pub(crate) worklane_id: String,
@@ -22,6 +23,7 @@ pub(crate) struct PaneSource {
 impl PaneSource {
     pub(super) fn same_process_owner(&self, other: &Self) -> bool {
         self.window_id == other.window_id
+            && self.topology_generation == other.topology_generation
             && self.worklane_id == other.worklane_id
             && self.pane_id == other.pane_id
             && self.root_pid == other.root_pid
@@ -255,6 +257,7 @@ mod tests {
 
     fn source(id: &str, pid: Option<u32>) -> PaneSource {
         PaneSource {
+            topology_generation: 1,
             window_id: "window".to_owned(),
             window_title: "Main Window".to_owned(),
             worklane_id: "lane".to_owned(),

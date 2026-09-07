@@ -5,6 +5,7 @@ use std::time::Instant;
 
 fn source(id: &str, pid: u32) -> PaneSource {
     PaneSource {
+        topology_generation: 1,
         window_id: "window".into(),
         window_title: "Window".into(),
         worklane_id: "lane".into(),

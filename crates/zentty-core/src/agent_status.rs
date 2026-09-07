@@ -16,6 +16,15 @@ const IDLE_VISIBILITY_MS: u64 = 120_000;
 const UNRESOLVED_STOP_VISIBILITY_MS: u64 = 600_000;
 const STALE_SESSION_VISIBILITY_MS: u64 = 1_800_000;
 
+/// Identity of the status observed before an off-thread process check.
+#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
+pub struct AgentProcessProbe {
+    pub pane_id: String,
+    pub session_id: String,
+    pub pid: i32,
+    pub updated_at: u64,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct CodexInterruptSuppression {
     until: u64,
@@ -1192,6 +1201,53 @@ impl AgentStatusStore {
     /// deterministic and does not acquire a second runtime or pane registry.
     /// Returns whether any status visible to callers changed.
     pub fn sweep(&mut self, now: u64, mut is_process_alive: impl FnMut(i32) -> bool) -> bool {
+        self.sweep_checked(now, |_, _, status| {
+            status.tracked_pid.is_none_or(&mut is_process_alive)
+        })
+    }
+
+    #[must_use]
+    pub fn process_probes(&self) -> Vec<AgentProcessProbe> {
+        self.panes
+            .iter()
+            .flat_map(|(pane, sessions)| {
+                sessions.iter().filter_map(move |(session, status)| {
+                    Some(AgentProcessProbe {
+                        pane_id: pane.clone(),
+                        session_id: session.clone(),
+                        pid: status.tracked_pid?,
+                        updated_at: status.updated_at,
+                    })
+                })
+            })
+            .collect()
+    }
+
+    /// Missing or stale observations mean unknown, not dead. Deadline-only
+    /// transitions continue through the same canonical lifecycle reducer.
+    pub fn sweep_observed(&mut self, now: u64, observations: &[(AgentProcessProbe, bool)]) -> bool {
+        let dead = observations
+            .iter()
+            .filter(|(_, alive)| !alive)
+            .map(|(probe, _)| probe.clone())
+            .collect::<std::collections::BTreeSet<_>>();
+        self.sweep_checked(now, |pane, session, status| {
+            status.tracked_pid.is_none_or(|pid| {
+                !dead.contains(&AgentProcessProbe {
+                    pane_id: pane.to_owned(),
+                    session_id: session.to_owned(),
+                    pid,
+                    updated_at: status.updated_at,
+                })
+            })
+        })
+    }
+
+    fn sweep_checked(
+        &mut self,
+        now: u64,
+        mut is_process_alive: impl FnMut(&str, &str, &PaneAgentStatus) -> bool,
+    ) -> bool {
         let keys = self
             .panes
             .iter()
@@ -1218,7 +1274,7 @@ impl AgentStatusStore {
             };
             let mut remove = false;
 
-            if status.tracked_pid.is_some_and(|pid| !is_process_alive(pid)) {
+            if status.tracked_pid.is_some() && !is_process_alive(&pane_id, &session_id, status) {
                 status.tracked_pid = None;
                 if status.phase == AgentPhase::Idle {
                     remove = true;

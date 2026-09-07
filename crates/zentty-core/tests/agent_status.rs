@@ -5,6 +5,47 @@ use zentty_core::{
 };
 
 #[test]
+fn delayed_process_death_cannot_stop_a_newer_status_or_recreated_session() {
+    let mut store = AgentStatusStore::default();
+    let running = || {
+        event_for("pane", br#"{"version":1,"event":"agent.running","agent":{"name":"Codex","pid":4242},"session":{"id":"session"}}"#)
+    };
+    store.apply(running(), 1_000);
+    let stale = store
+        .process_probes()
+        .into_iter()
+        .map(|p| (p, false))
+        .collect::<Vec<_>>();
+    store.apply(
+        lifecycle_event("pane", "session", "agent.compacting", ""),
+        2_000,
+    );
+    assert!(!store.sweep_observed(3_000, &stale));
+    assert_eq!(
+        store.status_for_pane("pane").unwrap().phase,
+        AgentPhase::Running
+    );
+    assert_eq!(
+        store.status_for_pane("pane").unwrap().tracked_pid,
+        Some(4242)
+    );
+    store.remove_pane("pane");
+    store.apply(running(), 4_000);
+    assert!(!store.sweep_observed(5_000, &stale));
+    let current = store
+        .process_probes()
+        .into_iter()
+        .map(|p| (p, false))
+        .collect::<Vec<_>>();
+    assert!(store.sweep_observed(6_000, &current));
+    assert_eq!(
+        store.status_for_pane("pane").unwrap().phase,
+        AgentPhase::UnresolvedStop
+    );
+    assert_eq!(store.status_for_pane("pane").unwrap().tracked_pid, None);
+}
+
+#[test]
 fn codex_spinner_titles_have_one_stable_ui_identity() {
     assert_eq!(
         stable_codex_terminal_title("Working ⠋ Bro").as_deref(),

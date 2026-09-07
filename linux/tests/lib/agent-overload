@@ -1,0 +1,94 @@
+#!/usr/bin/env bash
+# Uses rust-agent-ipc's existing lifecycle, input and private-state ownership.
+run_agent_overload() {
+    : "${backend:?driver backend}" "${product:?driver product}" "${helper:?driver CLI}"
+    # The supervising agent itself may be inside TornadoTTY. Never let a
+    # driver-side CLI discover its inherited live pane capability.
+    unset ZENTTY_INSTANCE_SOCKET ZENTTY_INSTANCE_ID ZENTTY_PANE_TOKEN ZENTTY_PANE_CREDENTIAL
+    unset ZENTTY_WINDOW_ID ZENTTY_WORKLANE_ID ZENTTY_PANE_ID ZENTTY_CODEX_PID
+    [[ "${backend}" == x11 ]] || fail "overload clipboard capture currently requires private X11"
+    local fixture dependency
+    for dependency in xclip timeout readlink; do
+        command -v "${dependency}" >/dev/null || fail "${dependency} is required for overload capture"
+    done
+    fixture="$(readlink -f "$(dirname "${product}")/../test-support/ingress_load")"
+    [[ -x "${fixture}" ]] || fail "integrated ingress_load fixture is not built"
+    log="$(mktemp)"
+    state_directory="$(mktemp -d)"
+    private_home="$(mktemp -d)"
+    mkdir -p "${private_home}/.config/ghostty"
+    printf 'scrollback-limit-bytes = 67108864\n' >"${private_home}/.config/ghostty/config"
+    HOME="${private_home}" XDG_CONFIG_HOME="${private_home}/.config" \
+        ZENTTY_LOAD_DIRECTORY="${state_directory}" \
+        "${product}" --command "${fixture}" --state-directory "${state_directory}/workspace" \
+        --no-session-restore >"${log}" 2>&1 &
+    product_pid=$!
+    local role
+    for role in busy quiet; do
+        zentty_product_wait_for_log "${state_directory}/${role}-ready" ready \
+            "${role} pane did not initialize" || fail "missing ${role} pane"
+    done
+    zentty_product_prepare_input "${backend}" "${log}"
+    (
+        selection="$(HOME="${private_home}" "${helper}" select pane --pane-id pane-2 --shell --include-control-token)" || exit 1
+        eval "${selection}"
+        "${helper}" pane focus --pane-id pane-2 >/dev/null
+    ) || fail "quiet focus setup"
+    zentty_product_type "${backend}" warmup
+    zentty_product_key "${backend}" Return
+    zentty_product_wait_for_log "${state_directory}/probes" warmup \
+        "quiet pane did not receive warmup" || fail "quiet focus setup"
+    local initial final peak started latency maximum=0 index
+    initial="$(awk '/^RssAnon:/ {print $2}' "/proc/${product_pid}/status")"
+    peak="${initial}"
+    : >"${state_directory}/start"
+    zentty_product_wait_for_log "${state_directory}/active" active "load did not begin" || fail "load start"
+    for index in 1 2 3 4; do
+        sleep 1
+        [[ ! -e "${state_directory}/completed" ]] || fail "load ended before input probe"
+        started="$(date +%s%N)"
+        # The private window already owns focus. Reasserting X window focus
+        # for every key would test focus restoration, not the held-focus path.
+        xdotool type --delay 5 "probe-${index}"
+        xdotool key Return
+        zentty_product_wait_for_log "${state_directory}/probes" "probe-${index}" \
+            "quiet pane stalled" 40 || fail "quiet pane stalled"
+        latency=$((($(date +%s%N) - started) / 1000000))
+        (( latency <= 2000 )) || fail "quiet pane exceeded 2 second budget"
+        (( latency <= maximum )) || maximum="${latency}"
+        final="$(awk '/^RssAnon:/ {print $2}' "/proc/${product_pid}/status")"
+        (( final <= peak )) || peak="${final}"
+        # Exercise real resize concurrently with output and IPC traffic.
+        xdotool windowsize "${ZENTTY_PRODUCT_WINDOW_ID}" "$((1000 + index * 20))" 700
+    done
+    zentty_product_wait_for_log "${state_directory}/completed" accepted= "load failed" 400 || fail "producer did not finish"
+    zentty_product_wait_for_log "${log}" 'value=bounded-load-complete' "PTY output did not drain" || fail "VT completion missing"
+    local accepted rejected
+    accepted="$(sed -n 's/^accepted=//p' "${state_directory}/completed")"
+    rejected="$(sed -n 's/^rejected=//p' "${state_directory}/completed")"
+    (( accepted > 0 && rejected > 0 )) || fail "producer did not exercise actual ingress saturation"
+    # Select/copy through the real GUI, not a producer-side or log-side oracle.
+    (
+        selection="$(HOME="${private_home}" "${helper}" select pane --pane-id pane-1 --shell --include-control-token)" || exit 1
+        eval "${selection}"
+        "${helper}" pane focus --pane-id pane-1 >/dev/null
+    ) || fail "focus recovery"
+    local action
+    for action in 'Select All' 'Copy Raw'; do
+        zentty_product_ctrl_shift_key "${backend}" p
+        zentty_product_type "${backend}" "${action}"
+        zentty_product_wait_for_log "${log}" "command-palette=query value=\"${action}\" results=1" \
+            "copy action missing" || fail "copy action did not resolve"
+        zentty_product_key "${backend}" Down
+        zentty_product_key "${backend}" Return
+    done
+    zentty_product_wait_for_log "${log}" 'action=copy-raw' "copy not dispatched" || fail "copy failed"
+    timeout 5 xclip -selection clipboard -out >"${state_directory}/actual.txt" || fail "clipboard transfer stalled"
+    cmp "${state_directory}/expected.txt" "${state_directory}/actual.txt" || fail "terminal stream content/ordering mismatch"
+    final="$(awk '/^RssAnon:/ {print $2}' "/proc/${product_pid}/status")"
+    (( final <= peak )) || peak="${final}"
+    # Includes configured retained scrollback, terminal cells and clipboard.
+    (( peak - initial <= 131072 )) || fail "overload anonymous RSS growth exceeded 128 MiB"
+    printf 'Agent overload PASS accepted=%s rejected=%s max-input-ms=%s peak-anon-growth-kib=%s exact-terminal-bytes=%s\n' \
+        "${accepted}" "${rejected}" "${maximum}" "$((peak-initial))" "$(wc -c <"${state_directory}/actual.txt")"
+}

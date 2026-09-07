@@ -652,6 +652,7 @@ impl ApplicationShell {
                         format!("{} {phase}", status.agent_name)
                     });
                     sources.push(crate::task_manager::PaneSource {
+                        topology_generation: self.topology_generation(),
                         window_id: self.window_template.id.clone(),
                         window_title: self.window.title().map_or_else(
                             || zentty_core::PRODUCT_NAME.to_owned(),

@@ -4,12 +4,12 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 /// A slot follows the actual thread, not its window or `JoinHandle`. Dropping a
 /// window cannot cancel a filesystem syscall, so it cannot release this slot.
 #[derive(Default)]
-pub(super) struct WorkerBudget(AtomicUsize);
+pub(crate) struct WorkerBudget<const LIMIT: usize>(AtomicUsize);
 
-impl WorkerBudget {
-    pub(super) fn acquire(self: &Arc<Self>) -> Option<WorkerPermit> {
+impl<const LIMIT: usize> WorkerBudget<LIMIT> {
+    pub(crate) fn acquire(self: &Arc<Self>) -> Option<WorkerPermit<LIMIT>> {
         let mut active = self.0.load(Ordering::Acquire);
-        while active < super::MAX_WORKERS {
+        while active < LIMIT {
             match self.0.compare_exchange_weak(
                 active,
                 active + 1,
@@ -24,9 +24,9 @@ impl WorkerBudget {
     }
 }
 
-pub(super) struct WorkerPermit(Arc<WorkerBudget>);
+pub(crate) struct WorkerPermit<const LIMIT: usize>(Arc<WorkerBudget<LIMIT>>);
 
-impl Drop for WorkerPermit {
+impl<const LIMIT: usize> Drop for WorkerPermit<LIMIT> {
     fn drop(&mut self) {
         self.0.0.fetch_sub(1, Ordering::AcqRel);
     }
@@ -39,8 +39,8 @@ mod tests {
     #[test]
     fn detached_worker_retains_its_slot_until_exit_including_panic() {
         for panic in [false, true] {
-            let budget = Arc::new(WorkerBudget::default());
-            let held = (1..crate::codex_enrichment::MAX_WORKERS)
+            let budget = Arc::new(WorkerBudget::<4>::default());
+            let held = (1..4)
                 .map(|_| budget.acquire().unwrap())
                 .collect::<Vec<_>>();
             let permit = budget.acquire().unwrap();

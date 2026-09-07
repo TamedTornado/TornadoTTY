@@ -72,7 +72,13 @@ impl ApplicationShell {
             return;
         };
         let modified = transformed != raw;
-        let provider = gtk::gdk::ContentProvider::for_value(&transformed.to_value());
+        // The payload is already UTF-8. Avoid GValue text serialization: its
+        // converter stream can synchronously close on GTK while an X11 INCR
+        // transfer is still waiting for that same main context to dispatch.
+        let provider = gtk::gdk::ContentProvider::for_bytes(
+            "text/plain;charset=utf-8",
+            &gtk::glib::Bytes::from(transformed.as_bytes()),
+        );
         let platform_clipboard =
             gtk::prelude::WidgetExt::display(&shell.borrow().window).clipboard();
         if let Err(error) = platform_clipboard.set_content(Some(&provider)) {

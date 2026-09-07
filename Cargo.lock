@@ -974,6 +974,7 @@ dependencies = [
  "serde_json",
  "wayland-client",
  "wayland-protocols-misc",
+ "zentty-agent-ipc",
  "zentty-core",
  "zentty-ghostty",
  "zentty-linux",

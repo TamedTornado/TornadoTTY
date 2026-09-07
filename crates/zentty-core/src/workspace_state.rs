@@ -2946,6 +2946,19 @@ impl WorkspaceState {
         self.agent_statuses.sweep(now, is_process_alive)
     }
 
+    #[must_use]
+    pub fn agent_process_probes(&self) -> Vec<crate::AgentProcessProbe> {
+        self.agent_statuses.process_probes()
+    }
+
+    pub fn apply_agent_process_observations(
+        &mut self,
+        now: u64,
+        observations: &[(crate::AgentProcessProbe, bool)],
+    ) -> bool {
+        self.agent_statuses.sweep_observed(now, observations)
+    }
+
     /// Seeds the canonical sidebar state for one accepted restore draft while
     /// its real resumed process is starting. Subsequent authenticated hooks
     /// replace this projection through the same status store.

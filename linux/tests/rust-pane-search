@@ -702,7 +702,7 @@ if uses_xdotool; then
         exit 0
     fi
 fi
-run_palette_action 'Copy' 'zentty-linux: action=copy pane=pane-1' 5
+run_palette_action 'Copy' 'zentty-linux: action=copy pane=pane-1' 7
 grep -F 'zentty-linux: action=copy pane=pane-1 bytes=' "${log}" | tail -1 |
     grep -Fq 'modified=true' || fail "automatic Copy did not run the configured clean pipeline"
 assert_standard_clipboard 'https://example.com/reset?token=noisegamma'
@@ -785,7 +785,7 @@ if [[ "${ZENTTY_CLIPBOARD_ONLY:-false}" == true ]]; then
     run_palette_action 'Select All' \
         'zentty-linux: action=select-all pane=pane-window-2 binding="select_all"'
     assert_primary_clipboard 'https://second.example/reset?utm_source=other-window'
-    run_palette_action 'Copy' 'zentty-linux: action=copy pane=pane-window-2' 5
+    run_palette_action 'Copy' 'zentty-linux: action=copy pane=pane-window-2' 7
     assert_standard_clipboard 'https://second.example/reset'
     run_palette_action 'Copy Raw' \
         'zentty-linux: action=copy-raw pane=pane-window-2'

@@ -1,6 +1,6 @@
 use std::cell::RefCell;
 use std::collections::BTreeSet;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::rc::Rc;
 
 use zentty_agent_ipc::AuthenticatedTmuxRequest;
@@ -11,6 +11,7 @@ use crate::agent_runtime::AgentRuntime;
 use crate::codex_enrichment::CodexTranscriptEnricher;
 
 use super::{ApplicationShell, unix_time_ms};
+mod lifecycle;
 
 const LIFECYCLE_SWEEP_INTERVAL_MS: u64 = 500;
 const COALESCED_EVENT_LOG_INTERVAL_MS: u64 = 5_000;
@@ -66,6 +67,7 @@ pub(super) struct AgentEventCoordinator {
     pending_tmux_render: bool,
     pending_review_panes: BTreeSet<String>,
     pending_unchanged: u64,
+    lifecycle_in_flight: bool,
 }
 
 impl AgentEventCoordinator {
@@ -85,6 +87,7 @@ impl AgentEventCoordinator {
             pending_tmux_render: false,
             pending_review_panes: BTreeSet::new(),
             pending_unchanged: 0,
+            lifecycle_in_flight: false,
         }
     }
 
@@ -344,14 +347,8 @@ impl AgentEventCoordinator {
             }
         }
         let should_sweep = shell.borrow_mut().agent_events.begin_lifecycle_sweep(now);
-        if should_sweep
-            && shell
-                .borrow_mut()
-                .state
-                .sweep_agent_lifecycle(now, linux_process_is_alive)
-        {
-            eprintln!("zentty-linux: agent-lifecycle-sweep changed=true");
-            sidebar_changed = true;
+        if should_sweep {
+            lifecycle::request(shell, now);
         }
         if sidebar_changed {
             shell.borrow().refresh_sidebar_metadata();
@@ -375,10 +372,6 @@ fn coalesced_event_log_due(last: Option<u64>, now: u64) -> bool {
     last.is_none_or(|last| {
         now < last || now.saturating_sub(last) >= COALESCED_EVENT_LOG_INTERVAL_MS
     })
-}
-
-fn linux_process_is_alive(pid: i32) -> bool {
-    pid > 0 && Path::new("/proc").join(pid.to_string()).exists()
 }
 
 #[cfg(test)]

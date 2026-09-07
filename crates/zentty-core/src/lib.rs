@@ -54,8 +54,8 @@ pub use agent_protocol::{
 };
 pub use agent_sleep_inhibition::{AgentSleepInhibitionState, SleepInhibitionTransition};
 pub use agent_status::{
-    AgentPhase, AgentProgress, AgentSignalConfidence, AgentSignalOrigin, AgentStatusStore,
-    PaneAgentStatus, TerminalProgressState,
+    AgentPhase, AgentProcessProbe, AgentProgress, AgentSignalConfidence, AgentSignalOrigin,
+    AgentStatusStore, PaneAgentStatus, TerminalProgressState,
 };
 pub use app_config::{
     AgentCaffeinationConfig, AgentIntegrationsConfig, AgentTeamsConfig, AppConfig,

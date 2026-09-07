@@ -91,7 +91,7 @@ else
     cargo_arguments+=(
         --package zentty-linux --bin zentty-linux
         --package zentty-agent-ipc --bin zentty
-        --package zentty-test-support --bin zentty-focus-steal-helper
+        --package zentty-test-support --bin zentty-focus-steal-helper --bin ingress_load
         --package tornadotty-test-receipts --bin tornadotty-journey-driver
     )
 fi
@@ -191,6 +191,8 @@ cp "${cargo_target_dir}/${cargo_profile}/zentty-linux" \
     "${output_dir}/bin/zentty-linux"
 cp "${cargo_target_dir}/${cargo_profile}/zentty" \
     "${output_dir}/bin/zentty"
+mkdir -p "${output_dir}/test-support"
+cp "${cargo_target_dir}/${cargo_profile}/ingress_load" "${output_dir}/test-support/ingress_load"
 cp "${cargo_target_dir}/${cargo_profile}/zentty-focus-steal-helper" \
     "${output_dir}/bin/zentty-focus-steal-helper"
 cp "${cargo_target_dir}/${cargo_profile}/tornadotty-journey-driver" \
@@ -312,7 +314,7 @@ if [[ "$(readlink -m -- "${output_dir}")" == "$(readlink -m -- "${default_output
     "$(readlink -m -- "${output_dir}")" != "$(readlink -m -- "${profile_bundle}")" ]]; then
     rm -rf -- "${profile_bundle}"
     mkdir -p "${profile_bundle}"
-    for entry in bin lib libexec share build-metadata; do
+    for entry in bin lib libexec share test-support build-metadata; do
         cp -a "${output_dir}/${entry}" "${profile_bundle}/${entry}"
     done
 fi
