@@ -21,6 +21,7 @@ pub(crate) struct CommandPaletteView {
     recent_commands: Rc<RefCell<RecentCommandTargets>>,
     current_pane: Rc<RefCell<Option<PaneReference>>>,
     visible: Rc<Cell<bool>>,
+    generation: Rc<Cell<u64>>,
     user_activation: Rc<RefCell<Option<UserActivationHandler>>>,
 }
 
@@ -60,6 +61,7 @@ impl CommandPaletteView {
             recent_commands: Rc::new(RefCell::new(RecentCommandTargets::default())),
             current_pane: Rc::new(RefCell::new(None)),
             visible: Rc::new(Cell::new(false)),
+            generation: Rc::new(Cell::new(0)),
             user_activation: Rc::new(RefCell::new(None)),
         };
         view.install_handlers();
@@ -74,6 +76,52 @@ impl CommandPaletteView {
         self.visible.get()
     }
 
+    pub(crate) fn generation(&self) -> u64 {
+        self.generation.get()
+    }
+
+    /// Refresh a background provider without clearing the query or taking focus.
+    pub(crate) fn replace_task_items(&self, items: Vec<CommandPaletteItem>) {
+        let selected = self.list.selected_row().and_then(|row| {
+            let button = row.child()?.downcast::<gtk::Button>().ok()?;
+            Some((
+                (button.action_name(), button.action_target_value()),
+                row.has_focus() || button.has_focus(),
+            ))
+        });
+        let mut current = self.items.borrow_mut();
+        current.retain(|item| {
+            !matches!(
+                item.target,
+                CommandPaletteTarget::ParameterizedAction {
+                    action: "run-task",
+                    ..
+                }
+            )
+        });
+        current.extend(items);
+        drop(current);
+        self.render(&self.entry.text());
+        if let Some((selected, had_focus)) = selected {
+            let mut child = self.list.first_child();
+            while let Some(widget) = child {
+                child = widget.next_sibling();
+                if let Ok(row) = widget.downcast::<gtk::ListBoxRow>()
+                    && let Some(button) = row
+                        .child()
+                        .and_then(|child| child.downcast::<gtk::Button>().ok())
+                    && (button.action_name(), button.action_target_value()) == selected
+                {
+                    self.list.select_row(Some(&row));
+                    if had_focus {
+                        row.grab_focus();
+                    }
+                    break;
+                }
+            }
+        }
+    }
+
     pub(crate) fn set_user_activation_handler(&self, handler: impl Fn(u32) + 'static) {
         *self.user_activation.borrow_mut() = Some(Rc::new(handler));
     }
@@ -84,6 +132,7 @@ impl CommandPaletteView {
         recent_panes: Vec<PaneReference>,
         current_pane: Option<PaneReference>,
     ) {
+        self.generation.set(self.generation.get().wrapping_add(1));
         *self.items.borrow_mut() = items;
         *self.recent_panes.borrow_mut() = recent_panes;
         *self.current_pane.borrow_mut() = current_pane;
@@ -104,6 +153,7 @@ impl CommandPaletteView {
     }
 
     pub(crate) fn hide(&self) {
+        self.generation.set(self.generation.get().wrapping_add(1));
         self.visible.set(false);
         self.root.set_visible(false);
         eprintln!("zentty-linux: command-palette=hidden");

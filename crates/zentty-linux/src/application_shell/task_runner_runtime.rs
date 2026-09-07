@@ -1,26 +1,147 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use zentty_core::revalidate_task_runner;
+use gtk::{gio, glib};
+use zentty_core::{discover_task_runners, revalidate_task_runner};
 
+use super::pane_context::PaneContext;
 use super::{ApplicationShell, pane_runtime::PaneRuntimeCoordinator};
 
+mod worker;
+
+pub(super) struct Catalog {
+    source: PaneContext,
+    pub(super) actions: std::collections::BTreeMap<String, zentty_core::TaskRunnerAction>,
+}
+
+fn focused_source(shell: &ApplicationShell) -> Option<PaneContext> {
+    let mut source = PaneContext::capture(shell, shell.state.focused_pane_id()?)?;
+    // Tasks belong to the pane's project, not a transient prompt-hook process.
+    // A normal shell hook must not invalidate an otherwise unchanged catalog.
+    source.foreground_pid = None;
+    Some(source)
+}
+
+fn source_is_current(source: &PaneContext, shell: &ApplicationShell) -> bool {
+    !shell.shutting_down && source.matches(focused_source(shell).as_ref())
+}
+
+pub(super) fn discover(shell: &ApplicationShell) {
+    let Some(source) = focused_source(shell) else {
+        return;
+    };
+    let Some(directory) = source.working_directory.clone() else {
+        return;
+    };
+    let Some(permit) = worker::Permit::discovery() else {
+        eprintln!("zentty-linux: task-discovery rejected=busy capacity=1");
+        shell.restore_notice.show("Task discovery is still busy. Other commands are available; reopen the palette to retry.");
+        return;
+    };
+    let generation = shell.command_palette.generation();
+    let weak = shell.self_handle.borrow().clone();
+    glib::spawn_future_local(async move {
+        let result = gio::spawn_blocking(move || {
+            let _permit = permit;
+            discover_task_runners(&directory)
+        })
+        .await;
+        let Some(shell) = weak.upgrade() else { return };
+        let mut shell = shell.borrow_mut();
+        if !source_is_current(&source, &shell)
+            || !shell.command_palette.is_visible()
+            || shell.command_palette.generation() != generation
+        {
+            eprintln!("zentty-linux: task-discovery rejected=stale-context");
+            return;
+        }
+        let actions = match result {
+            Ok(Ok(actions)) => actions,
+            Ok(Err(error)) => {
+                eprintln!("zentty-linux: task-discovery error={error}");
+                return;
+            }
+            Err(_) => {
+                eprintln!("zentty-linux: task-discovery error=worker-panic");
+                return;
+            }
+        };
+        shell.task_runner_catalog = Some(Catalog {
+            source,
+            actions: actions
+                .into_iter()
+                .map(|action| (action.id.clone(), action))
+                .collect(),
+        });
+        let items = shell.command_palette_task_items();
+        shell.command_palette.replace_task_items(items);
+    });
+}
+
 pub(super) fn run_task(shell: &Rc<RefCell<ApplicationShell>>, id: &str) {
-    let action = {
+    let (action, source) = {
         let shell_ref = shell.borrow();
-        let Some(action) = shell_ref.task_runner_actions.get(id) else {
+        let Some(catalog) = &shell_ref.task_runner_catalog else {
+            return;
+        };
+        let Some(action) = catalog.actions.get(id) else {
             eprintln!("zentty-linux: action=run-task rejected=unknown-snapshot id={id:?}");
             return;
         };
-        action.clone()
-    };
-    let action = match revalidate_task_runner(&action) {
-        Ok(action) => action,
-        Err(error) => {
-            eprintln!("zentty-linux: action=run-task rejected=stale id={id:?} error={error}");
+        let source = catalog.source.clone();
+        if !source_is_current(&source, &shell_ref) {
+            eprintln!("zentty-linux: action=run-task rejected=stale-context");
             return;
         }
+        (action.clone(), source)
     };
+    let Some(permit) = worker::Permit::validation() else {
+        ApplicationShell::report_action_error(
+            shell,
+            super::action_router::ACTION_RUN_TASK,
+            "Another task launch is still being checked. Retry when it completes.",
+        );
+        return;
+    };
+    let weak = Rc::downgrade(shell);
+    let id = id.to_owned();
+    glib::spawn_future_local(async move {
+        let result = gio::spawn_blocking(move || {
+            // Retain capacity through GTK application of the result, too.
+            (revalidate_task_runner(&action), permit)
+        })
+        .await;
+        let Some(shell) = weak.upgrade() else { return };
+        if !source_is_current(&source, &shell.borrow()) {
+            eprintln!("zentty-linux: action=run-task rejected=stale-context id={id:?}");
+            return;
+        }
+        let Ok((result, _permit)) = result else {
+            ApplicationShell::report_action_error(
+                &shell,
+                super::action_router::ACTION_RUN_TASK,
+                "Task validation worker failed. Reopen the palette to retry.",
+            );
+            return;
+        };
+        match result {
+            Ok(action) => activate_validated(&shell, &action),
+            Err(error) => {
+                eprintln!("zentty-linux: action=run-task rejected=stale id={id:?} error={error}");
+                ApplicationShell::report_action_error(
+                    &shell,
+                    super::action_router::ACTION_RUN_TASK,
+                    &error,
+                );
+            }
+        }
+    });
+}
+
+fn activate_validated(
+    shell: &Rc<RefCell<ApplicationShell>>,
+    action: &zentty_core::TaskRunnerAction,
+) {
     if !action.is_enabled() {
         super::open_with_runtime::open_local_path_primary(
             shell,
@@ -29,7 +150,7 @@ pub(super) fn run_task(shell: &Rc<RefCell<ApplicationShell>>, id: &str) {
         );
         return;
     }
-    if let Err(error) = launch_in_new_pane(shell, &action) {
+    if let Err(error) = launch_in_new_pane(shell, action) {
         ApplicationShell::report_action_error(shell, super::action_router::ACTION_RUN_TASK, &error);
     }
 }

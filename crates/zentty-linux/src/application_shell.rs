@@ -34,8 +34,8 @@ use zentty_core::{
     GlobalSearchCoordinator, GlobalSearchDirection, PaneColumnState, PaneCrossWindowTransfer,
     PaneLayoutPolicy, PaneMoveSplitAxis, PaneMoveTarget, PaneRecipe, PaneReference,
     PaneResizeDirection, PaneRestoreDraft, PaneWindowTransfer, ServerPortRule,
-    ServerRelevanceContext, SidebarWidthPreference, TaskRunnerAction, WindowFrame, WindowRecipe,
-    WorklaneColor, WorklaneRecipe, WorkspaceState, discover_task_runners, rank_servers,
+    ServerRelevanceContext, SidebarWidthPreference, WindowFrame, WindowRecipe, WorklaneColor,
+    WorklaneRecipe, WorkspaceState, rank_servers,
 };
 use zentty_ghostty::{GhosttyRuntime, TextExtent};
 
@@ -201,7 +201,7 @@ pub(crate) struct ApplicationShell {
     project_context_runtime: project_context_runtime::ProjectContextRuntime,
     open_with_runtime: open_with_runtime::OpenWithRuntime,
     bookmark_runtime: bookmark_runtime::BookmarkRuntime,
-    task_runner_actions: BTreeMap<String, TaskRunnerAction>,
+    task_runner_catalog: Option<task_runner_runtime::Catalog>,
     last_pane_viewport_width: Cell<i32>,
     last_pane_viewport_height: Cell<i32>,
     pane_drag_source_state: Rc<PaneDragSourceState>,
@@ -486,7 +486,7 @@ impl ApplicationShell {
             project_context_runtime: project_context_runtime::ProjectContextRuntime::default(),
             open_with_runtime,
             bookmark_runtime,
-            task_runner_actions: BTreeMap::new(),
+            task_runner_catalog: None,
             last_pane_viewport_width: Cell::new(0),
             last_pane_viewport_height: Cell::new(0),
             pane_drag_source_state: Rc::new(PaneDragSourceState::default()),
@@ -2064,9 +2064,11 @@ impl ApplicationShell {
             self.focus_selected_surface();
             return;
         }
+        self.task_runner_catalog = None;
         let (items, current) = self.command_palette_items();
         self.command_palette
             .show(items, self.state.recent_pane_references(), current);
+        task_runner_runtime::discover(self);
     }
 
     fn request_show_shortcut_settings(&mut self) {
@@ -2909,24 +2911,13 @@ impl ApplicationShell {
         items
     }
 
-    fn command_palette_task_items(&mut self) -> Vec<CommandPaletteItem> {
-        self.task_runner_actions.clear();
-        let Some(focused_directory) = self
-            .state
-            .focused_pane_id()
-            .and_then(|pane_id| self.state.effective_working_directory_for_pane(pane_id))
-        else {
+    fn command_palette_task_items(&self) -> Vec<CommandPaletteItem> {
+        let Some(catalog) = &self.task_runner_catalog else {
             return Vec::new();
         };
-        let actions = match discover_task_runners(std::path::Path::new(focused_directory)) {
-            Ok(actions) => actions,
-            Err(error) => {
-                eprintln!("zentty-linux: task-discovery error={error}");
-                return Vec::new();
-            }
-        };
-        actions
-            .into_iter()
+        catalog
+            .actions
+            .values()
             .map(|action| {
                 let id = action.id.clone();
                 let keywords = format!(
@@ -2937,15 +2928,13 @@ impl ApplicationShell {
                         .as_ref()
                         .map_or("", zentty_core::TaskRunnerDisabledReason::display_text)
                 );
-                let item = CommandPaletteItem::parameterized_action(
+                CommandPaletteItem::parameterized_action(
                     format!("Run task: {}", action.title),
                     action.subtitle(),
                     &keywords,
                     action_router::ACTION_RUN_TASK,
-                    id.clone(),
-                );
-                self.task_runner_actions.insert(id, action);
-                item
+                    id,
+                )
             })
             .collect()
     }
