@@ -6,7 +6,8 @@ use gtk::prelude::*;
 use zentty_core::{OpenWithConfig, OpenWithCustomApp, OpenWithTarget};
 
 pub(crate) type ApplyOpenWith = Rc<dyn Fn(OpenWithConfig) -> Result<(), String>>;
-pub(crate) type RefreshOpenWith = Rc<dyn Fn() -> Result<OpenWithProjection, String>>;
+pub(crate) type RefreshCompletion = Box<dyn FnOnce(Result<OpenWithProjection, String>)>;
+pub(crate) type RefreshOpenWith = Rc<dyn Fn(RefreshCompletion)>;
 
 #[derive(Clone)]
 pub(crate) struct OpenWithProjection {
@@ -43,6 +44,7 @@ impl OpenWithProjection {
 }
 
 struct State {
+    validating: bool,
     config: OpenWithConfig,
     available: Vec<OpenWithTarget>,
     apply: ApplyOpenWith,
@@ -162,6 +164,7 @@ pub(crate) fn build(
     }
 
     let state = Rc::new(RefCell::new(State {
+        validating: false,
         config: projection.config,
         available: projection.available,
         apply,
@@ -365,14 +368,43 @@ fn choose_custom_app(button: &gtk::Button, state: &Rc<RefCell<State>>) {
 }
 
 fn add_custom_path(state: &Rc<RefCell<State>>, path: &Path) {
-    let Some(canonical) = crate::application_shell::open_with_runtime::canonical_executable(path)
-    else {
+    if state.borrow().validating {
         state
             .borrow()
             .status
-            .set_text("The selected file is not an executable application.");
+            .set_text("Application validation is already in progress.");
         return;
-    };
+    }
+    state.borrow_mut().validating = true;
+    let captured = state.borrow().config.clone();
+    let path = path.to_owned();
+    let weak = Rc::downgrade(state);
+    gtk::glib::spawn_future_local(async move {
+        let result = gtk::gio::spawn_blocking(move || {
+            crate::application_shell::open_with_runtime::canonical_executable(&path)
+        })
+        .await;
+        let Some(state) = weak.upgrade() else { return };
+        state.borrow_mut().validating = false;
+        if state.borrow().config != captured {
+            state
+                .borrow()
+                .status
+                .set_text("Settings changed while validating the app. Add it again.");
+            return;
+        }
+        let Ok(Some(canonical)) = result else {
+            state
+                .borrow()
+                .status
+                .set_text("The selected file could not be validated as an executable application.");
+            return;
+        };
+        add_validated_custom_path(&state, &canonical);
+    });
+}
+
+fn add_validated_custom_path(state: &Rc<RefCell<State>>, canonical: &Path) {
     let name = canonical
         .file_stem()
         .and_then(|name| name.to_str())
@@ -471,34 +503,47 @@ fn apply_without_rebuild(state: &Rc<RefCell<State>>, config: OpenWithConfig, con
 
 fn refresh_projection(state: &Rc<RefCell<State>>) {
     let refresh = Rc::clone(&state.borrow().refresh);
-    match refresh() {
-        Ok(projection) => {
-            let message = if projection.removed_unavailable_ids.is_empty() {
-                "Application list refreshed.".to_owned()
-            } else {
-                format!(
-                    "Removed unavailable apps: {}",
-                    projection.removed_unavailable_ids.join(", ")
-                )
-            };
-            let mut model = state.borrow_mut();
-            model.config = projection.config;
-            model.available = projection.available;
-            model.status.set_text(&message);
-            drop(model);
-            rebuild(state);
-            eprintln!("zentty-linux: open-with-settings control=refresh result=applied");
-        }
-        Err(error) => {
+    let captured = state.borrow().config.clone();
+    state.borrow().status.set_text("Discovering applications…");
+    let weak = Rc::downgrade(state);
+    refresh(Box::new(move |result| {
+        let Some(state) = weak.upgrade() else { return };
+        if state.borrow().config != captured {
             state
                 .borrow()
                 .status
-                .set_text(&format!("Could not refresh applications: {error}"));
-            eprintln!(
-                "zentty-linux: open-with-settings control=refresh result=error error={error}"
-            );
+                .set_text("Settings changed during discovery. Refresh again.");
+            return;
         }
-    }
+        match result {
+            Ok(projection) => {
+                let message = if projection.removed_unavailable_ids.is_empty() {
+                    "Application list refreshed.".to_owned()
+                } else {
+                    format!(
+                        "Removed unavailable apps: {}",
+                        projection.removed_unavailable_ids.join(", ")
+                    )
+                };
+                let mut model = state.borrow_mut();
+                model.config = projection.config;
+                model.available = projection.available;
+                model.status.set_text(&message);
+                drop(model);
+                rebuild(&state);
+                eprintln!("zentty-linux: open-with-settings control=refresh result=applied");
+            }
+            Err(error) => {
+                state
+                    .borrow()
+                    .status
+                    .set_text(&format!("Could not refresh applications: {error}"));
+                eprintln!(
+                    "zentty-linux: open-with-settings control=refresh result=error error={error}"
+                );
+            }
+        }
+    }));
 }
 
 fn card(title: &str) -> gtk::Box {

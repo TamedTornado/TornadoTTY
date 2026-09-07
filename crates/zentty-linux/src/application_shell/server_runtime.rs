@@ -32,20 +32,8 @@ pub(super) struct ServerRuntime {
 }
 
 impl ServerRuntime {
-    pub(super) fn discover(config: &ServerDetectionConfig) -> Self {
-        let browser_catalog = ServerBrowserCatalog::resolve(
-            config,
-            discover_browser_targets(config, std::env::var_os("PATH").as_deref()),
-        );
-        eprintln!(
-            "zentty-linux: server-browser-discovery available={} preferred={} unavailable={}",
-            browser_catalog.enabled.len(),
-            browser_catalog
-                .preferred
-                .as_ref()
-                .map_or("none", |target| target.id.as_str()),
-            browser_catalog.unavailable_ids.join(",")
-        );
+    pub(super) fn pending(config: &ServerDetectionConfig) -> Self {
+        let browser_catalog = ServerBrowserCatalog::resolve(config, Vec::new());
         Self {
             probe_source: None,
             probe_in_flight: false,

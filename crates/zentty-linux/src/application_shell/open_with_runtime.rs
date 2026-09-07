@@ -129,19 +129,10 @@ pub(super) struct OpenWithRuntime {
 }
 
 impl OpenWithRuntime {
-    pub(super) fn discover(config: &OpenWithConfig) -> Self {
-        let available = discover_available_targets(config, std::env::var_os("PATH").as_deref());
-        let catalog = OpenWithCatalog::resolve(config, available);
-        eprintln!(
-            "zentty-linux: open-with-discovery available={} primary={} unavailable={}",
-            catalog.enabled.len(),
-            catalog
-                .primary
-                .as_ref()
-                .map_or("none", |target| target.id.as_str()),
-            catalog.unavailable_ids.join(",")
-        );
-        Self { catalog }
+    pub(super) fn pending() -> Self {
+        Self {
+            catalog: OpenWithCatalog::default(),
+        }
     }
 }
 

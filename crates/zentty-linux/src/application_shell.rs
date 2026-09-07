@@ -46,6 +46,7 @@ mod agent_events;
 mod agent_lifecycle_signal;
 mod application_commands;
 mod bookmark_runtime;
+mod catalog_discovery;
 mod clipboard_actions;
 pub(crate) mod close_runtime;
 mod global_search;
@@ -200,6 +201,7 @@ pub(crate) struct ApplicationShell {
     server_runtime: server_runtime::ServerRuntime,
     project_context_runtime: project_context_runtime::ProjectContextRuntime,
     open_with_runtime: open_with_runtime::OpenWithRuntime,
+    catalog_discovery: catalog_discovery::Discovery,
     bookmark_runtime: bookmark_runtime::BookmarkRuntime,
     task_runner_catalog: Option<task_runner_runtime::Catalog>,
     last_pane_viewport_width: Cell<i32>,
@@ -291,11 +293,8 @@ fn finish_initial_render(shell: &Rc<RefCell<ApplicationShell>>) {
     report_config_projection(&shell.borrow());
 }
 
-fn initialize_open_with(
-    chrome: &WindowChrome,
-    config: &zentty_core::OpenWithConfig,
-) -> open_with_runtime::OpenWithRuntime {
-    let runtime = open_with_runtime::OpenWithRuntime::discover(config);
+fn initialize_open_with(chrome: &WindowChrome) -> open_with_runtime::OpenWithRuntime {
+    let runtime = open_with_runtime::OpenWithRuntime::pending();
     chrome.configure_open_with(&runtime.catalog);
     runtime
 }
@@ -346,6 +345,7 @@ fn finish_shell_setup(
     shell.borrow().mount_background_restored_panes();
     finish_initial_render(shell);
     bookmark_runtime::initialize(shell);
+    catalog_discovery::request(&mut shell.borrow_mut(), false);
     Ok(())
 }
 
@@ -431,7 +431,7 @@ impl ApplicationShell {
             restore_workspace_state(&window_template, restored_drafts)?;
         let agent_events =
             AgentEventCoordinator::start(window_template.id.clone(), Rc::clone(&runtimes.agent));
-        let open_with_runtime = initialize_open_with(&chrome, &runtimes.config.open_with);
+        let open_with_runtime = initialize_open_with(&chrome);
         let bookmark_runtime = initialize_bookmarks()?;
         let (next_worklane_number, next_pane_number) = next_workspace_identities(&state);
         let initial_pane_ids = workspace_pane_ids(&state);
@@ -481,7 +481,8 @@ impl ApplicationShell {
             focus_follow_generation: 0,
             pending_initial_focus: None,
             remote_panes: RemotePaneContext::default(),
-            server_runtime: server_runtime::ServerRuntime::discover(
+            catalog_discovery: catalog_discovery::Discovery::default(),
+            server_runtime: server_runtime::ServerRuntime::pending(
                 &runtimes.config.server_detection,
             ),
             project_context_runtime: project_context_runtime::ProjectContextRuntime::default(),
@@ -589,23 +590,7 @@ impl ApplicationShell {
             .set_agent_teams_enabled(self.config.agent_teams.enabled);
         self.agent_events
             .set_agent_integrations(self.config.agent_integrations.states.clone());
-        self.open_with_runtime =
-            open_with_runtime::OpenWithRuntime::discover(&self.config.open_with);
-        self.chrome
-            .configure_open_with(&self.open_with_runtime.catalog);
-        self.chrome.set_open_with_context_available(
-            open_with_runtime::focused_context_is_available(
-                &self.open_with_runtime.catalog,
-                open_with_runtime::focused_context(self).as_ref(),
-            ),
-        );
-        self.server_runtime.browser_catalog = zentty_core::ServerBrowserCatalog::resolve(
-            &self.config.server_detection,
-            server_runtime::discover_browser_targets(
-                &self.config.server_detection,
-                std::env::var_os("PATH").as_deref(),
-            ),
-        );
+        catalog_discovery::request(self, false);
         let passive_is_enabled = self.config.server_detection.passive_detection_enabled;
         if passive_was_enabled && !passive_is_enabled {
             if let Some(source) = self.server_runtime.probe_source.take() {
@@ -2109,10 +2094,13 @@ impl ApplicationShell {
                 );
             }
         }
-        let open_with_targets = open_with_runtime::discover_available_targets(
-            &self.config.open_with,
-            std::env::var_os("PATH").as_deref(),
-        );
+        if !catalog_discovery::ready(self) {
+            self.catalog_discovery.pending_settings = Some(section);
+            catalog_discovery::request(self, false);
+            eprintln!("zentty-linux: settings waiting=application-discovery");
+            return;
+        }
+        let open_with_targets = self.catalog_discovery.apps.clone();
         let open_with_projection = crate::open_with_settings::OpenWithProjection::reconcile(
             self.config.open_with.clone(),
             open_with_targets,
@@ -2127,10 +2115,7 @@ impl ApplicationShell {
                 ),
             }
         }
-        let server_browser_targets = server_runtime::discover_browser_targets(
-            &self.config.server_detection,
-            std::env::var_os("PATH").as_deref(),
-        );
+        let server_browser_targets = self.catalog_discovery.browsers.clone();
         let available_server_browser_ids = server_browser_targets
             .iter()
             .map(|target| target.id.clone())
@@ -2251,11 +2236,21 @@ impl ApplicationShell {
                     })?;
                     shell.borrow_mut().apply_open_with(config)
                 }),
-                refresh_open_with: Rc::new(move || {
-                    let shell = refresh_open_with_weak.upgrade().ok_or_else(|| {
-                        "Tornado TTY window closed while refreshing Open With settings".to_owned()
-                    })?;
-                    shell.borrow_mut().refresh_open_with_projection()
+                refresh_open_with: Rc::new(move |complete| {
+                    let Some(shell) = refresh_open_with_weak.upgrade() else {
+                        complete(Err(
+                            "Tornado TTY window closed while refreshing apps".to_owned()
+                        ));
+                        return;
+                    };
+                    let mut shell = shell.borrow_mut();
+                    if shell.catalog_discovery.refresh.is_some() {
+                        drop(shell);
+                        complete(Err("Application refresh is already in progress".to_owned()));
+                        return;
+                    }
+                    shell.catalog_discovery.refresh = Some(complete);
+                    catalog_discovery::request(&mut shell, true);
                 }),
                 server_detection: self.config.server_detection.clone(),
                 server_browser_targets,
@@ -2396,16 +2391,7 @@ impl ApplicationShell {
     fn apply_open_with(&mut self, config: zentty_core::OpenWithConfig) -> Result<(), String> {
         let path = crate::config_store::ConfigStore::update_default_open_with(&config)?;
         self.config.open_with = config;
-        self.open_with_runtime =
-            open_with_runtime::OpenWithRuntime::discover(&self.config.open_with);
-        self.chrome
-            .configure_open_with(&self.open_with_runtime.catalog);
-        self.chrome.set_open_with_context_available(
-            open_with_runtime::focused_context_is_available(
-                &self.open_with_runtime.catalog,
-                open_with_runtime::focused_context(self).as_ref(),
-            ),
-        );
+        catalog_discovery::request(self, false);
         eprintln!(
             "zentty-linux: open-with-settings result=persisted path={} primary={}",
             path.display(),
@@ -2417,14 +2403,17 @@ impl ApplicationShell {
     fn refresh_open_with_projection(
         &mut self,
     ) -> Result<crate::open_with_settings::OpenWithProjection, String> {
+        // The file watcher may not have delivered a concurrent external edit.
+        // Never normalize an old discovery result over the current authority.
         let snapshot = crate::config_store::ConfigStore::load_default()?;
-        let available = open_with_runtime::discover_available_targets(
-            &snapshot.config.open_with,
-            std::env::var_os("PATH").as_deref(),
-        );
+        if snapshot.config.open_with != self.config.open_with {
+            self.config.open_with = snapshot.config.open_with;
+            catalog_discovery::request(self, false);
+            return Err("Open With settings changed during discovery. Refresh again.".into());
+        }
         let projection = crate::open_with_settings::OpenWithProjection::reconcile(
-            snapshot.config.open_with,
-            available,
+            self.config.open_with.clone(),
+            self.catalog_discovery.apps.clone(),
         );
         self.apply_open_with(projection.config.clone())?;
         Ok(projection)
@@ -2437,13 +2426,7 @@ impl ApplicationShell {
         let path = crate::config_store::ConfigStore::update_default_server_detection(&config)?;
         let was_enabled = self.config.server_detection.passive_detection_enabled;
         self.config.server_detection = config;
-        self.server_runtime.browser_catalog = zentty_core::ServerBrowserCatalog::resolve(
-            &self.config.server_detection,
-            server_runtime::discover_browser_targets(
-                &self.config.server_detection,
-                std::env::var_os("PATH").as_deref(),
-            ),
-        );
+        catalog_discovery::request(self, false);
         if was_enabled && !self.config.server_detection.passive_detection_enabled {
             if let Some(source) = self.server_runtime.probe_source.take() {
                 source.remove();

@@ -10,6 +10,7 @@ use zentty_core::{
 pub(crate) type ApplyDevServers = Rc<dyn Fn(ServerDetectionConfig) -> Result<(), String>>;
 
 struct State {
+    validating: bool,
     config: ServerDetectionConfig,
     available: Vec<ServerBrowserTarget>,
     apply: ApplyDevServers,
@@ -98,6 +99,7 @@ pub(crate) fn build(
     root.append(&status);
 
     let state = Rc::new(RefCell::new(State {
+        validating: false,
         config,
         available,
         apply,
@@ -393,89 +395,131 @@ fn choose_custom_browser(button: &gtk::Button, state: &Rc<RefCell<State>>) {
             let Some(path) = file.path() else {
                 return;
             };
-            let Some(canonical) =
-                crate::application_shell::open_with_runtime::canonical_executable(&path)
-            else {
-                state
-                    .borrow()
-                    .status
-                    .set_text("The selected file is not executable.");
+            if state.borrow().validating {
+                state.borrow().status.set_text(
+                    "Browser validation is already in progress. Add it again when it finishes.",
+                );
                 return;
-            };
-            let path = canonical.to_string_lossy().into_owned();
-            let name = canonical
-                .file_stem()
-                .and_then(|value| value.to_str())
-                .unwrap_or("Custom Browser")
-                .to_owned();
-            let id = format!("custom:{}", stable_path_id(&path));
-            let mut current = state.borrow().config.clone();
-            if !current
-                .custom_browsers
-                .iter()
-                .any(|browser| browser.path == path)
-            {
-                current
-                    .custom_browsers
-                    .push(zentty_core::ServerBrowserCustomApp {
-                        id: id.clone(),
-                        name: name.clone(),
-                        path: path.clone(),
-                        bundle_identifier: None,
-                    });
-                current.enabled_browser_target_ids.push(id.clone());
-                state.borrow_mut().available.push(ServerBrowserTarget {
-                    id,
-                    name,
-                    launcher: zentty_core::ServerBrowserLauncher::Executable { path },
-                });
             }
-            state.borrow_mut().config = current.normalized();
-            apply_and_rebuild(&state, "add-browser");
+            state.borrow_mut().validating = true;
+            let captured = state.borrow().config.clone();
+            let weak = Rc::downgrade(&state);
+            gtk::glib::spawn_future_local(async move {
+                let result = gtk::gio::spawn_blocking(move || {
+                    crate::application_shell::open_with_runtime::canonical_executable(&path)
+                })
+                .await;
+                let Some(state) = weak.upgrade() else { return };
+                state.borrow_mut().validating = false;
+                if state.borrow().config != captured {
+                    state
+                        .borrow()
+                        .status
+                        .set_text("Settings changed while validating the browser. Add it again.");
+                    return;
+                }
+                let Ok(Some(canonical)) = result else {
+                    state.borrow().status.set_text(
+                        "The selected file could not be validated as an executable browser.",
+                    );
+                    return;
+                };
+                let path = canonical.to_string_lossy().into_owned();
+                let name = canonical
+                    .file_stem()
+                    .and_then(|value| value.to_str())
+                    .unwrap_or("Custom Browser")
+                    .to_owned();
+                let id = format!("custom:{}", stable_path_id(&path));
+                let mut current = state.borrow().config.clone();
+                if !current
+                    .custom_browsers
+                    .iter()
+                    .any(|browser| browser.path == path)
+                {
+                    current
+                        .custom_browsers
+                        .push(zentty_core::ServerBrowserCustomApp {
+                            id: id.clone(),
+                            name: name.clone(),
+                            path: path.clone(),
+                            bundle_identifier: None,
+                        });
+                    current.enabled_browser_target_ids.push(id.clone());
+                    state.borrow_mut().available.push(ServerBrowserTarget {
+                        id,
+                        name,
+                        launcher: zentty_core::ServerBrowserLauncher::Executable { path },
+                    });
+                }
+                state.borrow_mut().config = current.normalized();
+                apply_and_rebuild(&state, "add-browser");
+            });
         },
     );
 }
 
 fn reconcile_live_custom_browsers(state: &Rc<RefCell<State>>) {
-    let missing = state
-        .borrow()
-        .config
-        .custom_browsers
-        .iter()
-        .filter(|browser| {
-            crate::application_shell::open_with_runtime::canonical_executable(std::path::Path::new(
-                &browser.path,
-            ))
-            .is_none()
-        })
-        .map(|browser| browser.id.clone())
-        .collect::<Vec<_>>();
-    if missing.is_empty() {
+    if state.borrow().validating {
         return;
     }
-    {
-        let mut state = state.borrow_mut();
-        state
-            .config
-            .custom_browsers
-            .retain(|browser| !missing.contains(&browser.id));
-        state
-            .config
-            .enabled_browser_target_ids
-            .retain(|id| !missing.contains(id));
-        if missing.contains(&state.config.preferred_browser_id) {
-            state.config.preferred_browser_id = SYSTEM_DEFAULT_BROWSER_ID.into();
+    state.borrow_mut().validating = true;
+    let captured = state.borrow().config.clone();
+    let browsers = captured.custom_browsers.clone();
+    let weak = Rc::downgrade(state);
+    gtk::glib::spawn_future_local(async move {
+        let result = gtk::gio::spawn_blocking(move || {
+            browsers
+                .iter()
+                .filter(|browser| {
+                    crate::application_shell::open_with_runtime::canonical_executable(
+                        std::path::Path::new(&browser.path),
+                    )
+                    .is_none()
+                })
+                .map(|browser| browser.id.clone())
+                .collect::<Vec<_>>()
+        })
+        .await;
+        let Some(state) = weak.upgrade() else { return };
+        state.borrow_mut().validating = false;
+        if state.borrow().config != captured {
+            return;
         }
-        state
-            .available
-            .retain(|browser| !missing.contains(&browser.id));
-        state.config = state.config.clone().normalized();
-    }
-    eprintln!(
-        "zentty-linux: dev-server-settings live-browser-invalidation removed={}",
-        missing.join(",")
-    );
-    apply_and_rebuild(state, "browser-invalidated");
+        let Ok(missing) = result else {
+            state
+                .borrow()
+                .status
+                .set_text("Browser availability check failed; it will be checked again.");
+            return;
+        };
+        if missing.is_empty() {
+            return;
+        }
+        {
+            let mut state = state.borrow_mut();
+            state
+                .config
+                .custom_browsers
+                .retain(|browser| !missing.contains(&browser.id));
+            state
+                .config
+                .enabled_browser_target_ids
+                .retain(|id| !missing.contains(id));
+            if missing.contains(&state.config.preferred_browser_id) {
+                state.config.preferred_browser_id = SYSTEM_DEFAULT_BROWSER_ID.into();
+            }
+            state
+                .available
+                .retain(|browser| !missing.contains(&browser.id));
+            state.config = state.config.clone().normalized();
+        }
+        eprintln!(
+            "zentty-linux: dev-server-settings live-browser-invalidation removed={}",
+            missing.join(",")
+        );
+        apply_and_rebuild(&state, "browser-invalidated");
+    });
 }
 
 fn stable_path_id(path: &str) -> String {
