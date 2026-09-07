@@ -71,3 +71,27 @@ Staging: `build/gh163-catalogs`. No installation, live-client interruption,
 full qualification, refreshed matrix totals or Wayland claim. User QA remains
 pending for the later batch. #163 remains open for remaining blocking monitors
 and the broader PTY/IPC bounds; #180 owns the independent screenshot failure.
+
+## #180 — isolate and review the development-server visual fixture
+
+The server actor inherited the caller's working directory. Its image therefore
+included the source checkout's branch, dirty decoration and project icon.
+That is not controlled server UI state. Both launches now run in one private,
+non-repository project directory; the optional Docker fixture's Compose label
+uses that same directory. Capture waits for actual `repository=none` inspection
+as well as the existing project-icon and title readiness.
+
+The isolated capture still failed the old baseline, as expected. Visually
+reviewed both images: the new one correctly has the existing folder-symbolic
+fallback (implemented in `c7bda002`), the Development servers title, no unrelated
+Git row, and no stale hover tooltip. Without a Git row the header is shorter;
+the terminal correctly gains that space. Updated only this reviewed baseline,
+not product styling, tolerances, masks or scenario status. This repairs fixture
+ownership rather than concealing a rendering error.
+
+Verification: the complete canonical X11 `rust-development-servers` journey
+passes with `45596cad` and the repaired fixture, including the strict visual
+comparison (zero changed pixels), real browser dispatch, listener/watch
+attribution, settings, safe stop and restart. No disposable-map override.
+Bash syntax and diff checks pass. Test-only change: no new binary, installation,
+full qualification or live-client interruption required.

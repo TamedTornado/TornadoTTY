@@ -14,6 +14,7 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 product="${ZENTTY_LINUX_BINARY:-${repo_root}/build/linux/bin/zentty-linux}"
 server_fixture="${repo_root}/target/release-safe/development_server"
 run_root="$(mktemp -d)"
+project_directory="${run_root}/project"
 log="${run_root}/product.log"
 server_receipt="${run_root}/server.receipt"
 watch_receipt="${run_root}/watch-server.receipt"
@@ -106,7 +107,7 @@ if [[ "${ZENTTY_TEST_DOCKER:-false}" == true ]]; then
         fail "a content-pinned BusyBox image is required"
     container_id="$(
         docker run -d --rm --pull=never \
-            --label "com.docker.compose.project.working_dir=${repo_root}" \
+            --label "com.docker.compose.project.working_dir=${project_directory}" \
             --label 'com.docker.compose.service=web' \
             -p 127.0.0.1::8000 \
             "${busybox_image}" httpd -f -p 8000
@@ -115,7 +116,7 @@ if [[ "${ZENTTY_TEST_DOCKER:-false}" == true ]]; then
     [[ "${docker_port}" =~ ^[1-9][0-9]*$ ]] || fail "Docker did not publish a dynamic host port"
 fi
 
-mkdir -p "${run_root}/bin" "${state_directory}" "${config_home}/zentty" \
+mkdir -p "${project_directory}" "${run_root}/bin" "${state_directory}" "${config_home}/zentty" \
     "${config_home}/ghostty" \
     "${data_home}/applications"
 cat >"${config_home}/ghostty/config" <<'EOF'
@@ -248,6 +249,9 @@ wait "\${server_pid}"
 EOF
 chmod 700 "${run_root}/run-servers"
 
+# Project metadata is real product state. Do not let the caller's checkout,
+# branch, dirty files or project icon leak into this server-focused fixture.
+cd "${project_directory}"
 GDK_SCALE=1 \
 GDK_DPI_SCALE=1 \
 XDG_CONFIG_HOME="${config_home}" \
@@ -316,6 +320,10 @@ if [[ "${backend}" == x11 ]]; then
     done
     (( $(grep -Fc 'zentty-linux: sidebar-visibility=hidden' "${log}" || true) > hidden_before )) ||
         fail "the controlled capture could not hide unrelated dynamic server rows"
+    zentty_product_wait_for_log "${log}" \
+        'zentty-linux: project-context pane=pane-1 repository=none' \
+        'isolated server project was not inspected' ||
+        fail "development-server project context was not settled"
     zentty_product_wait_for_log "${log}" \
         'zentty-linux: project-icon-projected owner=window-chrome fallback=folder-symbolic decoded=true' \
         'development-server chrome did not settle its project-icon fallback' ||
