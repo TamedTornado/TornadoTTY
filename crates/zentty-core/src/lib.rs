@@ -36,6 +36,9 @@ mod task_runner;
 mod workspace_recipe;
 mod workspace_state;
 mod workspace_template;
+mod workload_policy;
+
+pub use workload_policy::{MemoryBudget, WorkloadBudgets, WorkloadPolicy};
 
 pub use agent_consent::{
     AgentIntegrationClass, AgentIntegrationGate, AgentIntegrationState, resolve_integration_gate,

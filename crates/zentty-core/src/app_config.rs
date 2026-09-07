@@ -163,6 +163,7 @@ impl Default for RestoreConfig {
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct AppConfig {
+    pub workloads: crate::WorkloadPolicy,
     pub sidebar: SidebarConfig,
     pub appearance: AppearanceConfig,
     pub confirmations: ConfirmationsConfig,
@@ -199,6 +200,7 @@ impl AppConfig {
         let document = toml::from_str::<Document>(source)
             .map_err(|error| format!("invalid Tornado TTY configuration: {error}"))?;
         Ok(Self {
+            workloads: document.workloads.validated()?,
             sidebar: document.sidebar.into_config()?,
             appearance: document.appearance.into_config()?,
             confirmations: document.confirmations.into_config(),
@@ -248,6 +250,11 @@ impl AppConfig {
         }
 
         let config = Self {
+            workloads: section!(
+                workloads,
+                crate::WorkloadPolicy,
+                crate::WorkloadPolicy::validated
+            ),
             sidebar: section!(sidebar, SidebarDocument, SidebarDocument::into_config),
             appearance: section!(
                 appearance,
@@ -341,6 +348,7 @@ where
 #[derive(Deserialize, Default)]
 #[serde(default)]
 struct Document {
+    workloads: crate::WorkloadPolicy,
     sidebar: SidebarDocument,
     appearance: AppearanceDocument,
     confirmations: ConfirmationsDocument,

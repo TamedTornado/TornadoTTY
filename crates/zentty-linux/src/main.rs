@@ -383,6 +383,15 @@ fn appearance_needs_startup_projection(appearance: &zentty_core::AppearanceConfi
 }
 
 fn main() -> ExitCode {
+    if std::env::args_os().nth(1).as_deref() == Some(std::ffi::OsStr::new("--internal-workload-owner")) {
+        return match zentty_linux::workload::wait_for_gui_exit() {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(error) => {
+                eprintln!("tornadotty: workload-owner error={error}");
+                ExitCode::FAILURE
+            }
+        };
+    }
     match sleep_inhibitor::run_helper_if_requested() {
         Ok(true) => return ExitCode::SUCCESS,
         Ok(false) => {}
