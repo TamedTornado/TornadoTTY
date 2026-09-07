@@ -101,10 +101,16 @@ case "${profile}" in
             fail "ZENTTY_CONTROLLED_AGENT_BURST_COUNT must be between 1 and 10000"
         event="$(jq -cn --argjson pid "$$" --arg directory "${PWD}" \
             '{version:1,event:"agent.running",agent:{name:"Codex",pid:$pid},session:{id:"event-coalescing"},context:{workingDirectory:$directory}}')"
+        if [[ "${ZENTTY_AGENT_EVENT_LARGE_PAYLOAD:-0}" == 1 ]]; then
+            # Unknown extension data is valid protocol input and must still be
+            # parsed. Exercise a near-limit event without changing its meaning.
+            event="$(jq -c '. + {extension: ("x" * 60000)}' <<<"${event}")"
+        fi
+        printf 'event-bytes=%s\n' "${#event}" >"${burst_receipt}"
         printf '%s' "${event}" | "${helper}" ipc agent-event
         spinner_frames=('⠋' '⠙' '⠹' '⠸' '⠼' '⠴' '⠦' '⠧' '⠇' '⠏')
         printf '\033]0;Working %s event-coalescing\007' "${spinner_frames[0]}"
-        printf 'primed\n' >"${burst_receipt}"
+        printf 'primed\n' >>"${burst_receipt}"
         for _ in {1..400}; do
             [[ -e "${burst_gate}" ]] && break
             sleep 0.05

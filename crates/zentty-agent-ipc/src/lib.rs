@@ -1074,9 +1074,6 @@ fn receive_request(
         .get("ZENTTY_PANE_TOKEN")
         .ok_or_else(|| AgentIpcError::Authorization("missing pane token".to_owned()))?
         .clone();
-    let registry = registry
-        .lock()
-        .map_err(|_| AgentIpcError::Rejected("pane registry unavailable".to_owned()))?;
     match (request.kind.as_str(), request.subcommand.clone()) {
         ("ipc", Some(subcommand)) if subcommand == "agent-event" => {
             let standard_input = request.standard_input.ok_or_else(|| {
@@ -1084,10 +1081,18 @@ fn receive_request(
             })?;
             let event = AgentEvent::parse(standard_input.as_bytes())
                 .map_err(|error| AgentIpcError::Rejected(error.to_string()))?;
-            let authenticated = registry
-                .authenticate(&token, event)
+            // GTK shares the registry for topology/credential updates. Parse
+            // untrusted payloads before taking that short authority lock.
+            let target = registry
+                .lock()
+                .map_err(|_| AgentIpcError::Rejected("pane registry unavailable".to_owned()))?
+                .authenticate_target(&token)
                 .map_err(pane_token_rejection)?;
-            drop(registry);
+            let authenticated = AuthenticatedAgentEvent {
+                target,
+                pane_token: token,
+                event,
+            };
             sender.send(authenticated).map_err(ingress_rejection)?;
             Ok(ReceivedRequest::Complete(ReceivedResponse {
                 id: request.id,
@@ -1096,9 +1101,10 @@ fn receive_request(
         }
         ("tmux_compat", Some(subcommand)) => {
             let target = registry
+                .lock()
+                .map_err(|_| AgentIpcError::Rejected("pane registry unavailable".to_owned()))?
                 .authenticate_target(&token)
                 .map_err(pane_token_rejection)?;
-            drop(registry);
             let payload = TmuxCompatRequest::new(
                 request.version,
                 &subcommand,
@@ -1126,16 +1132,18 @@ fn receive_request(
         }
         ("server", Some(subcommand)) => {
             let target = registry
+                .lock()
+                .map_err(|_| AgentIpcError::Rejected("pane registry unavailable".to_owned()))?
                 .authenticate_target(&token)
                 .map_err(pane_token_rejection)?;
-            drop(registry);
             receive_server_request(request, target, &subcommand, server_sender, replies)
         }
         ("discover" | "pane", Some(subcommand)) => {
             let authenticated = registry
+                .lock()
+                .map_err(|_| AgentIpcError::Rejected("pane registry unavailable".to_owned()))?
                 .authenticate_application_target(&token)
                 .map_err(pane_token_rejection)?;
-            drop(registry);
             receive_product_request(
                 request,
                 authenticated.target,

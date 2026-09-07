@@ -927,6 +927,14 @@ run_event_coalescing() {
         fail "priming state was not persisted"
     grep -Fqx 'primed' "${burst_receipt}" ||
         fail "controlled child did not stop at the burst boundary"
+    local event_bytes
+    event_bytes="$(sed -n 's/^event-bytes=//p' "${burst_receipt}")"
+    [[ "${event_bytes}" =~ ^[0-9]+$ ]] && ((event_bytes > 0 && event_bytes <= 65536)) ||
+        fail 'producer did not report a valid bounded canonical event size'
+    if [[ "${ZENTTY_AGENT_EVENT_LARGE_PAYLOAD:-0}" == 1 ]]; then
+        ((event_bytes > 60000)) ||
+            fail 'large-payload run did not exercise a near-limit canonical event'
+    fi
     zentty_product_wait_for_log "${sibling_receipt}" 'ready' \
         "sibling PTY did not start" || fail "sibling PTY did not start"
     zentty_product_prepare_input "${backend}" "${log}"
@@ -1106,8 +1114,8 @@ run_event_coalescing() {
         --argjson title_events "${title_events}" \
         --argjson animation_restarts "${animation_restarts}" \
         '{schema_version:1,status:"PASS",transport:"real-unix-socket",pty:"real",gtk:"real",burst_count:$burst_count,source_title_frame_count:$burst_count,memory:{maximum_growth_kib:16384,rss_anon:{before_kib:$before_rss_kib,after_kib:$after_rss_kib,growth_kib:$rss_growth_kib},pss:{before_kib:$before_pss_kib,after_kib:$after_pss_kib,growth_kib:$pss_growth_kib},anonymous_pss:{before_kib:$before_anon_pss_kib,after_kib:$after_anon_pss_kib,growth_kib:$anon_pss_growth_kib},main_heap_pss:{before_kib:$before_heap_pss_kib,after_kib:$after_heap_pss_kib,growth_kib:$heap_pss_growth_kib}},resources:{file_descriptors:{before:$before_fds,after:$after_fds,growth:$fd_growth,maximum_growth:2},threads:{before:$before_threads,after:$after_threads,growth:$thread_growth,maximum_growth:2},child_processes:{before:$before_children,after:$after_children,growth:$child_growth,maximum_growth:0}},burst_effect_deltas:{duplicate_running_state_changes:$changed_events,meaningful_task_state_changes:$progress_events,project_refreshes:$project_refreshes,fleet_refreshes:$fleet_refreshes,sidebar_renders:$sidebar_renders,gtk_status_updates:$status_updates,attention_changes:$attention_changes,desktop_notifications:$desktop_notifications,persistence_saves:$persistence_saves,coalescing_log_records:$coalescing_log_records,maximum_coalescing_log_records:$coalescing_log_max,semantic_terminal_title_events:$title_events,animation_restarts:$animation_restarts},timing:{producer_duration_ms:$burst_duration_ms,gtk_drain_latency_ms:$gtk_drain_latency_ms,maximum_gtk_drain_latency_ms:2000},responsiveness_barrier:{kind:"task.progress",progress:"1/2",duplicate_delivery:true,gtk_presented:true}}' \
-        | jq --argjson latency "${maximum_probe_latency_ms}" \
-        '. + {sibling_responsiveness: {probes:3, during_traffic:true, maximum_latency_ms:$latency, limit_ms:2000}}' \
+        | jq --argjson latency "${maximum_probe_latency_ms}" --argjson event_bytes "${event_bytes}" \
+        '. + {event_bytes:$event_bytes,sibling_responsiveness: {probes:3, during_traffic:true, maximum_latency_ms:$latency, limit_ms:2000}}' \
         >"${receipt_temp}"
     mv -f -- "${receipt_temp}" "${receipt}"
 

@@ -19,6 +19,40 @@ fn temporary_socket() -> (std::path::PathBuf, std::path::PathBuf) {
 }
 
 #[test]
+fn payload_validation_does_not_wait_for_the_gui_pane_registry() {
+    let (root, socket) = temporary_socket();
+    let registry = Arc::new(Mutex::new(PaneTokenRegistry::default()));
+    let (sender, receiver) = zentty_agent_ipc::ingress_channel(128, 16);
+    let server = AgentIpcServer::start(&socket, Arc::clone(&registry), sender).unwrap();
+    let guard = registry.lock().unwrap();
+    let (finished, completion) = std::sync::mpsc::sync_channel(1);
+    let client = std::thread::spawn(move || {
+        // A valid transport envelope carrying malformed agent JSON. Parsing
+        // belongs to the reader worker, independently of GUI registry access.
+        let result = AgentIpcClient::send_event(&socket, "unused", b"{", None);
+        finished.send(result).unwrap();
+    });
+    let result = completion.recv_timeout(Duration::from_secs(1));
+    // Always release the lock and join before asserting, including the RED run.
+    drop(guard);
+    client.join().unwrap();
+    server.shutdown().unwrap();
+    fs::remove_dir_all(root).unwrap();
+    let rejection = result
+        .expect("payload parser waited for the GUI registry")
+        .unwrap_err();
+    assert!(matches!(
+        rejection,
+        zentty_agent_ipc::AgentIpcError::Rejected(_)
+    ));
+    assert!(
+        rejection.to_string().contains("invalid agent event"),
+        "{rejection}"
+    );
+    assert!(receiver.try_recv().is_err(), "invalid input was admitted");
+}
+
+#[test]
 fn trickling_bytes_cannot_extend_a_connection_read_deadline() {
     use std::io::{Read, Write};
     let (root, socket) = temporary_socket();
@@ -287,7 +321,37 @@ fn saturated_ingress_rejects_busy_pane_but_services_quiet_pane_and_shuts_down() 
         } if code == "ingress_full"),
         "{rejection}"
     );
-    AgentIpcClient::send_event(&socket, "quiet-token", event, None).unwrap();
+    std::thread::scope(|scope| {
+        let workers = (0..2)
+            .map(|_| {
+                let socket = &socket;
+                scope.spawn(move || {
+                    for _ in 0..16 {
+                        let rejection =
+                            AgentIpcClient::send_event(socket, "busy-token", event, None)
+                                .unwrap_err();
+                        assert!(
+                            matches!(
+                                rejection,
+                                zentty_agent_ipc::AgentIpcError::Remote { ref code, .. }
+                                    if code == "ingress_full"
+                            ),
+                            "{rejection}"
+                        );
+                    }
+                })
+            })
+            .collect::<Vec<_>>();
+        // The busy producers cannot borrow the quiet pane's admission slot.
+        AgentIpcClient::send_event(&socket, "quiet-token", event, None).unwrap();
+        for worker in workers {
+            worker.join().unwrap();
+        }
+    });
+    let pressure = receiver.take_pressure();
+    assert_eq!(pressure.queued, 3);
+    assert_eq!(pressure.high_water, 3);
+    assert_eq!(pressure.rejected, 33);
     assert_eq!(receiver.try_recv().unwrap().target.pane_id, "busy");
     assert_eq!(receiver.try_recv().unwrap().target.pane_id, "quiet");
     assert_eq!(receiver.try_recv().unwrap().target.pane_id, "busy");
