@@ -50,6 +50,7 @@ mod clipboard_actions;
 mod close_runtime;
 mod global_search;
 pub(crate) mod open_with_runtime;
+mod pane_context;
 mod pane_runtime;
 mod project_context_runtime;
 mod remote_paste;
@@ -590,8 +591,12 @@ impl ApplicationShell {
             open_with_runtime::OpenWithRuntime::discover(&self.config.open_with);
         self.chrome
             .configure_open_with(&self.open_with_runtime.catalog);
-        self.chrome
-            .set_open_with_context_available(open_with_runtime::focused_context_is_available(self));
+        self.chrome.set_open_with_context_available(
+            open_with_runtime::focused_context_is_available(
+                &self.open_with_runtime.catalog,
+                open_with_runtime::focused_context(self).as_ref(),
+            ),
+        );
         self.server_runtime.browser_catalog = zentty_core::ServerBrowserCatalog::resolve(
             &self.config.server_detection,
             server_runtime::discover_browser_targets(
@@ -2391,8 +2396,12 @@ impl ApplicationShell {
             open_with_runtime::OpenWithRuntime::discover(&self.config.open_with);
         self.chrome
             .configure_open_with(&self.open_with_runtime.catalog);
-        self.chrome
-            .set_open_with_context_available(open_with_runtime::focused_context_is_available(self));
+        self.chrome.set_open_with_context_available(
+            open_with_runtime::focused_context_is_available(
+                &self.open_with_runtime.catalog,
+                open_with_runtime::focused_context(self).as_ref(),
+            ),
+        );
         eprintln!(
             "zentty-linux: open-with-settings result=persisted path={} primary={}",
             path.display(),
@@ -2862,7 +2871,10 @@ impl ApplicationShell {
     }
 
     fn command_palette_open_with_items(&self) -> Vec<CommandPaletteItem> {
-        let context_available = open_with_runtime::focused_context_is_available(self);
+        let context_available = open_with_runtime::focused_context_is_available(
+            &self.open_with_runtime.catalog,
+            open_with_runtime::focused_context(self).as_ref(),
+        );
         if let Some(router) = &self.action_router {
             router
                 .set_enabled(ACTION_OPEN_WITH_PRIMARY, context_available)
@@ -4565,8 +4577,12 @@ impl ApplicationShell {
         );
         self.chrome
             .configure_servers(&self.ranked_servers(), self.state.active_worklane_id());
-        self.chrome
-            .set_open_with_context_available(open_with_runtime::focused_context_is_available(self));
+        self.chrome.set_open_with_context_available(
+            open_with_runtime::focused_context_is_available(
+                &self.open_with_runtime.catalog,
+                open_with_runtime::focused_context(self).as_ref(),
+            ),
+        );
         self.refresh_attention_inbox();
     }
 

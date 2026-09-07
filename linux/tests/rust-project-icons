@@ -15,6 +15,7 @@ state_directory="${run_root}/state"
 enabled_log="${run_root}/enabled.log"
 disabled_log="${run_root}/disabled.log"
 product_pid=""
+gate_writer_pid=""
 backend="${GDK_BACKEND:-}"
 
 fail() {
@@ -25,6 +26,10 @@ fail() {
 }
 
 cleanup() {
+    if [[ "${gate_writer_pid}" =~ ^[1-9][0-9]*$ ]]; then
+        kill "${gate_writer_pid}" 2>/dev/null || true
+        wait "${gate_writer_pid}" 2>/dev/null || true
+    fi
     if [[ "${product_pid}" =~ ^[1-9][0-9]*$ ]]; then
         kill -TERM "${product_pid}" 2>/dev/null || true
         wait "${product_pid}" 2>/dev/null || true
@@ -52,6 +57,19 @@ zentty_product_bundle_resolve "${product}" || fail "staged product bundle is inv
 product="${ZENTTY_PRODUCT_BINARY}"
 bundle_lib="${ZENTTY_PRODUCT_BUNDLE_LIB}"
 mkdir -p "${project}" "${outside}" "${state_directory}"
+mkdir -p "${run_root}/bin"
+real_git="$(command -v git)"
+mkfifo "${run_root}/git.release"
+cat >"${run_root}/bin/git" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "$*" == 'rev-parse --show-toplevel' ]] &&
+   mv "${PROJECT_GATE}/armed" "${PROJECT_GATE}/entered" 2>/dev/null; then
+    read -r _ <"${PROJECT_GATE}/git.release"
+fi
+exec "${PROJECT_REAL_GIT}" "$@"
+SH
+chmod +x "${run_root}/bin/git"
 cat >"${outside}/favicon.svg" <<'SVG'
 <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18">
   <rect width="18" height="18" fill="#ff0055"/>
@@ -64,6 +82,7 @@ start_product() {
     (
         cd "${project}"
         exec env \
+            PATH="${run_root}/bin:${PATH}" PROJECT_GATE="${run_root}" PROJECT_REAL_GIT="${real_git}" \
             GDK_SCALE=1 \
             GDK_DPI_SCALE=1 \
             LD_LIBRARY_PATH="${bundle_lib}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" \
@@ -149,6 +168,18 @@ zentty_product_wait_for_log "${enabled_log}" \
 ! grep -Fq "project-icon-projected owner=window-chrome path=${outside}/favicon.svg" \
     "${enabled_log}" || fail "escaping icon was projected"
 
+# Hold an actual Git invocation while exercising GTK input and invalidating its
+# cached result. The wrapper adds a gate, never substitutes Git output.
+touch "${run_root}/armed"
+zentty_product_type "${backend}" "printf '\\033]0;slow-project-probe\\007'"
+zentty_product_key "${backend}" Return
+for _ in $(seq 1 150); do
+    [[ ! -f "${run_root}/entered" ]] || break
+    sleep 0.02
+done
+[[ -f "${run_root}/entered" ]] || fail "controlled Git probe did not enter"
+missing_before="$(grep -Fc 'project-icon pane=pane-1 result=missing' "${enabled_log}" || true)"
+
 rm -- "${project}/favicon.svg"
 cat >"${project}/favicon.svg" <<'SVG'
 <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18">
@@ -157,9 +188,17 @@ cat >"${project}/favicon.svg" <<'SVG'
 SVG
 canonical_icon="$(readlink -f -- "${project}/favicon.svg")"
 activate_palette_action "${enabled_log}" 'Refresh Git and Review Status'
+# This second real UI action must complete before the blocked Git is released.
+[[ -f "${run_root}/entered" ]] || fail "slow Git barrier disappeared"
+printf 'release\n' >"${run_root}/git.release" &
+gate_writer_pid=$!
 zentty_product_wait_for_log "${enabled_log}" \
     "zentty-linux: project-icon pane=pane-1 path=${canonical_icon} result=resolved" \
     'manual refresh did not invalidate the negative icon cache' || fail "icon did not resolve"
+wait "${gate_writer_pid}"
+gate_writer_pid=""
+(( $(grep -Fc 'project-icon pane=pane-1 result=missing' "${enabled_log}" || true) == missing_before )) ||
+    fail "invalidated in-flight project result overwrote the newer refresh"
 zentty_product_wait_for_log "${enabled_log}" \
     "zentty-linux: project-icon-projected owner=window-chrome path=${canonical_icon} decoded=true" \
     'window chrome did not decode the real SVG' || fail "chrome icon absent"

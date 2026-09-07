@@ -92,3 +92,93 @@ need direct verification. Other background owners and diagnostic retention need
 review. The worker cap cannot interrupt a blocked kernel filesystem syscall;
 cross-window scheduling fairness is not proved merely by its global bound.
 Process/cgroup containment remains the separate #162 concern.
+
+## Follow-up batch: project freshness and Open With off GTK
+
+Baseline: `53c0fa3e`. Still staged-only for Jason's larger testing batch.
+
+The call-site audit confirmed that project inspection moved Git into a worker
+but left `/proc` cwd reads, canonicalization of observed/current paths, and icon
+cache invalidation on GTK. Open With additionally probed SSH/process state and
+canonicalized paths while refreshing controls, then validated and launched
+external applications synchronously.
+
+Repairs:
+
+- Capture pane/worklane identity, topology generation, known cwd, foreground
+  PID, and remote status from memory. Share this small value snapshot between
+  project inspection and Open With; it owns no product state or event system.
+- Resolve and validate project filesystem paths on the existing worker. Compare
+  its captured identity to current in-memory state before accepting results.
+  Deleted/retargeted directories are checked on the worker, not GTK.
+- Move icon-cache invalidations into that worker. Invalidations arriving while
+  it runs remain pending and reject its obsolete result. Closed panes no longer
+  get reinserted into the forced-refresh set by late results.
+- Open With availability uses only the app catalog and known pane state. This
+  is a presentation hint, not permission to launch a stale path. Actual SSH,
+  `/proc`, filesystem validation, desktop app discovery at launch, and external
+  launch run on workers. Revalidate the originating pane snapshot before launch;
+  never redirect a delayed command to the newly focused pane.
+- One process-wide Open With request can be validating/launching at a time;
+  additional requests are explicitly rejected, not queued without limit. Its
+  RAII permit follows the actual worker through completion/panic/detachment and
+  survives window/config replacement. No timeout claims for an uninterruptible
+  filesystem syscall; if stuck, this action remains busy rather than multiplying
+  workers or freezing GTK.
+
+### Regression evidence
+
+The existing `linux/tests/rust-project-icons` journey now gates one actual Git
+invocation using a FIFO and then delegates to real Git; it does not fake Git
+output. While Git waits, physical GTK input requests a newer icon refresh. The
+older build **failed** because it subsequently published the obsolete cached
+miss. The repair **passed**, keeping the newer request authoritative. The same
+journey still checks real icon containment/decoding, pane operations, and normal
+and reduced-motion behavior. Its gated writer is cleaned up on failure.
+
+The unchanged `linux/tests/rust-open-with` journey also **passed** under private
+X11: real desktop entry/custom executable/XDG terminal launches received exact
+canonical path arguments; a real foreground SSH client was rejected. No test
+requirement was relaxed to accommodate asynchronous execution.
+
+Focused Rust checks: eight project-runtime, four Open With, and one pane-context
+test passed. The GTK strict Clippy result remains the same six pre-existing
+findings; no new findings or blanket allowances. No full qualification run.
+
+Commands (with the staged `ZENTTY_LINUX_BINARY` override as above):
+
+```sh
+cargo test -p zentty-linux --bin zentty-linux application_shell::project_context_runtime
+cargo test -p zentty-linux --bin zentty-linux application_shell::open_with_runtime
+cargo test -p zentty-linux --bin zentty-linux application_shell::pane_context
+linux/tests/nested-x11 linux/tests/rust-project-icons
+linux/tests/nested-x11 linux/tests/rust-open-with
+```
+
+Targeted staleness mutations: seven caught, zero missed. Initial Open With
+mutation pass: ten caught, four missed, one unviable. The four misses were the
+catalog-plus-context availability decision, because the initial tests exercised
+only its inner context rule. The decision now takes the real catalog and value
+snapshot directly rather than an entire GTK shell, with additional assertions
+for empty catalogs, absent context, and PID-only fallback. The same mutation
+scope is rerun; results are recorded with the issue update.
+
+### Audit corrections and unfinished scope
+
+Server termination's `/bin/kill` call is already inside `gio::spawn_blocking`;
+listing that call alone as a GTK violation was incorrect. The grid failure-file
+read is a test-only opt-in path, not an ordinary user operation.
+
+Still to address under #163: task-runner manifest discovery in palette opening
+and revalidation before launch; close-confirmation `/proc` inspection;
+bookmark capture/storage; Open With catalog discovery on startup/settings
+refresh; GIO file-monitor registration and other synchronous metadata/decoding
+paths. Close-confirmation behavior is unchanged in this batch. Kernel-level
+slow filesystem hangs were not reproduced here; the controlled slow Git and
+stale-result failure were reproduced. Sustained PTY-output proof remains open.
+
+Separate confirmed finding: `ApplicationShell::report_action_error` calls
+`main_loop.quit()` for errors from pane/worklane/task actions. Tracked as
+[#179](https://github.com/TamedTornado/TornadoTTY/issues/179), under #160: review
+partial-operation rollback and recoverable UI before removing the fatal policy.
+This is not evidence that it caused any previously reported production crash.

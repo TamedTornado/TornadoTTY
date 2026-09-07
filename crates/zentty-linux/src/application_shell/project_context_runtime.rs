@@ -12,6 +12,7 @@ use zentty_core::{
 use zentty_linux::platform::open_uri;
 
 use super::ApplicationShell;
+use super::pane_context::PaneContext;
 
 const PROBE_INTERVAL: Duration = Duration::from_secs(2);
 const BACKGROUND_REFRESH_INTERVAL: Duration = Duration::from_secs(90);
@@ -39,7 +40,7 @@ struct ProjectWatch {
 #[derive(Clone, Debug)]
 struct ProbeSource {
     pane_id: String,
-    working_directory: PathBuf,
+    identity: PaneContext,
     active: bool,
     forced: bool,
 }
@@ -74,16 +75,10 @@ pub(super) fn refresh_focused(shell: &Rc<RefCell<ApplicationShell>>) {
                     .map(PathBuf::from)
             });
         if let Some(icon_root) = icon_root {
-            if shell_ref.project_context_runtime.probe_in_flight {
-                shell_ref
-                    .project_context_runtime
-                    .icon_invalidations
-                    .insert(icon_root.clone());
-            }
             shell_ref
                 .project_context_runtime
-                .icon_cache
-                .invalidate(&icon_root);
+                .icon_invalidations
+                .insert(icon_root);
         }
         shell_ref
             .project_context_runtime
@@ -201,10 +196,20 @@ fn request_probe(shell: &Rc<RefCell<ApplicationShell>>) {
         sources
     };
 
-    let icon_cache = shell.borrow().project_context_runtime.icon_cache.clone();
+    let (icon_cache, invalidations) = {
+        let mut shell = shell.borrow_mut();
+        let runtime = &mut shell.project_context_runtime;
+        (
+            std::mem::take(&mut runtime.icon_cache),
+            std::mem::take(&mut runtime.icon_invalidations),
+        )
+    };
     let weak = Rc::downgrade(shell);
     glib::spawn_future_local(async move {
-        let result = gio::spawn_blocking(move || probe(sources, icon_cache)).await;
+        let result = gio::spawn_blocking(move || {
+            probe(sources, apply_icon_invalidations(icon_cache, invalidations))
+        })
+        .await;
         let Some(shell) = weak.upgrade() else {
             return;
         };
@@ -215,10 +220,8 @@ fn request_probe(shell: &Rc<RefCell<ApplicationShell>>) {
         }
         match result {
             Ok((icon_cache, results)) => {
-                let icon_cache = apply_icon_invalidations(
-                    icon_cache,
-                    std::mem::take(&mut shell_ref.project_context_runtime.icon_invalidations),
-                );
+                // Invalidations requested during this probe stay queued for
+                // the next worker; do not canonicalize them on GTK.
                 shell_ref.project_context_runtime.icon_cache = icon_cache;
                 apply_results(&mut shell_ref, results);
                 drop(shell_ref);
@@ -271,22 +274,12 @@ fn collect_probe_sources(shell: &mut ApplicationShell) -> Option<Vec<ProbeSource
             {
                 continue;
             }
-            let working_directory = shell
-                .state
-                .effective_working_directory_for_pane(&pane.id)
-                .map(PathBuf::from)
-                .or_else(|| {
-                    shell
-                        .pane_runtime
-                        .surface(&pane.id)
-                        .and_then(zentty_ghostty::GhosttySurface::foreground_process_id)
-                        .and_then(|pid| process_working_directory(pid).ok())
-                })
-                .or_else(|| std::env::current_dir().ok());
-            if let Some(working_directory) = working_directory {
+            if let Some(identity) =
+                PaneContext::capture(shell, &pane.id).filter(|identity| !identity.remote)
+            {
                 sources.push(ProbeSource {
                     pane_id: pane.id.clone(),
-                    working_directory,
+                    identity,
                     active,
                     forced,
                 });
@@ -447,23 +440,40 @@ fn probe(
         .map_or(0, |duration| duration.as_secs());
     let results = sources
         .into_iter()
-        .map(|source| {
+        .filter_map(|source| {
+            let directory = source
+                .identity
+                .working_directory
+                .clone()
+                .or_else(|| {
+                    source
+                        .identity
+                        .foreground_pid
+                        .and_then(|pid| process_working_directory(pid).ok())
+                })
+                .or_else(|| std::env::current_dir().ok())?;
+            let working_directory = std::fs::canonicalize(&directory).ok()?;
             let context = resolver
-                .resolve(&source.working_directory)
+                .resolve(&working_directory)
                 .map_err(|error| error.to_string());
             let icon_root = context
                 .as_ref()
                 .ok()
                 .and_then(|context| context.as_ref())
-                .map_or(source.working_directory.as_path(), |context| {
+                .map_or(working_directory.as_path(), |context| {
                     context.repository_root.as_path()
                 });
             let icon = icon_cache.resolve_at(icon_root, now);
-            ProbeResult {
+            // A deleted directory or retargeted symlink during Git inspection
+            // must not produce a valid observation. Both reads are on the worker.
+            if !canonical_directories_match(&directory, &working_directory) {
+                return None;
+            }
+            Some(ProbeResult {
                 source,
                 context,
                 icon,
-            }
+            })
         })
         .collect();
     (icon_cache, results)
@@ -479,10 +489,16 @@ fn apply_results(shell: &mut ApplicationShell, results: Vec<ProbeResult>) {
     } in results
     {
         if !observation_is_current(shell, &source) {
-            shell
-                .project_context_runtime
-                .force_panes
-                .insert(source.pane_id);
+            eprintln!(
+                "zentty-linux: project-context pane={} result=discarded-stale",
+                source.pane_id
+            );
+            if shell.state.pane(&source.pane_id).is_some() {
+                shell
+                    .project_context_runtime
+                    .force_panes
+                    .insert(source.pane_id);
+            }
             continue;
         }
         shell
@@ -590,21 +606,22 @@ fn apply_context_result(
 }
 
 fn observation_is_current(shell: &ApplicationShell, source: &ProbeSource) -> bool {
-    let Some(pane) = shell.state.pane(&source.pane_id) else {
-        return false;
-    };
-    let current = shell
-        .state
-        .effective_working_directory_for_pane(&pane.id)
-        .map(PathBuf::from)
-        .or_else(|| {
-            shell
-                .pane_runtime
-                .surface(&pane.id)
-                .and_then(zentty_ghostty::GhosttySurface::foreground_process_id)
-                .and_then(|pid| process_working_directory(pid).ok())
-        });
-    current.is_some_and(|current| canonical_directories_match(&current, &source.working_directory))
+    observation_matches(
+        &source.identity,
+        PaneContext::capture(shell, &source.pane_id).as_ref(),
+        shell
+            .project_context_runtime
+            .force_panes
+            .contains(&source.pane_id),
+    )
+}
+
+fn observation_matches(
+    observed: &PaneContext,
+    current: Option<&PaneContext>,
+    invalidated: bool,
+) -> bool {
+    !invalidated && observed.matches(current)
 }
 
 fn canonical_directories_match(current: &Path, observed: &Path) -> bool {
@@ -647,6 +664,29 @@ mod tests {
     };
 
     static NEXT_DIRECTORY: AtomicU64 = AtomicU64::new(1);
+
+    #[test]
+    fn explicit_refresh_during_worker_execution_rejects_its_observation() {
+        let identity = super::PaneContext {
+            pane_id: "pane-1".into(),
+            worklane_id: "lane-1".into(),
+            topology_generation: 1,
+            working_directory: Some("/project".into()),
+            foreground_pid: None,
+            remote: false,
+        };
+        assert!(super::observation_matches(
+            &identity,
+            Some(&identity),
+            false
+        ));
+        assert!(!super::observation_matches(
+            &identity,
+            Some(&identity),
+            true
+        ));
+        assert!(!super::observation_matches(&identity, None, false));
+    }
 
     #[test]
     fn invalidation_during_a_probe_is_applied_to_the_returned_cache() {

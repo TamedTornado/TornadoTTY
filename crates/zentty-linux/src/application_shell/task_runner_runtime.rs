@@ -23,7 +23,7 @@ pub(super) fn run_task(shell: &Rc<RefCell<ApplicationShell>>, id: &str) {
     };
     if !action.is_enabled() {
         super::open_with_runtime::open_local_path_primary(
-            &shell.borrow(),
+            shell,
             &action.source_path,
             "task-source",
         );

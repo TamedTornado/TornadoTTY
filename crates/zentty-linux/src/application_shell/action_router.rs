@@ -1950,7 +1950,7 @@ fn install_open_with_actions(
             return;
         }
         if let Some(shell) = weak.upgrade() {
-            super::open_with_runtime::open_primary(&shell.borrow());
+            super::open_with_runtime::open_primary(&shell);
         }
     });
     group.add_action(&primary);
@@ -1963,7 +1963,7 @@ fn install_open_with_actions(
         else {
             return;
         };
-        super::open_with_runtime::open_target(&shell.borrow(), target_id);
+        super::open_with_runtime::open_target(&shell, target_id);
     });
     group.add_action(&target);
 }

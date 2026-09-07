@@ -1,8 +1,10 @@
 use std::{
+    cell::RefCell,
     collections::HashSet,
     fs,
     os::unix::fs::PermissionsExt,
     path::{Path, PathBuf},
+    rc::Rc,
 };
 
 use gtk::gio;
@@ -15,6 +17,9 @@ use zentty_core::{
 use zentty_linux::platform::{ProcessLaunch, spawn_detached};
 
 use super::ApplicationShell;
+use super::pane_context::PaneContext;
+
+mod launch_request;
 
 type BuiltinExecutableSpec = (
     &'static str,
@@ -140,106 +145,77 @@ impl OpenWithRuntime {
     }
 }
 
-pub(super) fn open_primary(shell: &ApplicationShell) {
-    let Some(target) = shell.open_with_runtime.catalog.primary.clone() else {
+pub(super) fn open_primary(shell: &Rc<RefCell<ApplicationShell>>) {
+    let Some(target) = shell.borrow().open_with_runtime.catalog.primary.clone() else {
         eprintln!("zentty-linux: action=open-with-primary unavailable=no-primary-target");
         return;
     };
     open_target(shell, &target.id);
 }
 
-pub(super) fn open_local_path_primary(shell: &ApplicationShell, path: &Path, context: &str) {
-    let Some(target) = shell.open_with_runtime.catalog.primary.clone() else {
+pub(super) fn open_local_path_primary(
+    shell: &Rc<RefCell<ApplicationShell>>,
+    path: &Path,
+    context: &str,
+) {
+    let Some(target) = shell.borrow().open_with_runtime.catalog.primary.clone() else {
         eprintln!("zentty-linux: action=open-{context} unavailable=no-primary-target");
         return;
     };
-    let plan = match target.launch_local_path_plan(path) {
-        Ok(plan) => plan,
-        Err(error) => {
-            eprintln!(
-                "zentty-linux: action=open-{context} id={} error={error:?} path={}",
-                target.id,
-                path.display()
-            );
-            return;
-        }
-    };
-    match launch(plan) {
-        Ok(()) => eprintln!(
-            "zentty-linux: action=open-{context} id={} result=launched path={}",
-            target.id,
-            path.display()
-        ),
-        Err(error) => eprintln!(
-            "zentty-linux: action=open-{context} id={} error={error} path={}",
-            target.id,
-            path.display()
-        ),
-    }
+    launch_request::submit(shell, target, Some(path.to_owned()), context);
 }
 
-pub(super) fn open_target(shell: &ApplicationShell, target_id: &str) {
+pub(super) fn open_target(shell: &Rc<RefCell<ApplicationShell>>, target_id: &str) {
     let Some(target) = shell
+        .borrow()
         .open_with_runtime
         .catalog
         .enabled
         .iter()
         .find(|target| target.id == target_id)
+        .cloned()
     else {
         eprintln!(
             "zentty-linux: action=open-with-target id={target_id} unavailable=unknown-target"
         );
         return;
     };
-    let directory = match focused_local_directory(shell) {
-        Ok(directory) => directory,
-        Err(error) => {
-            eprintln!("zentty-linux: action=open-with-target id={target_id} unavailable={error}");
-            return;
-        }
-    };
-    let plan = match target.launch_plan(&directory) {
-        Ok(plan) => plan,
-        Err(error) => {
-            eprintln!("zentty-linux: action=open-with-target id={target_id} error={error:?}");
-            return;
-        }
-    };
-    match launch(plan) {
-        Ok(()) => eprintln!(
-            "zentty-linux: action=open-with-target id={target_id} result=launched path={}",
-            directory.display()
-        ),
-        Err(error) => eprintln!(
-            "zentty-linux: action=open-with-target id={target_id} error={error} path={}",
-            directory.display()
-        ),
-    }
+    launch_request::submit(shell, target, None, "with-target");
 }
 
-pub(super) fn focused_context_is_available(shell: &ApplicationShell) -> bool {
-    !shell.open_with_runtime.catalog.enabled.is_empty() && focused_local_directory(shell).is_ok()
+pub(super) fn focused_context(shell: &ApplicationShell) -> Option<PaneContext> {
+    PaneContext::capture(shell, shell.state.focused_pane_id()?)
 }
 
-fn focused_local_directory(shell: &ApplicationShell) -> Result<PathBuf, &'static str> {
-    let pane_id = shell.state.focused_pane_id().ok_or("no-focused-pane")?;
-    let foreground_process_id = shell
-        .pane_runtime
-        .surface(pane_id)
-        .and_then(zentty_ghostty::GhosttySurface::foreground_process_id);
-    if shell.remote_panes.identities.contains_key(pane_id)
-        || foreground_process_id
+pub(super) fn focused_context_is_available(
+    catalog: &OpenWithCatalog,
+    context: Option<&PaneContext>,
+) -> bool {
+    // Presentation must never stat a path or walk /proc. Availability is a
+    // hint from known state; the worker validates the actual launch target.
+    !catalog.enabled.is_empty()
+        && context.is_some_and(|context| {
+            !context.remote
+                && (context.working_directory.is_some() || context.foreground_pid.is_some())
+        })
+}
+
+fn local_directory(context: &PaneContext) -> Result<PathBuf, &'static str> {
+    if context.remote
+        || context
+            .foreground_pid
             .and_then(super::ssh_identity::probe_ssh_destination)
             .is_some()
     {
         return Err("remote-pane");
     }
-    let directory = shell
-        .state
-        .effective_working_directory_for_pane(pane_id)
-        .map(PathBuf::from)
+    let directory = context
+        .working_directory
+        .clone()
         .or_else(|| {
-            foreground_process_id.and_then(|pid| fs::read_link(format!("/proc/{pid}/cwd")).ok())
+            context
+                .foreground_pid
+                .and_then(|pid| fs::read_link(format!("/proc/{pid}/cwd")).ok())
         })
         .ok_or("missing-directory")?;
     let canonical = fs::canonicalize(directory).map_err(|_| "stale-directory")?;
@@ -383,6 +359,53 @@ mod tests {
     use zentty_core::OpenWithCustomApp;
 
     static SEQUENCE: AtomicU64 = AtomicU64::new(0);
+
+    #[test]
+    fn presentation_is_memory_only_but_launch_validates_real_paths() {
+        let root = fixture_root();
+        let mut catalog = OpenWithCatalog {
+            enabled: vec![OpenWithTarget {
+                id: "editor".into(),
+                name: "Editor".into(),
+                kind: OpenWithTargetKind::Editor,
+                launcher: OpenWithLauncher::Executable {
+                    path: "/usr/bin/editor".into(),
+                    prefix_args: vec![],
+                },
+            }],
+            ..OpenWithCatalog::default()
+        };
+        let mut context = PaneContext {
+            pane_id: "pane-1".into(),
+            worklane_id: "lane-1".into(),
+            topology_generation: 1,
+            working_directory: Some(root.clone()),
+            foreground_pid: None,
+            remote: false,
+        };
+        assert!(focused_context_is_available(&catalog, Some(&context)));
+        assert!(!focused_context_is_available(&catalog, None));
+        assert_eq!(
+            local_directory(&context),
+            Ok(fs::canonicalize(&root).unwrap())
+        );
+        fs::remove_dir_all(&root).unwrap();
+        // Availability is not filesystem authority and must not touch even a
+        // missing or unavailable mount. Actual launch remains fail-closed.
+        assert!(focused_context_is_available(&catalog, Some(&context)));
+        assert_eq!(local_directory(&context), Err("stale-directory"));
+        context.remote = true;
+        assert!(!focused_context_is_available(&catalog, Some(&context)));
+        assert_eq!(local_directory(&context), Err("remote-pane"));
+        context.remote = false;
+        context.working_directory = None;
+        assert!(!focused_context_is_available(&catalog, Some(&context)));
+        assert_eq!(local_directory(&context), Err("missing-directory"));
+        context.foreground_pid = Some(100);
+        assert!(focused_context_is_available(&catalog, Some(&context)));
+        catalog.enabled.clear();
+        assert!(!focused_context_is_available(&catalog, Some(&context)));
+    }
 
     fn fixture_root() -> PathBuf {
         let sequence = SEQUENCE.fetch_add(1, Ordering::Relaxed);
