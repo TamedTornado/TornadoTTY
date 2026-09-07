@@ -873,6 +873,9 @@ run_event_coalescing() {
     local receipt="${ZENTTY_AGENT_EVENT_COALESCING_RECEIPT:-${repo_root}/build/linux/agent-event-coalescing.json}"
     local receipt_temp
     local sibling_receipt probe probe_started_ns probe_latency_ms maximum_probe_latency_ms=0
+    local probe_gap="${ZENTTY_AGENT_EVENT_PROBE_GAP_SECONDS:-0}"
+
+    [[ "${probe_gap}" =~ ^[0-5]$ ]] || fail "probe gap must be between 0 and 5 seconds"
 
     [[ "${burst_count}" =~ ^[1-9][0-9]*$ && "${burst_count}" -le 10000 ]] ||
         fail "ZENTTY_AGENT_EVENT_BURST_COUNT must be between 1 and 10000"
@@ -969,6 +972,8 @@ run_event_coalescing() {
     zentty_product_wait_for_log "${burst_receipt}" 'burst-active' \
         "producer did not start" || fail "producer did not start"
     for probe in sibling-one sibling-two sibling-three; do
+        # Optional spacing samples sustained traffic rather than only startup.
+        sleep "${probe_gap}"
         ! grep -Fq 'completed=' "${burst_receipt}" ||
             fail "burst finished before sibling responsiveness probe"
         probe_started_ns="$(date +%s%N)"

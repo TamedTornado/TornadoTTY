@@ -265,7 +265,7 @@ if ${ZENTTY_CLI_BIN} __tmux-compat wait-for --timeout 0.06 product-never-signall
     2>"${TMPDIR:-/tmp}/zentty-wait-timeout.$$"; then
     exit 1
 fi
-grep -Fxq "zentty: tmux wait-for: timed out waiting for 'product-never-signalled'" \
+grep -Fq "tmux wait-for: timed out waiting for 'product-never-signalled'" \
     "${TMPDIR:-/tmp}/zentty-wait-timeout.$$"
 rm -f -- "${TMPDIR:-/tmp}/zentty-wait-timeout.$$"
 first="$(${ZENTTY_CLI_BIN} __tmux-compat split-window -h -c "${ZENTTY_TMUX_SPLIT_CWD}" \

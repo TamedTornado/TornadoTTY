@@ -5,10 +5,8 @@ use std::time::Duration;
 
 use gtk::prelude::*;
 use gtk::{gdk, glib};
-use zentty_agent_ipc::ServerIpcReply;
 use zentty_core::{AppConfig, CloseTarget, WindowRecipe};
 use zentty_ghostty::GhosttyRuntime;
-use zentty_tmux_compat::TmuxCompatReply;
 
 use crate::agent_runtime::AgentRuntime;
 use crate::application_shell::close_runtime::CloseSnapshot;
@@ -19,6 +17,7 @@ use crate::persistence_coordinator::WindowSnapshot;
 use crate::task_manager::TaskManagerController;
 use crate::window_set::{CloseWindowDecision, WindowSet};
 
+mod ipc_dispatch;
 mod product_cli;
 
 pub(crate) struct ApplicationCycleResult {
@@ -30,6 +29,7 @@ pub(crate) struct ApplicationCoordinator {
     self_handle: Weak<RefCell<ApplicationCoordinator>>,
     runtime: GhosttyRuntime,
     agent_runtime: Rc<RefCell<AgentRuntime>>,
+    ipc_dispatch: ipc_dispatch::DispatchState,
     tmux_session: crate::tmux_compat::TmuxCompatSession,
     attention_inbox: Rc<RefCell<zentty_core::AttentionInbox>>,
     desktop_notifications: crate::notification_service::AttentionNotificationService,
@@ -102,6 +102,7 @@ impl ApplicationCoordinator {
             self_handle: Weak::new(),
             runtime: runtime.clone(),
             agent_runtime,
+            ipc_dispatch: ipc_dispatch::DispatchState::default(),
             tmux_session: crate::tmux_compat::TmuxCompatSession::default(),
             attention_inbox: Rc::new(RefCell::new(zentty_core::AttentionInbox::default())),
             desktop_notifications: crate::notification_service::AttentionNotificationService::new(),
@@ -1217,75 +1218,9 @@ impl ApplicationCoordinator {
         for shell in self.shells.values() {
             shell.borrow_mut().sync_agent_targets();
         }
-        let (events, tmux_commands, server_commands, product_commands) = {
-            let runtime = self.agent_runtime.borrow();
-            (
-                runtime.drain(),
-                runtime.drain_tmux(),
-                runtime.drain_servers(),
-                runtime.drain_products(),
-            )
-        };
-        self.handle_product_commands(product_commands);
-        let mut events_by_window = BTreeMap::<String, Vec<_>>::new();
-        for event in events {
-            events_by_window
-                .entry(event.target.window_id.clone())
-                .or_default()
-                .push(event);
-        }
-        let mut tmux_by_window = BTreeMap::<String, Vec<_>>::new();
-        for command in tmux_commands {
-            if self.shells.contains_key(&command.target.window_id) {
-                tmux_by_window
-                    .entry(command.target.window_id.clone())
-                    .or_default()
-                    .push(command);
-            } else {
-                let target = command.target.clone();
-                let reply = TmuxCompatReply::failure(
-                    "stale_target",
-                    format!("window {:?} is no longer available", target.window_id),
-                )
-                .map_err(|error| format!("could not create stale-target reply: {error}"))?;
-                if let Err(error) = command.respond(reply) {
-                    eprintln!(
-                        "zentty-linux: tmux-stale-target-response window={} pane={} error={error}",
-                        target.window_id, target.pane_id
-                    );
-                }
-            }
-        }
-        let mut servers_by_window = self.route_server_commands(server_commands)?;
-        let stale_window_ids = events_by_window
-            .keys()
-            .filter(|window_id| !self.shells.contains_key(*window_id))
-            .cloned()
-            .collect::<Vec<_>>();
-        for window_id in stale_window_ids {
-            for event in events_by_window.remove(&window_id).unwrap_or_default() {
-                eprintln!(
-                    "zentty-linux: agent-event-dropped pane={} reason=stale-window window={}",
-                    event.target.pane_id, event.target.window_id
-                );
-            }
-        }
+        self.dispatch_ipc()?;
         for (id, shell_ref) in &self.shells {
-            for command in servers_by_window.remove(id).unwrap_or_default() {
-                let reply = crate::application_shell::server_runtime::handle_ipc(
-                    shell_ref,
-                    &command.target,
-                    &command.request,
-                );
-                if let Err(error) = command.respond(reply) {
-                    eprintln!("zentty-linux: server-response window={id} error={error}");
-                }
-            }
-            ApplicationShell::apply_agent_inputs(
-                shell_ref,
-                tmux_by_window.remove(id).unwrap_or_default(),
-                events_by_window.remove(id).unwrap_or_default(),
-            );
+            ApplicationShell::finish_agent_inputs(shell_ref);
             let mut shell = shell_ref.borrow_mut();
             shell.reconcile_sidebar_width();
             shell.reconcile_pane_widths();
@@ -1533,35 +1468,6 @@ impl ApplicationCoordinator {
             self.sleep_inhibition_state
                 .mark_backend_lost(enabled && has_running_agent);
         }
-    }
-
-    fn route_server_commands(
-        &self,
-        commands: Vec<zentty_agent_ipc::AuthenticatedServerRequest>,
-    ) -> Result<BTreeMap<String, Vec<zentty_agent_ipc::AuthenticatedServerRequest>>, String> {
-        let mut by_window = BTreeMap::<String, Vec<_>>::new();
-        for command in commands {
-            if self.shells.contains_key(&command.target.window_id) {
-                by_window
-                    .entry(command.target.window_id.clone())
-                    .or_default()
-                    .push(command);
-                continue;
-            }
-            let target = command.target.clone();
-            let reply = ServerIpcReply::failure(
-                "stale_target",
-                format!("window {:?} is no longer available", target.window_id),
-            )
-            .map_err(|error| format!("could not create stale server reply: {error}"))?;
-            if let Err(error) = command.respond(reply) {
-                eprintln!(
-                    "zentty-linux: server-stale-target-response window={} pane={} error={error}",
-                    target.window_id, target.pane_id
-                );
-            }
-        }
-        Ok(by_window)
     }
 
     pub(crate) fn record_terminal_error(&mut self, error: String) {

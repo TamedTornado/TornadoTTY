@@ -84,6 +84,11 @@ case "${profile}" in
             if [[ "${ZENTTY_PANE_ID}" != pane-1 ]]; then
                 printf 'ready\n' >"${ZENTTY_CONTROLLED_AGENT_SIBLING_RECEIPT}"
                 while IFS= read -r probe; do
+                    # A quiet pane must get GTK-side IPC service too, not just
+                    # PTY input while the other pane sends agent events.
+                    "${helper}" list panes --json | jq -e --arg id "${ZENTTY_PANE_ID}" \
+                        'any(.[]; .id == $id)' >/dev/null ||
+                        fail "quiet pane discovery failed during event traffic"
                     printf '%s\n' "${probe}" >>"${ZENTTY_CONTROLLED_AGENT_SIBLING_RECEIPT}"
                 done
                 exit 0

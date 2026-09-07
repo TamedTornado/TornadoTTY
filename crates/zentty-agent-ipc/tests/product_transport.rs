@@ -374,7 +374,16 @@ fn transport_classification_and_capability_negotiation_boundaries_are_exact() {
 fn concurrent_mixed_auth_clients_dispatch_only_canonical_authorized_targets() {
     const AUTHORIZED: usize = 8;
     const UNAUTHORIZED: usize = 8;
-    let (root, socket, server, receiver) = running_server();
+    // This checks authentication, not saturation. Reserve room for every
+    // authorized concurrent request even when the responder hasn't run yet.
+    // The separate full-route tests retain the production per-pane limit.
+    let (root, socket, server, receiver) = running_server_with_limits(
+        "mixed-auth",
+        "caller-token",
+        AgentTarget::new("window-1", "lane-1", "pane-1"),
+        32,
+        AUTHORIZED,
+    );
     let responder = std::thread::spawn(move || {
         for sequence in 0..AUTHORIZED {
             let request = receiver.recv_timeout(Duration::from_secs(2)).unwrap();
@@ -416,7 +425,7 @@ fn concurrent_mixed_auth_clients_dispatch_only_canonical_authorized_targets() {
                     format!("claim-pane-{sequence}"),
                 )),
             );
-            assert_eq!(result.is_ok(), authorized);
+            assert_eq!(result.is_ok(), authorized, "request {sequence}: {result:?}");
         }));
     }
     for client in clients {

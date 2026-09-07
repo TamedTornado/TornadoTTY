@@ -13,6 +13,45 @@ use zentty_agent_ipc::{
 };
 use zentty_core::{AgentTarget, AuthenticatedAgentEvent, PaneTokenRegistry};
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum IngressRoute {
+    Events,
+    Tmux,
+    Servers,
+    Product,
+}
+
+impl IngressRoute {
+    pub(crate) const ALL: [Self; 4] = [Self::Events, Self::Tmux, Self::Servers, Self::Product];
+}
+
+pub(crate) enum IngressInput {
+    Event(Box<AuthenticatedAgentEvent>),
+    Tmux(AuthenticatedTmuxRequest),
+    Server(AuthenticatedServerRequest),
+    Product(AuthenticatedProductRequest),
+}
+
+impl IngressInput {
+    pub(crate) fn window_id(&self) -> &str {
+        match self {
+            Self::Event(input) => &input.target.window_id,
+            Self::Tmux(input) => &input.target.window_id,
+            Self::Server(input) => &input.target.window_id,
+            Self::Product(input) => &input.target.window_id,
+        }
+    }
+
+    pub(crate) fn pane_id(&self) -> &str {
+        match self {
+            Self::Event(input) => &input.target.pane_id,
+            Self::Tmux(input) => &input.target.pane_id,
+            Self::Server(input) => &input.target.pane_id,
+            Self::Product(input) => &input.target.pane_id,
+        }
+    }
+}
+
 pub(crate) struct AgentRuntime {
     server: Option<AgentIpcServer>,
     registry: Arc<Mutex<PaneTokenRegistry>>,
@@ -374,12 +413,28 @@ impl AgentRuntime {
         Ok(())
     }
 
-    pub(crate) fn drain(&self) -> Vec<AuthenticatedAgentEvent> {
-        self.log_ingress_pressure();
-        self.receiver.drain_batch(32)
+    pub(crate) fn take_input(&self, route: IngressRoute) -> Option<IngressInput> {
+        match route {
+            IngressRoute::Events => self
+                .receiver
+                .try_recv()
+                .ok()
+                .map(|event| IngressInput::Event(Box::new(event))),
+            IngressRoute::Tmux => self.tmux_receiver.try_recv().ok().map(IngressInput::Tmux),
+            IngressRoute::Servers => self
+                .server_receiver
+                .try_recv()
+                .ok()
+                .map(IngressInput::Server),
+            IngressRoute::Product => self
+                .product_receiver
+                .try_recv()
+                .ok()
+                .map(IngressInput::Product),
+        }
     }
 
-    fn log_ingress_pressure(&self) {
+    pub(crate) fn log_ingress_pressure(&self) {
         let now = Instant::now();
         if self
             .last_pressure_log
@@ -405,18 +460,6 @@ impl AgentRuntime {
                 );
             }
         }
-    }
-
-    pub(crate) fn drain_tmux(&self) -> Vec<AuthenticatedTmuxRequest> {
-        self.tmux_receiver.drain_batch(4)
-    }
-
-    pub(crate) fn drain_servers(&self) -> Vec<AuthenticatedServerRequest> {
-        self.server_receiver.drain_batch(4)
-    }
-
-    pub(crate) fn drain_products(&self) -> Vec<AuthenticatedProductRequest> {
-        self.product_receiver.drain_batch(4)
     }
 
     pub(crate) fn control_credential_for_pane(&self, pane_id: &str) -> Option<&Path> {

@@ -107,7 +107,7 @@
   issue requires one. No inherited third-party approval requirement applies.
 - Follow [field-reporting guidance](docs/dogfood-field-reporting.md). The
   current report is
-  [2026-09-07 IPC lock isolation](docs/design/tornadotty-linux-dogfood-2026-09-07-ipc-lock-isolation.md).
+  [2026-09-07 IPC dispatch budget](docs/design/tornadotty-linux-dogfood-2026-09-07-ipc-dispatch-budget.md).
   Keep this pointer current when rotating reports; start another at a natural
   boundary rather than growing one incident log indefinitely.
 - Record meaningful observations, failed hypotheses, repairs, focused evidence,

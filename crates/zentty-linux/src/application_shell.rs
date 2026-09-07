@@ -3669,12 +3669,22 @@ impl ApplicationShell {
         Ok(())
     }
 
-    pub(crate) fn apply_agent_inputs(
+    pub(crate) fn apply_agent_event(
         shell: &Rc<RefCell<Self>>,
-        tmux_commands: Vec<zentty_agent_ipc::AuthenticatedTmuxRequest>,
-        events: Vec<zentty_core::AuthenticatedAgentEvent>,
+        event: zentty_core::AuthenticatedAgentEvent,
     ) {
-        AgentEventCoordinator::apply_inputs(shell, tmux_commands, events);
+        AgentEventCoordinator::apply_event(shell, event);
+    }
+
+    pub(crate) fn apply_tmux_input(
+        shell: &Rc<RefCell<Self>>,
+        command: zentty_agent_ipc::AuthenticatedTmuxRequest,
+    ) {
+        AgentEventCoordinator::apply_tmux(shell, command);
+    }
+
+    pub(crate) fn finish_agent_inputs(shell: &Rc<RefCell<Self>>) {
+        AgentEventCoordinator::finish_inputs(shell);
     }
 
     fn schedule_codex_transcript_enrichment(&mut self, pane_id: &str) {

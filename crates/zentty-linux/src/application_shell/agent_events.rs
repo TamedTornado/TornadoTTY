@@ -62,6 +62,10 @@ pub(super) struct AgentEventCoordinator {
     transcript_enricher: CodexTranscriptEnricher,
     last_lifecycle_sweep_at: Option<u64>,
     coalesced_event_log: CoalescedEventLog,
+    pending_sidebar_changed: bool,
+    pending_tmux_render: bool,
+    pending_review_panes: BTreeSet<String>,
+    pending_unchanged: u64,
 }
 
 impl AgentEventCoordinator {
@@ -77,6 +81,10 @@ impl AgentEventCoordinator {
             transcript_enricher: CodexTranscriptEnricher::new(codex_home),
             last_lifecycle_sweep_at: None,
             coalesced_event_log: CoalescedEventLog::default(),
+            pending_sidebar_changed: false,
+            pending_tmux_render: false,
+            pending_review_panes: BTreeSet::new(),
+            pending_unchanged: 0,
         }
     }
 
@@ -214,81 +222,96 @@ impl AgentEventCoordinator {
         }
     }
 
-    pub(super) fn apply_inputs(
+    pub(super) fn apply_tmux(
         shell: &Rc<RefCell<ApplicationShell>>,
-        tmux_commands: Vec<AuthenticatedTmuxRequest>,
-        events: Vec<AuthenticatedAgentEvent>,
+        command: AuthenticatedTmuxRequest,
     ) {
-        let mut tmux_changed_product_state = false;
-        for command in tmux_commands {
-            let changes_state = matches!(command.request.command(), TmuxCommand::SelectPane);
-            ApplicationShell::execute_tmux_command(shell, command);
-            tmux_changed_product_state |= changes_state;
-        }
-        if tmux_changed_product_state {
-            shell.borrow().render();
-        }
+        let changes_state = matches!(command.request.command(), TmuxCommand::SelectPane);
+        ApplicationShell::execute_tmux_command(shell, command);
+        shell.borrow_mut().agent_events.pending_tmux_render |= changes_state;
+    }
 
+    pub(super) fn apply_event(
+        shell: &Rc<RefCell<ApplicationShell>>,
+        mut event: AuthenticatedAgentEvent,
+    ) {
         let now = unix_time_ms();
-        let mut sidebar_changed = false;
-        let mut review_refresh_panes = BTreeSet::new();
-        let mut coalesced_events = 0_u64;
-        for mut event in events {
-            let pane_id = event.target.pane_id.clone();
-            let event_working_directory = event.event.working_directory();
-            let refresh_context = matches!(event.event_kind(), "agent.idle" | "session.end")
-                || event_working_directory.is_some();
-            let session_ended = event.event_kind() == "session.end";
-            let current_worklane_id = {
-                let shell = shell.borrow();
-                shell
-                    .state
-                    .worklane_id_for_pane(&pane_id)
-                    .map(str::to_owned)
-            };
-            let route =
-                event_route_decision(current_worklane_id.as_deref(), &event.target.worklane_id);
-            match route {
-                EventRouteDecision::DropRemovedPane => {
-                    eprintln!("zentty-linux: agent-event-dropped pane={pane_id} reason=removed");
-                    continue;
-                }
-                EventRouteDecision::RetargetMovedPane => {
-                    current_worklane_id
-                        .as_ref()
-                        .expect("route decision proved the pane exists")
-                        .clone_into(&mut event.target.worklane_id);
-                }
-                EventRouteDecision::ApplyAuthenticatedTarget => {}
+        let pane_id = event.target.pane_id.clone();
+        let event_working_directory = event.event.working_directory();
+        let refresh_context = matches!(event.event_kind(), "agent.idle" | "session.end")
+            || event_working_directory.is_some();
+        let session_ended = event.event_kind() == "session.end";
+        let current_worklane_id = {
+            let shell = shell.borrow();
+            shell
+                .state
+                .worklane_id_for_pane(&pane_id)
+                .map(str::to_owned)
+        };
+        let route = event_route_decision(current_worklane_id.as_deref(), &event.target.worklane_id);
+        match route {
+            EventRouteDecision::DropRemovedPane => {
+                eprintln!("zentty-linux: agent-event-dropped pane={pane_id} reason=removed");
+                return;
             }
-            Self::confirm_restored_agent(shell, &pane_id);
-            let worklane_id = event.target.worklane_id.clone();
-            let event_kind = event.event_kind();
-            let session_id = event.session_id().unwrap_or("pane-default").to_owned();
+            EventRouteDecision::RetargetMovedPane => {
+                current_worklane_id
+                    .as_ref()
+                    .expect("route decision proved the pane exists")
+                    .clone_into(&mut event.target.worklane_id);
+            }
+            EventRouteDecision::ApplyAuthenticatedTarget => {}
+        }
+        Self::confirm_restored_agent(shell, &pane_id);
+        let worklane_id = event.target.worklane_id.clone();
+        let event_kind = event.event_kind();
+        let session_id = event.session_id().unwrap_or("pane-default").to_owned();
+        let mut shell = shell.borrow_mut();
+        if !shell.state.apply_agent_event(event, now) {
+            shell.agent_events.pending_unchanged =
+                shell.agent_events.pending_unchanged.saturating_add(1);
+            return;
+        }
+        eprintln!(
+            "zentty-linux: agent-event pane={pane_id} worklane={worklane_id} kind={event_kind} session={session_id} result=changed"
+        );
+        Self::log_pane_context_owner(
+            &shell.state,
+            &pane_id,
+            event_working_directory.as_deref(),
+            session_ended,
+        );
+        if refresh_context {
+            shell
+                .agent_events
+                .pending_review_panes
+                .insert(pane_id.clone());
+        }
+        let ApplicationShell {
+            state,
+            agent_events,
+            ..
+        } = &mut *shell;
+        agent_events.schedule_for_pane(state, &pane_id);
+        agent_events.pending_sidebar_changed = true;
+    }
+
+    /// Publish once per window after this tick's bounded ingress work. These
+    /// are accumulated invalidations, not another queue of accepted messages.
+    pub(super) fn finish_inputs(shell: &Rc<RefCell<ApplicationShell>>) {
+        let now = unix_time_ms();
+        let (mut sidebar_changed, tmux_changed, review_refresh_panes, coalesced_events) = {
             let mut shell = shell.borrow_mut();
-            if !shell.state.apply_agent_event(event, now) {
-                coalesced_events = coalesced_events.saturating_add(1);
-                continue;
-            }
-            eprintln!(
-                "zentty-linux: agent-event pane={pane_id} worklane={worklane_id} kind={event_kind} session={session_id} result=changed"
-            );
-            Self::log_pane_context_owner(
-                &shell.state,
-                &pane_id,
-                event_working_directory.as_deref(),
-                session_ended,
-            );
-            if refresh_context {
-                review_refresh_panes.insert(pane_id.clone());
-            }
-            let ApplicationShell {
-                state,
-                agent_events,
-                ..
-            } = &mut *shell;
-            agent_events.schedule_for_pane(state, &pane_id);
-            sidebar_changed = true;
+            let events = &mut shell.agent_events;
+            (
+                std::mem::take(&mut events.pending_sidebar_changed),
+                std::mem::take(&mut events.pending_tmux_render),
+                std::mem::take(&mut events.pending_review_panes),
+                std::mem::take(&mut events.pending_unchanged),
+            )
+        };
+        if tmux_changed {
+            shell.borrow().render();
         }
         if coalesced_events > 0 {
             let report = shell
