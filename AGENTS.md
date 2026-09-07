@@ -107,7 +107,7 @@
   issue requires one. No inherited third-party approval requirement applies.
 - Follow [field-reporting guidance](docs/dogfood-field-reporting.md). The
   current report is
-  [2026-09-07 IO boundaries](docs/design/tornadotty-linux-dogfood-2026-09-07-io-boundaries.md).
+  [2026-09-07 pane-action recovery](docs/design/tornadotty-linux-dogfood-2026-09-07-pane-action-recovery.md).
   Keep this pointer current when rotating reports; start another at a natural
   boundary rather than growing one incident log indefinitely.
 - Record meaningful observations, failed hypotheses, repairs, focused evidence,

@@ -50,6 +50,7 @@ mod clipboard_actions;
 mod close_runtime;
 mod global_search;
 pub(crate) mod open_with_runtime;
+mod pane_action_recovery;
 mod pane_context;
 mod pane_runtime;
 mod project_context_runtime;
@@ -3206,6 +3207,7 @@ impl ApplicationShell {
     }
 
     fn create_worklane(shell: &Rc<RefCell<Self>>) -> Result<(), String> {
+        let previous = shell.borrow().state.clone();
         let (worklane_id, pane_id) = {
             let mut shell = shell.borrow_mut();
             let source_cwd = shell
@@ -3223,13 +3225,17 @@ impl ApplicationShell {
             ) {
                 return Err("generated duplicate worklane or pane identity".to_owned());
             }
-            let _ = shell
+            if !shell
                 .state
-                .configure_pane_launch(&pane_id, source_cwd, None);
+                .configure_pane_launch(&pane_id, source_cwd, None)
+            {
+                shell.state = previous;
+                return Err("new worklane disappeared before launch configuration".to_owned());
+            }
             (worklane_id, pane_id)
         };
         if let Err(error) = PaneRuntimeCoordinator::create_surface(shell, &pane_id) {
-            shell.borrow_mut().state.close_active_worklane();
+            Self::rollback_pane_creation(shell, previous, &pane_id);
             return Err(error);
         }
         let shell_ref = shell.borrow();
@@ -3318,6 +3324,7 @@ impl ApplicationShell {
         action: &str,
         update: impl FnOnce(&mut WorkspaceState, String) -> bool,
     ) -> Result<(), String> {
+        let previous = shell.borrow().state.clone();
         let pane_id = {
             let mut shell = shell.borrow_mut();
             let source_working_directory = shell
@@ -3327,19 +3334,20 @@ impl ApplicationShell {
                 .and_then(|pane| pane.working_directory.clone());
             let pane_id = shell.take_pane_id();
             if !update(&mut shell.state, pane_id.clone()) {
+                shell.state = previous;
                 return Err("generated duplicate pane identity".to_owned());
             }
             if !shell
                 .state
                 .configure_pane_launch(&pane_id, source_working_directory, None)
             {
-                let _ = shell.state.close_pane_after_child_exit(&pane_id);
+                shell.state = previous;
                 return Err("new pane disappeared before launch configuration".to_owned());
             }
             pane_id
         };
         if let Err(error) = PaneRuntimeCoordinator::create_surface(shell, &pane_id) {
-            let _ = shell.borrow_mut().state.close_focused_pane();
+            Self::rollback_pane_creation(shell, previous, &pane_id);
             return Err(error);
         }
         let shell_ref = shell.borrow();
@@ -3533,11 +3541,11 @@ impl ApplicationShell {
                 "zentty-linux: tmux-store-cleanup worklane={worklane_id} result=failed detail={error}"
             );
         }
+        let mut first_cleanup_error = None;
         for pane_id in &pane_ids {
             if let Err(error) = shell_ref.remove_live_surface(pane_id) {
-                drop(shell_ref);
-                Self::report_action_error(shell, ACTION_CLOSE_WORKLANE, &error);
-                return;
+                eprintln!("zentty-linux: worklane-close-cleanup error={error}");
+                first_cleanup_error.get_or_insert(error);
             }
         }
         eprintln!(
@@ -3546,6 +3554,10 @@ impl ApplicationShell {
         );
         shell_ref.render();
         shell_ref.focus_selected_surface();
+        drop(shell_ref);
+        if let Some(error) = first_cleanup_error {
+            Self::report_action_error(shell, ACTION_CLOSE_WORKLANE, &error);
+        }
     }
 
     fn close_pane(shell: &Rc<RefCell<Self>>, pane_id: &str) {
@@ -3583,21 +3595,21 @@ impl ApplicationShell {
                         f64::from(restoration.width),
                     );
                 }
-                if let Err(error) = shell_ref.remove_live_surface(pane_id) {
-                    drop(shell_ref);
-                    Self::report_action_error(shell, ACTION_CLOSE_PANE, &error);
-                    return;
-                }
+                let cleanup = shell_ref.remove_live_surface(pane_id);
                 eprintln!("zentty-linux: action=close-pane pane={pane_id}");
                 shell_ref.render();
                 shell_ref.scroll_panes_to_focused();
                 shell_ref.focus_selected_surface();
+                drop(shell_ref);
+                if let Err(error) = cleanup {
+                    Self::report_action_error(shell, ACTION_CLOSE_PANE, &error);
+                }
             }
             ClosePaneOutcome::CloseWindow => {
                 if let Err(error) = shell_ref.remove_live_surface(pane_id) {
-                    drop(shell_ref);
-                    Self::report_action_error(shell, ACTION_CLOSE_PANE, &error);
-                    return;
+                    // The user explicitly closed this window's final pane.
+                    // Complete that window close, never quit sibling windows.
+                    eprintln!("zentty-linux: final-pane-close-cleanup error={error}");
                 }
                 eprintln!("zentty-linux: action=close-pane pane={pane_id} close-window=true");
                 let close_window = shell_ref.close_window_handler.clone();
@@ -3614,6 +3626,7 @@ impl ApplicationShell {
     }
 
     fn restore_closed_pane(shell: &Rc<RefCell<Self>>) -> Result<(), String> {
+        let previous = shell.borrow().state.clone();
         let restored = {
             let mut shell = shell.borrow_mut();
             let pane_id = shell.take_pane_id();
@@ -3653,12 +3666,12 @@ impl ApplicationShell {
                 .queue_prefill(&restored.pane_id, prefill.clone());
         }
         if let Err(error) = PaneRuntimeCoordinator::create_surface(shell, &restored.pane_id) {
-            let mut shell = shell.borrow_mut();
-            shell.pane_runtime.cancel_prefill(&restored.pane_id);
-            let now = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .map_or(0, |duration| duration.as_secs());
-            let _ = shell.state.rollback_restored_pane_at(restored, now);
+            Self::rollback_pane_creation(shell, previous, &restored.pane_id);
+            if let Some(path) = archive
+                && let Err(cleanup_error) = std::fs::remove_file(path)
+            {
+                eprintln!("zentty-linux: failed-restore-archive-cleanup error={cleanup_error}");
+            }
             return Err(error);
         }
         let shell_ref = shell.borrow();
@@ -3683,11 +3696,6 @@ impl ApplicationShell {
         Ok(())
     }
 
-    fn report_action_error(shell: &Rc<RefCell<Self>>, action: &str, error: &str) {
-        eprintln!("zentty-linux: action={action} failed: {error}");
-        shell.borrow().main_loop.quit();
-    }
-
     pub(crate) fn apply_agent_inputs(
         shell: &Rc<RefCell<Self>>,
         tmux_commands: Vec<zentty_agent_ipc::AuthenticatedTmuxRequest>,
@@ -3710,7 +3718,10 @@ impl ApplicationShell {
         self.agent_events.unregister_pane(pane_id);
         self.codex_title_animation.remove(pane_id);
         project_context_runtime::forget_pane(self, pane_id);
-        self.pane_runtime.remove(pane_id, false).map(|_| ())
+        self.pane_runtime
+            .remove(pane_id, false)
+            .map(|_| ())
+            .map_err(|error| format!("Pane {pane_id} cleanup: {error}"))
     }
 
     fn codex_title_animation_is_eligible(&self, pane_id: &str, title: &str) -> bool {

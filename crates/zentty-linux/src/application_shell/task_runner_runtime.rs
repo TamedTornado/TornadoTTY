@@ -38,6 +38,7 @@ fn launch_in_new_pane(
     shell: &Rc<RefCell<ApplicationShell>>,
     action: &zentty_core::TaskRunnerAction,
 ) -> Result<(), String> {
+    let previous = shell.borrow().state.clone();
     let pane_id = {
         let mut shell_ref = shell.borrow_mut();
         let pane_id = shell_ref.take_pane_id();
@@ -53,7 +54,7 @@ fn launch_in_new_pane(
             Some(action.working_directory.to_string_lossy().into_owned()),
             Some(action.execution_command.clone()),
         ) {
-            let _ = shell_ref.state.close_focused_pane();
+            shell_ref.state = previous;
             return Err("new task pane could not retain its launch context".to_owned());
         }
         shell_ref.pane_runtime.queue_launch(
@@ -68,9 +69,7 @@ fn launch_in_new_pane(
         pane_id
     };
     if let Err(error) = PaneRuntimeCoordinator::create_surface(shell, &pane_id) {
-        let mut shell_ref = shell.borrow_mut();
-        shell_ref.pane_runtime.cancel_launch(&pane_id);
-        let _ = shell_ref.state.close_focused_pane();
+        ApplicationShell::rollback_pane_creation(shell, previous, &pane_id);
         return Err(error);
     }
     let shell_ref = shell.borrow();

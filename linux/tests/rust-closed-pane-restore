@@ -19,6 +19,7 @@ prefill_lines_receipt=""
 shim_dir=""
 log=""
 product_pid=""
+credential_directory=""
 
 # shellcheck disable=SC1091
 source "${repo_root}/linux/tests/lib/product-input"
@@ -30,6 +31,14 @@ fail() {
 }
 
 cleanup() {
+    local status=$?
+    if (( status != 0 )) && [[ -n "${log}" && -f "${log}" ]]; then
+        tail -160 "${log}" >&2
+    fi
+    if [[ -n "${credential_directory}" && -d "${credential_directory}.saved" ]]; then
+        rm -f -- "${credential_directory}"
+        mv -- "${credential_directory}.saved" "${credential_directory}"
+    fi
     if [[ "${product_pid}" =~ ^[1-9][0-9]*$ ]]; then
         kill -TERM "${product_pid}" 2>/dev/null || true
         wait "${product_pid}" 2>/dev/null || true
@@ -140,6 +149,78 @@ zentty_product_prepare_input "${backend}" "${log}" || fail "physical input was u
 zentty_product_key "${backend}" Shift_L
 zentty_product_wait_for_log "${log}" 'zentty-linux: focus-pane pane=pane-agent' \
     "source pane focus did not settle" || fail "source focus missing"
+
+palette_action() {
+    local query="$1"
+    local pattern="zentty-linux: command-palette=query value=\"${query}\" results=1"
+    local previous
+    previous="$(grep -Fc "${pattern}" "${log}" || true)"
+    zentty_product_ctrl_shift_key "${backend}" p
+    zentty_product_type "${backend}" "${query}"
+    zentty_product_wait_for_log_count "${log}" "${pattern}" "$((previous + 1))" \
+        "action did not resolve uniquely" || fail "action unavailable: ${query}"
+    zentty_product_key "${backend}" Down
+    zentty_product_key "${backend}" Return
+}
+
+# Real publication failure: replace only this isolated instance's credential
+# directory with a regular file. Existing PTYs stay alive; new pane setup must
+# fail through the production filesystem path, with no product fault hook.
+socket="$(sed -n 's/^zentty-linux: agent-runtime socket=//p' "${log}" | head -1)"
+[[ "${socket}" == "${XDG_RUNTIME_DIR:?}"/*/instance.sock ]] ||
+    fail "agent runtime was not inside the private test runtime directory"
+credential_directory="${socket%/instance.sock}/pane-credentials"
+original_topology="$(grep -F 'zentty-linux: topology=' "${log}" | tail -1)"
+block_new_panes() {
+    mv -- "${credential_directory}" "${credential_directory}.saved"
+    printf 'controlled wrong file type\n' >"${credential_directory}"
+}
+unblock_new_panes() {
+    rm -- "${credential_directory}"
+    mv -- "${credential_directory}.saved" "${credential_directory}"
+}
+failed_action() {
+    local query="$1" failures
+    failures="$(grep -Ec 'zentty-linux: action=.* failed:' "${log}" || true)"
+    palette_action "${query}" || fail "failed ${query} destroyed the terminal during activation"
+    for _ in {1..100}; do
+        (( $(grep -Ec 'zentty-linux: action=.* failed:' "${log}" || true) > failures )) && break
+        sleep 0.02
+    done
+    (( $(grep -Ec 'zentty-linux: action=.* failed:' "${log}" || true) > failures )) ||
+        fail "real filesystem failure was not reported for ${query}"
+    kill -0 "${product_pid}" 2>/dev/null || fail "failed ${query} terminated the application"
+    zentty_product_type "${backend}" "printf 'survivor\\n' >> '${working_root}/survivor'" ||
+        fail "failed ${query} destroyed the terminal window"
+    zentty_product_key "${backend}" Return
+    for _ in {1..100}; do
+        [[ ! -f "${working_root}/survivor" ]] || break
+        sleep 0.02
+    done
+    [[ -f "${working_root}/survivor" ]] || fail "surviving PTY stopped accepting input after ${query}"
+    rm "${working_root}/survivor"
+    if [[ "${backend}" == x11 && -n "${ZENTTY_PANE_ACTION_ERROR_SCREENSHOT:-}" &&
+          ! -f "${ZENTTY_PANE_ACTION_ERROR_SCREENSHOT}" ]]; then
+        import -window "${ZENTTY_PRODUCT_WINDOW_ID}" "${ZENTTY_PANE_ACTION_ERROR_SCREENSHOT}"
+    fi
+}
+block_new_panes
+printf '.PHONY: gh179-failed-task\ngh179-failed-task:\n\t@false\n' >"${working_dir}/Makefile"
+for action in 'Split Right' 'New Pane Below' 'Add Pane Right Without Resizing' \
+    'Add Pane Left' 'Duplicate This Pane' 'Create another worklane' \
+    'Run task: gh179-failed-task' 'Close the active worklane'; do
+    failed_action "${action}"
+    [[ "$(grep -F 'zentty-linux: topology=' "${log}" | tail -1)" == "${original_topology}" ]] ||
+        fail "failed ${action} changed the original topology or focus"
+done
+rm -- "${working_dir}/Makefile"
+# None of those uncreated panes belongs in Undo Close history.
+palette_action 'Undo Close Pane'
+zentty_product_wait_for_log "${log}" 'action=restore-closed-pane available=false' \
+    'failed creation polluted Undo Close history' || fail "phantom closed pane was retained"
+unblock_new_panes
+palette_action 'Focus Up In Column'
+
 zentty_product_ctrl_shift_key "${backend}" p
 zentty_product_wait_for_log "${log}" 'zentty-linux: command-palette=shown' \
     "command palette did not open" || fail "Close Pane palette missing"
@@ -161,15 +242,13 @@ zentty_product_wait_for_log_count "${log}" \
     "post-close UI projection did not settle" || fail "post-close projection missing"
 rmdir -- "${working_dir}" || fail "controlled missing-CWD fixture could not be removed"
 
-zentty_product_ctrl_shift_key "${backend}" p
-zentty_product_wait_for_log "${log}" 'zentty-linux: command-palette=shown' \
-    "restore command palette did not open" || fail "Undo Close Pane palette missing"
-zentty_product_type "${backend}" 'Undo Close Pane'
-zentty_product_wait_for_log "${log}" \
-    'zentty-linux: command-palette=query value="Undo Close Pane" results=1' \
-    "source Undo Close Pane was not uniquely discoverable" || fail "restore query failed"
-zentty_product_key "${backend}" Down
-zentty_product_key "${backend}" Return
+# Failed Undo must preserve the actual closed-pane entry and agent resume
+# intent. After repairing the filesystem, the ordinary Undo below must work.
+block_new_panes
+failed_action 'Undo Close Pane'
+unblock_new_panes
+
+palette_action 'Undo Close Pane'
 zentty_product_wait_for_log "${log}" 'zentty-linux: action=restore-closed-pane pane=' \
     "real palette did not restore the pane" || fail "restore action missing"
 action_line="$(grep -F 'zentty-linux: action=restore-closed-pane pane=' "${log}" | tail -1)"
@@ -259,4 +338,4 @@ jq -e --arg pane "${restored_pane}" --arg cwd "${working_root}" '
 ' "${state_dir}/restore-snapshot.json" >/dev/null ||
     fail "restored identity or launch context was not persisted"
 
-echo "Rust closed-pane restore passed: ${backend}, pane=${restored_pane}, cwd=fallback-real, agent-resume=controlled, scrollback=real, ownership=real, callbacks=quiescent, input=physical"
+echo "Rust closed-pane restore passed: ${backend}, pane=${restored_pane}, failed-actions=8, failed-undo=retry-preserved, sibling-input=real, cwd=fallback-real, agent-resume=controlled, scrollback=real, ownership=real, callbacks=quiescent, input=physical"

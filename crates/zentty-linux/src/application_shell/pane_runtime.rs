@@ -271,6 +271,12 @@ impl PaneRuntimeCoordinator {
         self.explicit_environments.remove(pane_id);
     }
 
+    pub(super) fn cancel_failed_creation(&mut self, pane_id: &str) {
+        self.cancel_launch(pane_id);
+        self.cancel_prefill(pane_id);
+        self.restore_launches.remove(pane_id);
+    }
+
     pub(super) fn confirm_restored_agent(&mut self, pane_id: &str) -> bool {
         let Some(launch) = self.restore_launches.get_mut(pane_id) else {
             return false;
@@ -456,6 +462,7 @@ impl PaneRuntimeCoordinator {
         pane_id: &str,
     ) -> Result<(), String> {
         Self::create_surface_configured(shell, pane_id, None)
+            .map_err(|error| format!("Pane {pane_id}: {error}"))
     }
 
     pub(super) fn create_surface_with_command(
@@ -464,6 +471,7 @@ impl PaneRuntimeCoordinator {
         command: String,
     ) -> Result<(), String> {
         Self::create_surface_configured(shell, pane_id, Some(command))
+            .map_err(|error| format!("Pane {pane_id}: {error}"))
     }
 
     fn create_surface_configured(

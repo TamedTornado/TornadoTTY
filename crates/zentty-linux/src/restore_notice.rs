@@ -24,7 +24,7 @@ impl RestoreNotice {
         banner.append(&message);
         let dismiss = gtk::Button::from_icon_name("window-close-symbolic");
         dismiss.set_has_frame(false);
-        dismiss.set_tooltip_text(Some("Dismiss restore warning"));
+        dismiss.set_tooltip_text(Some("Dismiss warning"));
         banner.append(&dismiss);
         root.set_child(Some(&banner));
         root.set_accessible_role(gtk::AccessibleRole::Alert);

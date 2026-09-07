@@ -145,6 +145,12 @@ impl AgentRuntime {
                         if let Ok(mut registry) = self.registry.lock() {
                             let _ = registry.unregister(&token);
                         }
+                    })
+                    .map_err(|error| {
+                        format!(
+                            "could not prepare pane credentials under {}: {error}",
+                            self.runtime_directory.display()
+                        )
                     })?;
             self.tokens_by_pane
                 .insert(pane_id.to_owned(), token.clone());
