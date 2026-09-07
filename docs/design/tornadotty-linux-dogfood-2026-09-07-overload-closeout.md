@@ -69,9 +69,19 @@ extra test required for every edit.
   exposed inherited live-pane environment in the driver. That attempted live
   selection was rejected. The scenario now explicitly clears inherited endpoint
   capabilities and obtains private-instance control for actual pane focus.
-- Reasserting X window focus for each typed probe exercised focus restoration
-  rather than held-focus input. The load phase now types into the already-focused
-  private window without refocusing it. This is not proof of window-refocus policy.
+- The load phase types into the already-focused private window without repeated
+  X refocusing. Initially this appeared to fix the intermittent quiet-pane failure,
+  but the clean-commit rerun failed again. That hypothesis was insufficient.
+  Logs identified startup's delayed `on_initialized` callback reapplying pane 1
+  **after** an acknowledged CLI focus on pane 2. Later host focus requests now
+  consume that pending startup intent, so it cannot overwrite newer selection.
+  Native initial mapping retains its unchecked path to preserve saved selection.
+  After the repair, three independent overload trials ran concurrently (all
+  required to pass, not retries): each observed one superseded startup intent,
+  preserved all 884,039 bytes and rejected actual saturation. Worst input was
+  178/210/224 ms; RSS growth was 35,900/30,856/34,272 KiB. The existing eager
+  restore journey also passed with two agents and two ordinary shells, preserved
+  active focus/topology, and recoverable hidden-pane failure.
 - The initial sub-MiB capture run was insufficient to claim high-output PTY
   stress; the final actor adds the bounded 64 MiB alternate-screen phase.
 - Clipboard capture originally had no deadline. The failed private process was

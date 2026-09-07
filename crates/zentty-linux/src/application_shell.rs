@@ -196,7 +196,7 @@ pub(crate) struct ApplicationShell {
     global_search: GlobalSearchCoordinator,
     global_search_generation: u64,
     focus_follow_generation: u64,
-    pending_initial_focus: Option<String>,
+    pending_initial_focus: Cell<Option<String>>,
     remote_panes: RemotePaneContext,
     server_runtime: server_runtime::ServerRuntime,
     project_context_runtime: project_context_runtime::ProjectContextRuntime,
@@ -479,7 +479,7 @@ impl ApplicationShell {
             global_search: GlobalSearchCoordinator::default(),
             global_search_generation: 0,
             focus_follow_generation: 0,
-            pending_initial_focus: None,
+            pending_initial_focus: Cell::new(None),
             remote_panes: RemotePaneContext::default(),
             catalog_discovery: catalog_discovery::Discovery::default(),
             server_runtime: server_runtime::ServerRuntime::pending(
@@ -3152,7 +3152,7 @@ impl ApplicationShell {
         // settles. Preserve the workspace's restored selection until that
         // exact Ghostty surface reports initialization.
         let selected_pane = shell.borrow().state.focused_pane_id().map(str::to_owned);
-        shell.borrow_mut().pending_initial_focus = selected_pane;
+        shell.borrow().pending_initial_focus.set(selected_pane);
     }
 
     fn move_active_worklane(&mut self, delta: isize) {
@@ -4974,6 +4974,12 @@ impl ApplicationShell {
     }
 
     fn focus_selected_surface(&self) {
+        // A later focus request supersedes startup's queued ready callback.
+        // Native mapping still uses the unchecked path, so it cannot cancel
+        // restoration of the saved selection merely by mapping child one.
+        if let Some(pane_id) = self.pending_initial_focus.take() {
+            eprintln!("tornadotty: initial-focus pane={pane_id} result=superseded");
+        }
         if !self.window.is_active() {
             return;
         }

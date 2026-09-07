@@ -89,6 +89,8 @@ run_agent_overload() {
     (( final <= peak )) || peak="${final}"
     # Includes configured retained scrollback, terminal cells and clipboard.
     (( peak - initial <= 131072 )) || fail "overload anonymous RSS growth exceeded 128 MiB"
-    printf 'Agent overload PASS accepted=%s rejected=%s max-input-ms=%s peak-anon-growth-kib=%s exact-terminal-bytes=%s\n' \
-        "${accepted}" "${rejected}" "${maximum}" "$((peak-initial))" "$(wc -c <"${state_directory}/actual.txt")"
+    local superseded
+    superseded="$(grep -Fc 'result=superseded' "${log}" || true)"
+    printf 'Agent overload PASS accepted=%s rejected=%s max-input-ms=%s peak-anon-growth-kib=%s exact-terminal-bytes=%s startup-focus-superseded=%s\n' \
+        "${accepted}" "${rejected}" "${maximum}" "$((peak-initial))" "$(wc -c <"${state_directory}/actual.txt")" "${superseded}"
 }

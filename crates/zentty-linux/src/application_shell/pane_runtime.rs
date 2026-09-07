@@ -607,14 +607,16 @@ impl PaneRuntimeCoordinator {
                 if shell.shutting_down {
                     return;
                 }
-                if shell.pending_initial_focus.as_deref() == Some(&ready_id) {
-                    shell.pending_initial_focus = None;
+                let pending_focus = shell.pending_initial_focus.take();
+                if pending_focus.as_deref() == Some(&ready_id) {
                     if shell.state.select_pane(&ready_id) {
                         shell.refresh_sidebar_metadata();
                     }
                     shell.focus_selected_surface_unchecked();
                     eprintln!("zentty-linux: focus-pane pane={ready_id}");
                     crate::test_receipts::pane_focus(&ready_id);
+                } else {
+                    shell.pending_initial_focus.set(pending_focus);
                 }
                 if let Some(surface) = shell.pane_runtime.surface(&ready_id) {
                     observe_ghostty_search_state(
