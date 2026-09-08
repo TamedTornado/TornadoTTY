@@ -20,6 +20,7 @@ mod command_palette;
 mod config_reload;
 mod config_store;
 mod custom_sound_store;
+mod desktop_activation;
 mod dev_server_settings;
 mod diagnostic_store;
 mod diagnostics_runtime;
@@ -183,6 +184,7 @@ fn version_text() -> String {
 
 fn run_lifecycle_cycle(
     runtime: &GhosttyRuntime,
+    desktop: &desktop_activation::DesktopActivation,
     options: &Options,
     restored_windows: Vec<WindowSnapshot>,
     active_window_id: Option<&str>,
@@ -199,6 +201,7 @@ fn run_lifecycle_cycle(
         active_window_id,
         config,
     )?;
+    desktop.bind(&application);
     let teardown_active = application.borrow().teardown_flag();
 
     let tick_loop = main_loop.clone();
@@ -316,6 +319,24 @@ fn run() -> Result<(), String> {
         );
     }
 
+    // Ghostty must initialize before GTK; the host then owns registration.
+    let runtime = GhosttyRuntime::new(options.async_backend).map_err(|error| error.to_string())?;
+    runtime
+        .set_host_application_identity(
+            zentty_core::APPLICATION_ID,
+            zentty_core::PRODUCT_NAME,
+            zentty_core::APPLICATION_ID,
+        )
+        .map_err(|error| error.to_string())?;
+    gtk::init().map_err(|error| format!("GTK initialization failed: {error}"))?;
+    let desktop = desktop_activation::DesktopActivation::register(
+        options.command.is_some() || options.state_directory.is_some() || !options.restore_enabled,
+    )?;
+    if desktop.forward_if_remote()? {
+        eprintln!("tornadotty: desktop-activation result=forwarded");
+        return Ok(());
+    }
+
     let state_directory = match &options.state_directory {
         Some(path) => path.clone(),
         None => default_state_directory()?,
@@ -333,24 +354,10 @@ fn run() -> Result<(), String> {
         .map_err(|error| format!("could not determine the launch working directory: {error}"))?;
     let default_working_directory = default_working_directory.to_string_lossy();
 
-    // Ghostty owns process-global initialization that must precede GTK.
-    let runtime = GhosttyRuntime::new(options.async_backend).map_err(|error| error.to_string())?;
-    // Ghostty initializes GLib for its embedded runtime first. Restore the
-    // host product identity before GTK creates the external accessibility
-    // application root; otherwise assistive technologies see "ghostty" even
-    // though the host owns every toplevel and its navigation hierarchy.
-    runtime
-        .set_host_application_identity(
-            zentty_core::APPLICATION_ID,
-            zentty_core::PRODUCT_NAME,
-            zentty_core::APPLICATION_ID,
-        )
-        .map_err(|error| error.to_string())?;
-    gtk::init().map_err(|error| format!("GTK initialization failed: {error}"))?;
-
     let active_window_id = launch.active_window_id.clone();
     let result = run_lifecycle_cycle(
         &runtime,
+        &desktop,
         &options,
         launch.windows,
         active_window_id.as_deref(),

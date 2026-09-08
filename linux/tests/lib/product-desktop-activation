@@ -1,0 +1,81 @@
+# shellcheck shell=bash
+# Sourced by the existing product-smoke journey: same private display, bus,
+# product bundle, input driver, and owned-process cleanup.
+zentty_check_desktop_activation() {
+    local secondary_log="${barrier}/secondary.log" attempt count status=0
+    mkdir -p "${XDG_CONFIG_HOME:?}/zentty"
+    cat >"${XDG_CONFIG_HOME}/zentty/config.toml" <<'EOF'
+[confirmations]
+confirm_before_closing_pane = false
+confirm_before_closing_window = false
+confirm_before_quitting = false
+EOF
+    # Deliberately no --command/--state-directory: exercise desktop launch,
+    # while the existing nested runner isolates all user directories and D-Bus.
+    LD_LIBRARY_PATH="${bundle_lib}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" \
+        "${product_command[@]}" >>"${log}" 2>&1 &
+    product_pid=$!
+    zentty_product_prepare_input "${backend}" "${log}" "${startup_attempts}" ||
+        fail "primary desktop instance was not ready"
+    if [[ "${backend}" == x11 ]]; then
+        xprop -id "${ZENTTY_PRODUCT_WINDOW_ID}" _GTK_APPLICATION_ID |
+            grep -Fq '"com.tamedtornado.tornadotty"' || fail "window is not associated with its desktop application"
+    fi
+    if ! LD_LIBRARY_PATH="${bundle_lib}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" \
+        timeout 8s "${product_command[@]}" >"${secondary_log}" 2>&1; then
+        tail -20 "${secondary_log}" >&2
+        fail "second normal launch did not forward activation and exit successfully"
+    fi
+    if grep -Eq 'surface-owned|persistence-save|agent-ipc.*listening|window-opened' "${secondary_log}"; then
+        fail "secondary launch created workspace/runtime side effects"
+    fi
+    for ((attempt = 0; attempt < 100; attempt++)); do
+        grep -Fq 'desktop-activation result=presented' "${log}" && break
+        sleep 0.05
+    done
+    grep -Fq 'desktop-activation result=presented' "${log}" || fail "primary did not handle activation"
+    [[ "$(grep -c 'window-opened id=' "${log}")" -eq 1 ]] || fail "activation duplicated windows"
+    [[ "$(grep -c 'surface-owned pane=' "${log}")" -eq 1 ]] || fail "activation duplicated panes"
+    # Deliberate isolated launches must not get swallowed by the desktop owner.
+    if ! LD_LIBRARY_PATH="${bundle_lib}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" \
+        timeout 10s "${product_command[@]}" --state-directory "${barrier}/isolated" \
+        --command "printf '\\033]2;GH184-independent\\a'; sleep 0.1" \
+        >"${barrier}/isolated.log" 2>&1; then
+        fail "explicit isolated launch did not complete independently"
+    fi
+    grep -Fq 'title=GH184-independent' "${barrier}/isolated.log" || fail "explicit command was swallowed"
+    grep -Fq 'lifecycle complete' "${barrier}/isolated.log" || fail "isolated lifecycle did not finish"
+    DBUS_SESSION_BUS_ADDRESS="unix:path=${barrier}/absent-bus" \
+        LD_LIBRARY_PATH="${bundle_lib}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" \
+        timeout 10s "${product_command[@]}" >"${barrier}/no-bus.log" 2>&1 || status=$?
+    [[ "${status}" -ne 0 && "${status}" -ne 124 ]] || fail "missing bus must fail promptly, not start an uncoordinated workspace"
+    if grep -Eq 'surface-owned|persistence-save|window-opened' "${barrier}/no-bus.log"; then
+        fail "missing-bus launch mutated workspace state"
+    fi
+    # A deliberate New Window must still go through the application owner.
+    zentty_product_ctrl_shift_key "${backend}" n
+    for ((attempt = 0; attempt < 100; attempt++)); do
+        count="$(grep -c 'window-opened id=' "${log}" || true)"
+        [[ "${count}" -eq 2 ]] && break
+        sleep 0.05
+    done
+    [[ "${count}" -eq 2 ]] || fail "explicit New Window did not work"
+    # Both windows belong to the one process; close them through normal GTK
+    # input, not by terminating the process under test.
+    for count in 1 2; do
+        if [[ "${backend}" == x11 ]]; then
+            ZENTTY_PRODUCT_WINDOW_ID="$(zentty_product_find_x11_window "${product_pid}")" || fail "surviving window missing"
+            xdotool windowfocus --sync "${ZENTTY_PRODUCT_WINDOW_ID}"
+            xdotool key --window "${ZENTTY_PRODUCT_WINDOW_ID}" ctrl+shift+w 2>/dev/null || true
+            xdotool keyup Control_L Control_R Shift_L Shift_R w 2>/dev/null || true
+        else
+            zentty_product_ctrl_shift_key "${backend}" w
+        fi
+        zentty_product_wait_for_log_count "${log}" 'window-closed id=' "${count}" \
+            "normal window close did not complete" || fail "window close failed"
+    done
+    zentty_wait_for_owned_process "${product_pid}" "desktop activation primary" 200 ||
+        fail "activated primary did not shut down normally"
+    product_pid=""
+    echo "Rust product smoke passed: ${backend}, scenario=activation, forwarded=1, explicit-windows=2"
+}

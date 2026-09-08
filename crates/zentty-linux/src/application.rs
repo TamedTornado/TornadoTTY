@@ -57,6 +57,16 @@ pub(crate) struct ApplicationCoordinator {
 }
 
 impl ApplicationCoordinator {
+    pub(crate) fn present_for_desktop_activation(&self) {
+        if let Some(id) = self.window_set.active_id()
+            && let Some(shell) = self.shells.get(id)
+            && !self.shutting_down
+        {
+            shell.borrow().present();
+            eprintln!("tornadotty: desktop-activation result=presented window={id}");
+        }
+    }
+
     pub(crate) fn start(
         runtime: &GhosttyRuntime,
         command: Option<String>,

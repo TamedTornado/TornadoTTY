@@ -5330,6 +5330,11 @@ fn persist_sidebar_config(sidebar: zentty_core::SidebarConfig, origin: &'static 
 
 fn build_shell_widgets() -> ShellWidgets {
     let window = gtk::Window::new();
+    if let Some(application) = gtk::gio::Application::default()
+        .and_then(|application| application.downcast::<gtk::Application>().ok())
+    {
+        window.set_application(Some(&application));
+    }
     window.set_title(Some(zentty_core::PRODUCT_NAME));
     window.set_default_size(1000, 700);
     let body = gtk::Paned::new(gtk::Orientation::Horizontal);
