@@ -28,6 +28,7 @@ pub(crate) struct ApplicationCycleResult {
 pub(crate) struct ApplicationCoordinator {
     self_handle: Weak<RefCell<ApplicationCoordinator>>,
     runtime: GhosttyRuntime,
+    desktop_application: gtk::Application,
     agent_runtime: Rc<RefCell<AgentRuntime>>,
     ipc_dispatch: ipc_dispatch::DispatchState,
     tmux_session: crate::tmux_compat::TmuxCompatSession,
@@ -69,6 +70,7 @@ impl ApplicationCoordinator {
 
     pub(crate) fn start(
         runtime: &GhosttyRuntime,
+        desktop_application: &gtk::Application,
         command: Option<String>,
         main_loop: &glib::MainLoop,
         restored_windows: Vec<WindowSnapshot>,
@@ -111,6 +113,7 @@ impl ApplicationCoordinator {
         let coordinator = Rc::new(RefCell::new(Self {
             self_handle: Weak::new(),
             runtime: runtime.clone(),
+            desktop_application: desktop_application.clone(),
             agent_runtime,
             ipc_dispatch: ipc_dispatch::DispatchState::default(),
             tmux_session: crate::tmux_compat::TmuxCompatSession::default(),
@@ -334,6 +337,10 @@ impl ApplicationCoordinator {
             deferred_live_pane_id,
         )?;
 
+        shell
+            .borrow()
+            .window()
+            .set_application(Some(&coordinator.borrow().desktop_application));
         Self::install_shell_callbacks(coordinator, &shell, &id);
         coordinator
             .borrow_mut()

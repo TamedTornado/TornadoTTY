@@ -195,6 +195,7 @@ fn run_lifecycle_cycle(
     let main_loop = glib::MainLoop::new(None, false);
     let application = ApplicationCoordinator::start(
         runtime,
+        desktop.application(),
         options.command.clone(),
         &main_loop,
         restored_windows,

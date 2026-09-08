@@ -15,6 +15,10 @@ pub(crate) struct DesktopActivation {
 }
 
 impl DesktopActivation {
+    pub(crate) fn application(&self) -> &gtk::Application {
+        &self.application
+    }
+
     pub(crate) fn register(independent: bool) -> Result<Self, String> {
         let flags = if independent {
             gio::ApplicationFlags::NON_UNIQUE
@@ -38,7 +42,9 @@ impl DesktopActivation {
                 pending_activation.set(true);
             }
         });
-        application.set_default();
+        // Ghostty owns the process-default application: its post-fork cgroup
+        // path downcasts that object to GhosttyApplication. Desktop registration
+        // and our explicit window association do not require replacing it.
         application
             .register(gio::Cancellable::NONE)
             .map_err(|error| {

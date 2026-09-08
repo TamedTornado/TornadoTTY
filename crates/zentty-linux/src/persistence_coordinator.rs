@@ -134,9 +134,9 @@ impl PersistenceCoordinator {
         if !self.prepared_restore {
             return Ok(());
         }
-        self.next_generation = self.next_generation.wrapping_add(1);
-        self.worker
-            .persist(PersistenceRequest::DeleteSnapshot, self.next_generation)?;
+        // Keep the recovery snapshot until a newer snapshot atomically replaces
+        // it. A renderer/PTY crash immediately after launch must not erase the
+        // only durable copy of the user's workspace.
         self.prepared_restore = false;
         Ok(())
     }
@@ -539,7 +539,7 @@ mod tests {
             "launch blocked for {elapsed:?}"
         );
         coordinator.worker.synchronize();
-        assert!(!store.snapshot_path().exists());
+        assert!(store.snapshot_path().exists());
     }
 
     #[test]
@@ -559,8 +559,10 @@ mod tests {
         assert!(store.snapshot_path().is_file());
         coordinator.complete_launch().unwrap();
         coordinator.worker.synchronize();
-        assert!(!store.snapshot_path().exists());
-        assert_eq!(store.prepare_for_launch(false).unwrap(), None,);
+        assert!(store.snapshot_path().exists());
+        let recovered = store.prepare_for_launch(false).unwrap().unwrap();
+        assert_eq!(recovered.reason, zentty_core::LaunchReason::CrashRecovery);
+        assert_eq!(recovered.envelope, envelope());
     }
 
     #[test]

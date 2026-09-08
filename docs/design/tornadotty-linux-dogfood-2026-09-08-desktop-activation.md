@@ -185,3 +185,38 @@ The integrated product is built in `build/gh185`, not installed. Jason's live
 client was left alone. GH-185 remains open for the previously recorded input
 corruption and confirmation of long-running responsiveness after a coordinated
 restart; the isolated fixes do not establish that all live lag is eliminated.
+
+### Deployment regression: default application and lost recovery snapshot
+
+After the requested atomic installation, Jason force-quit the unresponsive old
+client. New launches at about 13:49–13:50 aborted immediately. A separate-state
+GDB launch reproduced SIGABRT in Ghostty's IO thread:
+`postFork -> Application.default -> unwrapNull`. GH-184's host registration
+called `set_default`, replacing GhosttyApplication with plain GtkApplication;
+the cgroup post-fork path requires the former. This was our integration bug.
+
+Removed that global replacement and explicitly passed the desktop application
+through the coordinator to associate every host window. Merely removing the
+replacement first failed the existing window-application identity assertion;
+explicit ownership fixes both activation and cgroup startup. The existing
+activation journey now enables linux-cgroup=always (non-hard-fail on its private
+bus): the deployed build aborted, repaired X11 and Wayland journeys pass,
+including forwarding and explicit new windows. A separate-state launch on the
+actual GNOME desktop with its real configuration also exited normally after
+running `sleep 1`. No saved user state was used for those launches.
+
+The first failed launch projected three agent lanes, then complete_launch queued
+deletion of the recovery snapshot before PTY startup. The second launch therefore
+had no snapshot. Removed that deletion: retain the durable snapshot until an
+atomic newer save replaces it. Updated storage assertions to require survival
+and crash recovery of the identical envelope; all 23 coordinator tests pass.
+This deliberately corrects the previous destructive requirement, rather than
+waiving a failure. No full qualification was run.
+
+The repaired GUI was atomically installed and byte-verified. The previously
+installed CLI and Bash hook remain current. Original user snapshot recovery is
+NOT established: its file is absent. The journal still identifies Bro/pane-6,
+ZenTTY/pane-14, and Regulate/pane-22 and their working directories, but that is
+not a replacement for the lost complete restore envelope. No guessed workspace
+was written. Original long-running hang remains unproven separately from this
+confirmed startup regression.

@@ -3,6 +3,10 @@
 # product bundle, input driver, and owned-process cleanup.
 zentty_check_desktop_activation() {
     local secondary_log="${barrier}/secondary.log" attempt count status=0
+    # Exercise Ghostty's post-fork application lookup even on a private bus
+    # without systemd. A missing service may degrade isolation, never abort.
+    mkdir -p "${XDG_CONFIG_HOME:?}/ghostty"
+    printf '\nlinux-cgroup = always\nlinux-cgroup-hard-fail = false\n' >>"${XDG_CONFIG_HOME}/ghostty/config"
     mkdir -p "${XDG_CONFIG_HOME:?}/zentty"
     cat >"${XDG_CONFIG_HOME}/zentty/config.toml" <<'EOF'
 [confirmations]
