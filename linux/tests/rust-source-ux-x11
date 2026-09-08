@@ -359,14 +359,14 @@ if [[ "${ZENTTY_SOURCE_UX_PANE_DRAG_ONLY:-false}" == true ]]; then
     grep -Fq 'zentty-linux: geometry=worklane-1:column-worklane-1[pane-1],column-pane-2[pane-2]' "${log}" ||
         fail "pre-drag visible split was not established"
 
-    # Use the real terminal drag strip, then discover the destination through
+    # Use the real pane-control drag source, then discover the destination through
     # the product's live preview receipt instead of assuming WM decorations.
     find_pane_drag_zone pane-1 400 700 35 90 ||
         fail "physical pointer could not locate pane-1 terminal drag strip"
     xdotool mousedown 1
     sleep 0.25
     xdotool mousemove_relative --sync -- 0 40
-    zentty_product_wait_for_log "${log}" 'zentty-linux: pane-drag=begin window=window-1 worklane=worklane-1 pane=pane-1 source=terminal-strip visual=full-card' \
+    zentty_product_wait_for_log "${log}" 'zentty-linux: pane-drag=begin window=window-1 worklane=worklane-1 pane=pane-1 source=pane-controls visual=full-card' \
         "GTK did not claim the terminal pane drag" || fail "pane drag did not begin"
     for point in '500 120' '650 200' '800 300' '1000 400'; do
         # shellcheck disable=SC2086

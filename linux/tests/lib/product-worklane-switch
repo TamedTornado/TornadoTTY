@@ -1,0 +1,63 @@
+# shellcheck shell=bash
+zentty_check_worklane_switch() {
+    local attempt pane pass initial
+    cat >"${barrier}/shell" <<'EOF'
+#!/usr/bin/env bash
+printf '\033]2;ready-%s\a' "$ZENTTY_PANE_ID"
+while IFS= read -r line; do
+    [[ "$line" == exit ]] && exit 0
+    printf '\033]2;ack-%s-%s\a' "$ZENTTY_PANE_ID" "$line"
+done
+EOF
+    chmod +x "${barrier}/shell"
+    LD_LIBRARY_PATH="${bundle_lib}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" \
+        "${product_command[@]}" --state-directory "${barrier}/state" \
+        --command "exec '${barrier}/shell'" >"${log}" 2>&1 &
+    product_pid=$!
+    zentty_product_prepare_input "${backend}" "${log}" "${startup_attempts}" || fail "first pane unavailable"
+    zentty_product_ctrl_key "${backend}" t
+    for ((attempt=0; attempt<100; attempt++)); do
+        grep -Fq 'value=ready-pane-2' "${log}" && break
+        sleep .05
+    done
+    grep -Fq 'value=ready-pane-2' "${log}" || fail "second worklane did not start"
+    initial="$(grep -c 'loaded OpenGL' "${log}")"
+    for pass in 1 2 3 4; do
+        pane=$(( (pass + 1) % 2 + 1 ))
+        zentty_product_ctrl_key "${backend}" Tab
+        zentty_product_type "${backend}" "ping${pass}"
+        zentty_product_key "${backend}" Return
+        for ((attempt=0; attempt<60; attempt++)); do
+            grep -Fq "value=ack-pane-${pane}-ping${pass}" "${log}" && break
+            sleep .05
+        done
+        grep -Fq "value=ack-pane-${pane}-ping${pass}" "${log}" || fail "switch did not deliver input to pane ${pane}"
+        [[ "$(grep -c 'loaded OpenGL' "${log}")" -eq "${initial}" ]] || fail "switch reinitialized an existing terminal renderer"
+    done
+    [[ "$(grep -c 'surface-owned pane=' "${log}")" -eq 2 ]] || fail "switch created extra terminals"
+    if zentty_product_uses_xdotool "${backend}"; then
+        xdotool keydown ctrl keydown Tab
+    else
+        # One virtual-keyboard lifetime must span the hold; ending wtype
+        # immediately destroys that keyboard and releases the chord.
+        # -M/-m alone changes Wayland's modifier mask, without physical
+        # Control key events. Exercise the real key-release commit path too.
+        wtype -P Control_L -M ctrl -P Tab -s 350 -p Tab -m ctrl -p Control_L
+    fi
+    zentty_product_wait_for_log "${log}" 'worklane-peek=open trigger=tab-hold' "peek did not open" || fail "peek unavailable"
+    if zentty_product_uses_xdotool "${backend}"; then
+        xdotool keyup Tab keyup ctrl
+    fi
+    zentty_product_wait_for_log "${log}" 'worklane-peek=commit' "peek did not commit" || fail "peek did not close"
+    zentty_product_type "${backend}" peek
+    zentty_product_key "${backend}" Return
+    zentty_product_wait_for_log "${log}" 'value=ack-pane-2-peek' "selected terminal did not survive peek" || fail "peek lost terminal input"
+    for pass in 1 2; do
+        zentty_product_type "${backend}" exit
+        zentty_product_key "${backend}" Return
+        sleep .1
+    done
+    zentty_wait_for_owned_process "${product_pid}" "worklane switch primary" 200 || fail "switch product did not close"
+    product_pid=""
+    echo "Rust product smoke passed: ${backend}, scenario=worklane-switch"
+}

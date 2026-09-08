@@ -125,3 +125,63 @@ The subsequent Wayland startup check passed its initialization semantics at
 IPC delay. Preserve it as outstanding under #185; do not retry it green or
 claim the full sluggishness issue is fixed. The exact live seven-second delay
 and laggy input remain open even though the redundant startup events are fixed.
+
+## GH-185: worklane switching and server-menu ownership repair
+
+Jason corrected the investigation: seven server entries matter because of
+switch-time GUI setup/teardown, not simply their subprocess CPU usage.
+Two defects were reproduced:
+
+- Every ordinary worklane render detached terminal column widgets. GTK
+  unrealize/realize consequently destroyed/recreated Ghostty renderer resources.
+  The new real two-worklane/PTY journey failed on the old build when the first
+  switch initialized OpenGL again.
+- Server-menu buttons strongly captured their owning popover. Replacing the
+  menu leaked that GTK object graph; unchanged server scans also rebuilt it.
+  A real GTK seven-entry ownership test failed because the replaced menu stayed
+  alive. Open With and Arrange had the same callback ownership cycle.
+
+Ordinary navigation now retains materialized column widgets, hiding inactive
+layouts without unparenting terminals. Topology/model-geometry changes invalidate
+only affected layouts; viewport changes resize existing widgets and dividers.
+Peek's deliberate reparenting explicitly invalidates the inactive layouts.
+Server menus reuse unchanged visible entries (including return from a lane with
+no servers), and the three menu callback families use weak parent references.
+No server process is restarted or stopped by these changes.
+
+Focused results against `build/gh185`:
+
+- PASS: real GTK menu replacement/finalization, unchanged seven-entry reuse,
+  switch-away/return reuse, and Open With/Arrange finalization.
+- PASS: X11 and native Wayland four alternating lane switches, physical input
+  delivered to the original PTYs, no additional renderer initialization or
+  terminal creation, followed by hold-to-Peek/release and usable terminal input.
+- PASS: existing X11 development-server journey, including actual listeners,
+  authenticated discovery, browser argv, ignore, safe stop and restart.
+- PASS: existing X11 pane-drag-only journey with real GTK DnD, exact topology,
+  and preserved live PTY.
+- PASS: Wayland real Bash startup, 1.263s hook-to-prompt / 0.064s Enter-to-command.
+  This does not erase the earlier intermittent `3;5u` input failure.
+- PASS: matrix schema/coverage, shell syntax and diff whitespace checks.
+  ShellCheck through the parent script reports only SC2317 on its EXIT-trap
+  cleanup; standalone checking of the sourced helper lacks parent variables.
+
+Failed intermediate checks were not waived: initially keying layouts on viewport
+size recreated them after allocation, so viewport resizing was moved in-place.
+The Wayland Peek actor initially destroyed its virtual keyboard before holding
+and then omitted a physical Control release; it now performs the entire chord
+in one keyboard lifetime with physical press/release events. The server journey
+sent XSendEvent Escape to the parent, bypassing GTK's popover grab; it now uses
+its existing physical-key helper. The drag journey expected an obsolete
+`terminal-strip` source receipt (also failed against GH-184); its expectation is
+now the actual `pane-controls` source, with topology/PTY assertions unchanged.
+
+The full source-UX journey still fails its old `empty-dark-x11` visual baseline
+before interactions: that baseline has the previous title strip/sidebar labels.
+It was not rebased or counted as passing. No full qualification was run. The
+new regressions are wired into the existing matrix, not a new runner.
+
+The integrated product is built in `build/gh185`, not installed. Jason's live
+client was left alone. GH-185 remains open for the previously recorded input
+corruption and confirmation of long-running responsiveness after a coordinated
+restart; the isolated fixes do not establish that all live lag is eliminated.

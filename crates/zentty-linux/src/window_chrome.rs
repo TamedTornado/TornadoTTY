@@ -8,6 +8,9 @@ use zentty_core::{
 
 use crate::source_ui;
 
+#[cfg(test)]
+mod lifecycle_tests;
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct ChromeControlSpec {
     id: &'static str,
@@ -76,6 +79,7 @@ pub(crate) struct WindowChrome {
     rendered_fleet: RefCell<Vec<zentty_core::FleetPaneSnapshot>>,
     server_primary: gtk::Button,
     server_menu: gtk::MenuButton,
+    rendered_servers: RefCell<Vec<(String, String, String)>>,
     open_with_primary: gtk::Button,
     open_with_menu: gtk::MenuButton,
 }
@@ -220,6 +224,7 @@ impl WindowChrome {
             rendered_fleet: RefCell::new(Vec::new()),
             server_primary,
             server_menu,
+            rendered_servers: RefCell::new(Vec::new()),
             open_with_primary,
             open_with_menu,
         }
@@ -250,6 +255,23 @@ impl WindowChrome {
         self.server_primary.set_visible(true);
         self.server_primary.set_sensitive(true);
 
+        let projection = visible
+            .iter()
+            .map(|ranked| {
+                (
+                    ranked.server.display.clone(),
+                    ranked.server.url.clone(),
+                    ranked.server.origin.clone(),
+                )
+            })
+            .collect::<Vec<_>>();
+        self.server_menu.set_visible(true);
+        self.server_menu.set_sensitive(true);
+        if *self.rendered_servers.borrow() == projection {
+            return;
+        }
+        *self.rendered_servers.borrow_mut() = projection;
+
         let popover = gtk::Popover::new();
         let list = gtk::Box::new(gtk::Orientation::Vertical, 2);
         list.set_margin_top(6);
@@ -267,8 +289,12 @@ impl WindowChrome {
             button.set_tooltip_text(Some(&ranked.server.url));
             button.set_action_name(Some("workspace.open-server"));
             button.set_action_target_value(Some(&ranked.server.origin.to_variant()));
-            let menu = popover.clone();
-            button.connect_clicked(move |_| menu.popdown());
+            let menu = popover.downgrade();
+            button.connect_clicked(move |_| {
+                if let Some(menu) = menu.upgrade() {
+                    menu.popdown();
+                }
+            });
             list.append(&button);
         }
         popover.set_child(Some(&list));
@@ -313,8 +339,12 @@ impl WindowChrome {
             button.set_halign(gtk::Align::Fill);
             button.set_action_name(Some("workspace.open-with-target"));
             button.set_action_target_value(Some(&target.id.to_variant()));
-            let menu = popover.clone();
-            button.connect_clicked(move |_| menu.popdown());
+            let menu = popover.downgrade();
+            button.connect_clicked(move |_| {
+                if let Some(menu) = menu.upgrade() {
+                    menu.popdown();
+                }
+            });
             list.append(&button);
         }
         popover.set_child(Some(&list));
@@ -743,8 +773,12 @@ fn arrange_action_button(
     content.append(&text);
     button.set_child(Some(&content));
     button.set_action_name(Some(&format!("workspace.{action}")));
-    let menu_popover = popover.clone();
-    button.connect_clicked(move |_| menu_popover.popdown());
+    let menu_popover = popover.downgrade();
+    button.connect_clicked(move |_| {
+        if let Some(menu) = menu_popover.upgrade() {
+            menu.popdown();
+        }
+    });
     button
 }
 

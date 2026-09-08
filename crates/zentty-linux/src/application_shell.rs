@@ -50,6 +50,7 @@ mod catalog_discovery;
 mod clipboard_actions;
 pub(crate) mod close_runtime;
 mod global_search;
+mod mounted_layouts;
 pub(crate) mod open_with_runtime;
 mod pane_action_recovery;
 mod pane_context;
@@ -168,6 +169,7 @@ pub(crate) struct ApplicationShell {
     pane_scroll: gtk::ScrolledWindow,
     pane_box: gtk::Box,
     rendered_columns: RefCell<BTreeMap<String, gtk::Overlay>>,
+    mounted_layouts: RefCell<mounted_layouts::MountedLayouts>,
     last_vertical_divider: RefCell<Option<(String, String)>>,
     background_agent_host: gtk::Overlay,
     state: WorkspaceState,
@@ -449,6 +451,7 @@ impl ApplicationShell {
             pane_scroll,
             pane_box,
             rendered_columns: RefCell::new(BTreeMap::new()),
+            mounted_layouts: RefCell::new(mounted_layouts::MountedLayouts::default()),
             last_vertical_divider: RefCell::new(None),
             background_agent_host,
             state,
@@ -1258,6 +1261,9 @@ impl ApplicationShell {
     }
 
     fn mount_background_restored_panes(&self) {
+        self.mounted_layouts
+            .borrow_mut()
+            .remove_inactive(&self.pane_box, self.state.active_worklane_id());
         clear_overlay_children(&self.background_agent_host);
         if !self.config.restore.start_restored_sessions_in_background {
             eprintln!("zentty-linux: background-agent-host policy=lazy mounted=0");
@@ -1280,6 +1286,9 @@ impl ApplicationShell {
     }
 
     fn mount_live_peek_surfaces(&self) {
+        self.mounted_layouts
+            .borrow_mut()
+            .remove_inactive(&self.pane_box, self.state.active_worklane_id());
         clear_overlay_children(&self.background_agent_host);
         let active_panes = self.state.active_pane_ids();
         let mut mounted = 0;
@@ -1424,6 +1433,8 @@ impl ApplicationShell {
         gtk::prelude::GtkWindowExt::set_focus(&self.window, gtk::Widget::NONE);
         self.window.set_default_widget(gtk::Widget::NONE);
         clear_pane_columns(&self.pane_box);
+        self.mounted_layouts.borrow_mut().clear();
+        self.rendered_columns.borrow_mut().clear();
         clear_overlay_children(&self.background_agent_host);
         self.pane_runtime.detach_widgets();
         // The shell retains `sidebar` after detaching the root widget. Clear
@@ -3857,7 +3868,6 @@ impl ApplicationShell {
     pub(crate) fn render(&self) {
         self.pane_drag_source_state
             .advance(self.pane_drag_payloads());
-        clear_pane_columns(&self.pane_box);
         self.rendered_columns.borrow_mut().clear();
         self.render_sidebar();
         self.refresh_pane_presentation();
@@ -3888,19 +3898,40 @@ impl ApplicationShell {
 
         let columns = self.state.active_columns();
         let viewport_height = self.pane_viewport_height();
-        for (column_index, (column, width)) in columns.iter().zip(column_widths).enumerate() {
-            let column_overlay = self.build_column_overlay(
-                column,
-                width,
-                single_column,
-                viewport_height,
-                column_index + 1 < columns.len(),
+        let mut mounted = self.mounted_layouts.borrow_mut();
+        mounted.reconcile(&self.pane_box, &self.state);
+        if let Some(existing) = mounted.columns(self.state.active_worklane_id()) {
+            *self.rendered_columns.borrow_mut() = existing.clone();
+        } else {
+            for (column_index, (column, width)) in columns.iter().zip(column_widths).enumerate() {
+                let column_overlay = self.build_column_overlay(
+                    column,
+                    width,
+                    single_column,
+                    viewport_height,
+                    column_index + 1 < columns.len(),
+                );
+                self.pane_box.append(&column_overlay);
+                self.rendered_columns
+                    .borrow_mut()
+                    .insert(column.id.clone(), column_overlay);
+            }
+            mounted.insert(
+                self.state.active_worklane(),
+                self.rendered_columns.borrow().clone(),
             );
-            self.pane_box.append(&column_overlay);
-            self.rendered_columns
-                .borrow_mut()
-                .insert(column.id.clone(), column_overlay);
         }
+        drop(mounted);
+        // Drag payload generation can change without a topology change.
+        for pane in self.state.active_pane_ids() {
+            if let (Some(frame), Some(payload)) = (
+                self.pane_runtime.frame(&pane),
+                self.pane_drag_payload(&pane),
+            ) {
+                frame.install_drag_source(&payload);
+            }
+        }
+        self.apply_column_width_requests();
         self.apply_pane_height_requests(true);
         self.refresh_pane_layout_action_availability();
         eprintln!("zentty-linux: topology={}", self.topology_receipt());
@@ -4158,11 +4189,28 @@ impl ApplicationShell {
                 continue;
             }
             let heights = model_heights_to_pixels(&column.pane_heights, viewport_height);
+            let mut boundary = 0_i32;
             for (pane, height) in column.panes.iter().zip(heights) {
                 if let Some(frame) = self.pane_runtime.frame(&pane.id) {
                     frame.widget().set_height_request(height);
                     frame.widget().set_vexpand(false);
                 }
+                boundary = boundary.saturating_add(height);
+                let divider_name = PaneDivider::Pane {
+                    column_id: column.id.clone(),
+                    after_pane_id: pane.id.clone(),
+                }
+                .widget_name();
+                if let Some(overlay) = self.rendered_columns.borrow().get(&column.id) {
+                    let mut child = overlay.first_child();
+                    while let Some(widget) = child {
+                        child = widget.next_sibling();
+                        if widget.widget_name() == divider_name {
+                            widget.set_margin_top(boundary.saturating_sub(4));
+                        }
+                    }
+                }
+                boundary = boundary.saturating_add(1);
             }
             eprintln!(
                 "zentty-linux: pane-height-layout column={} viewport={viewport_height} panes={}",

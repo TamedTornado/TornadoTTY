@@ -351,7 +351,9 @@ if [[ "${backend}" == x11 ]]; then
     done
     grep -Fq 'zentty-linux: chrome-popover=servers state=open' "${log}" ||
         fail "the physical server-menu segment did not open its independent popover"
-    xdotool key --window "${window_id}" Escape
+    # Respect GTK's popover grab; XSendEvent to the parent window is not a
+    # physical Escape and used to be masked by menus being rebuilt/closed.
+    zentty_product_key "${backend}" Escape
     for _ in $(seq 1 100); do
         grep -Fq 'zentty-linux: chrome-popover=servers state=closed' "${log}" && break
         sleep 0.05
