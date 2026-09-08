@@ -1,0 +1,50 @@
+# shellcheck shell=bash
+# Real interactive Bash, shipped hooks and CLI, and the real GUI IPC owner.
+zentty_check_shell_startup() {
+    local attempt started finished elapsed
+    cat >"${barrier}/bashrc" <<'EOF'
+printf '%s\n' "$EPOCHREALTIME" >"$ZENTTY_STARTUP_PROBE/start"
+ZENTTY_BASH_ORIGINAL_PROMPT_COMMAND='printf "%s\n" "$EPOCHREALTIME" >>"$ZENTTY_STARTUP_PROBE/prompts"'
+PS1='startup-probe> '
+source "$ZENTTY_SHELL_INTEGRATION_DIR/zentty-bash-integration.bash"
+EOF
+    ZENTTY_STARTUP_PROBE="${barrier}" \
+        LD_LIBRARY_PATH="${bundle_lib}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" \
+        "${product_command[@]}" --state-directory "${barrier}/state" \
+        --command "exec bash --noprofile --rcfile '${barrier}/bashrc' -i" >>"${log}" 2>&1 &
+    product_pid=$!
+    zentty_product_prepare_input "${backend}" "${log}" "${startup_attempts}" || fail "shell surface unavailable"
+    for ((attempt = 0; attempt < 200; attempt++)); do
+        [[ -s "${barrier}/prompts" ]] && break
+        sleep 0.05
+    done
+    [[ -s "${barrier}/prompts" ]] || fail "real shell did not finish its startup hooks within ten seconds"
+    grep -Eq 'shell-signal pane=.* kind=pane-root-pid event=attach' "${log}" || fail "real GUI did not receive the shell PID"
+    grep -Eq 'shell-signal pane=.* kind=shell-state state=prompt' "${log}" || fail "real GUI did not receive the prompt state"
+    started="$(head -1 "${barrier}/start")"
+    finished="$(head -1 "${barrier}/prompts")"
+    elapsed="$(awk -v a="${started}" -v b="${finished}" 'BEGIN {printf "%.3f", b-a}')"
+    echo "shell-startup: hook-to-prompt seconds=${elapsed}"
+    awk '/shell-signal pane=.* kind=shell-state state=prompt/ {exit}
+         /shell-signal pane=.* kind=shell-state state=running/ {bad=1}
+         END {exit bad}' "${log}" || fail "hook initialization was reported as user command execution before the first prompt"
+    awk -v elapsed="${elapsed}" 'BEGIN {exit !(elapsed < 3)}' || fail "shell startup hooks blocked prompt for ${elapsed}s"
+    # Input must execute through the hooked shell, not merely reach a PTY.
+    zentty_product_type "${backend}" "printf accepted > '${barrier}/input'"
+    started="${EPOCHREALTIME}"
+    zentty_product_key "${backend}" Return
+    for ((attempt = 0; attempt < 60; attempt++)); do
+        [[ -s "${barrier}/input" ]] && break
+        sleep 0.05
+    done
+    [[ "$(cat "${barrier}/input" 2>/dev/null)" == accepted ]] || fail "shell did not execute physical input within three seconds"
+    elapsed="$(awk -v a="${started}" -v b="${EPOCHREALTIME}" 'BEGIN {printf "%.3f", b-a}')"
+    echo "shell-startup: enter-to-execution seconds=${elapsed}"
+    zentty_product_type "${backend}" exit
+    zentty_product_key "${backend}" Return
+    zentty_wait_for_owned_process "${product_pid}" "shell startup primary" 200 || fail "shell did not exit normally"
+    product_pid=""
+    [[ "$(grep -Ec 'shell-signal pane=.* kind=shell-state state=running' "${log}")" -eq 2 ]] ||
+        fail "expected only the typed command and exit, not prompt bookkeeping, to report running"
+    echo "Rust product smoke passed: ${backend}, scenario=shell-startup"
+}

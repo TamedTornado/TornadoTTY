@@ -266,6 +266,9 @@ _zentty_bash_prompt_hook() {
 _zentty_bash_preexec_hook() {
     [[ -n "${COMP_LINE:-}" ]] && return 0
     [[ "$_zentty_bash_in_prompt" == "1" ]] && return 0
+    # DEBUG fires before Bash enters PROMPT_COMMAND, before the function can
+    # raise its in-prompt guard. This is not a user command.
+    [[ "$BASH_COMMAND" == "_zentty_bash_prompt_hook" ]] && return 0
     _zentty_ensure_wrapper_path
     local full_command="$BASH_COMMAND"
     local cmd="${full_command%%[[:space:]]*}"
@@ -295,8 +298,10 @@ popd() {
     _zentty_report_directory_change
 }
 
-trap '_zentty_bash_preexec_hook' DEBUG
 PROMPT_COMMAND="_zentty_bash_prompt_hook"
 _zentty_ensure_wrapper_path
 _zentty_bind_leaked_key_events
 _zentty_bash_prompt_hook
+# Arm preexec only after setup. Otherwise each setup command synchronously
+# reports itself as user activity and repeats the wrapper scan before startup.
+trap '_zentty_bash_preexec_hook' DEBUG

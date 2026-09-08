@@ -27,8 +27,8 @@ fail() {
 
 [[ "${backend}" == wayland || "${backend}" == x11 ]] ||
     fail "GDK_BACKEND must be wayland or x11"
-[[ "${scenario}" == single || "${scenario}" == lifecycle || "${scenario}" == opener || "${scenario}" == activation ]] ||
-    fail "ZENTTY_RUST_SCENARIO must be single, lifecycle, opener, or activation"
+[[ "${scenario}" == single || "${scenario}" == lifecycle || "${scenario}" == opener || "${scenario}" == activation || "${scenario}" == shell-startup ]] ||
+    fail "ZENTTY_RUST_SCENARIO must be single, lifecycle, opener, activation, or shell-startup"
 [[ "${terminal_count}" =~ ^[1-9][0-9]*$ ]] || fail "invalid terminal count"
 [[ "${lifecycle_cycles}" =~ ^[1-9][0-9]*$ ]] || fail "invalid lifecycle cycle count"
 [[ "${startup_attempts}" =~ ^[1-9][0-9]*$ ]] || fail "invalid startup attempt count"
@@ -92,6 +92,13 @@ cleanup() {
     [[ -z "${state_directory}" ]] || rm -rf -- "${state_directory}"
 }
 trap cleanup EXIT
+
+if [[ "${scenario}" == shell-startup ]]; then
+    # shellcheck source=linux/tests/lib/product-shell-startup
+    source "${repo_root}/linux/tests/lib/product-shell-startup"
+    zentty_check_shell_startup
+    exit 0
+fi
 
 if [[ "${scenario}" == activation ]]; then
     # shellcheck source=linux/tests/lib/product-desktop-activation

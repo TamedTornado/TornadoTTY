@@ -84,3 +84,44 @@ this does not establish the live slowdown's cause. Jason cannot restart soon
 and explicitly asked development to continue. No installation, live restart,
 or full qualification was performed. Real second-monitor dock QA remains for
 his next convenient restart; these results are isolated automated tests.
+
+## GH-185: slow shell startup investigation
+
+Jason subsequently reported roughly ten seconds to start a pane in Regulate
+and laggy input. Live logs show the split at 12:09:07, surface initialized at
+12:09:08, and the first prompt signal only at 12:09:15. The initialized receipt
+does not establish a usable prompt. No live restart or deployment was performed.
+
+Focused `ZENTTY_RUST_SCENARIO=shell-startup` uses the existing private product
+journey, real interactive Bash, staged hooks/CLI and GUI IPC. It measures the
+first prompt-hook completion and physical input execution, and verifies the
+GUI actually received PID/prompt signals. Initial clean-instance checks passed:
+GH-184 X11 1.074s startup / 0.073s input, GH-183 X11 1.607s / 0.133s,
+GH-184 Wayland 2.271s / 0.125s. **These did not reproduce the full live delay.**
+Three read-only live CLI queries returned in 10–14ms; a signaling-disabled
+installed hook scan took 30–39ms. Neither supports a constant one-second IPC
+delay. The live process had no memory pressure or swapping during inspection;
+high I/O pressure with little NVMe activity remains unexplained. A brief CPU
+sample was inconclusive, not evidence that rendering is correct.
+
+A process-only trace of the isolated journey reproduced the same erroneous
+startup sequence as the live log: Bash DEBUG treated PROMPT_COMMAND assignment,
+wrapper setup, key binding setup, and the prompt hook itself as user commands.
+Each triggered another wrapper scan and synchronous GUI notification. The trace
+completed product assertions but its outer wrapper timed out; this diagnostic
+run is not counted as a passing journey.
+
+Added an assertion rejecting running-command events before the first prompt:
+it failed against the old staged hook at 1.621s. The repair arms DEBUG after
+initialization and skips the prompt-hook function entry before its guard is set.
+It does not disable genuine preexec reporting or abandon replies. The X11
+journey then passed at 1.324s / 0.131s. Staged Bash compatibility checks passed.
+Only the shell resource in the private GH-184 stage was refreshed, not installed
+resources, and no Rust rebuild or full qualification was run.
+
+The subsequent Wayland startup check passed its initialization semantics at
+1.794s but **failed physical input**: the logged command path contained an extra
+`3;5u` sequence. This is an input-corruption failure, not proof of a three-second
+IPC delay. Preserve it as outstanding under #185; do not retry it green or
+claim the full sluggishness issue is fixed. The exact live seven-second delay
+and laggy input remain open even though the redundant startup events are fixed.
