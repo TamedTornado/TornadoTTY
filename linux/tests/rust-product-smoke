@@ -27,8 +27,8 @@ fail() {
 
 [[ "${backend}" == wayland || "${backend}" == x11 ]] ||
     fail "GDK_BACKEND must be wayland or x11"
-[[ "${scenario}" == single || "${scenario}" == lifecycle ]] ||
-    fail "ZENTTY_RUST_SCENARIO must be single or lifecycle"
+[[ "${scenario}" == single || "${scenario}" == lifecycle || "${scenario}" == opener ]] ||
+    fail "ZENTTY_RUST_SCENARIO must be single, lifecycle, or opener"
 [[ "${terminal_count}" =~ ^[1-9][0-9]*$ ]] || fail "invalid terminal count"
 [[ "${lifecycle_cycles}" =~ ^[1-9][0-9]*$ ]] || fail "invalid lifecycle cycle count"
 [[ "${startup_attempts}" =~ ^[1-9][0-9]*$ ]] || fail "invalid startup attempt count"
@@ -93,6 +93,26 @@ cleanup() {
 }
 trap cleanup EXIT
 
+if [[ "${scenario}" == opener ]]; then
+    [[ "${physical_journey}" == true ]] || fail "opener regression requires physical input"
+    mkdir -p "${barrier}/bin" "${XDG_CONFIG_HOME:?}/ghostty"
+    printf '\nkeybind = f8=write_screen_file:open\n' >>"${XDG_CONFIG_HOME}/ghostty/config"
+    export ZENTTY_OPENER_RECEIPTS="${barrier}/opener-pids"
+    cat >"${barrier}/bin/xdg-open" <<'EOF'
+#!/bin/sh
+set -eu
+test -f "$1"
+grep -q GH183-SCREEN "$1"
+printf '%s\n' "$$" >>"$ZENTTY_OPENER_RECEIPTS"
+printf 'GH183-first\n\n' >&2
+i=0
+while [ "$i" -lt 600 ]; do printf x >&2; i=$((i+1)); done
+printf '\nGH183-last' >&2
+EOF
+    chmod +x "${barrier}/bin/xdg-open"
+    export PATH="${barrier}/bin:${PATH}"
+fi
+
 if [[ "${scenario}" == lifecycle ]]; then
     child_command="printf '\\033]2;zentty-rust-smoke-${backend}\\a'; sleep 0.1"
 elif [[ "${physical_journey}" == true ]]; then
@@ -105,6 +125,9 @@ elif [[ "${physical_journey}" == true ]]; then
 else
     child_command="printf '\\033]2;zentty-rust-smoke-${backend}\\a'; sleep 0.1"
 fi
+if [[ "${scenario}" == opener ]]; then
+    child_command="printf 'GH183-SCREEN\\n'; ${child_command}"
+fi
 
 run_cycle() {
     local product_args
@@ -112,7 +135,7 @@ run_cycle() {
     if ((terminal_count > 1)); then
         jq '.restoreDraftWindows = []' "${fixture}" >"${state_directory}/restore-snapshot.json"
     fi
-    find "${barrier}" -type f -delete
+    [[ "${scenario}" == opener ]] || find "${barrier}" -type f -delete
     product_args=(
         --command "${child_command}"
         --state-directory "${state_directory}"
@@ -127,13 +150,37 @@ run_cycle() {
 }
 
 run_cycle
-if [[ "${scenario}" == single && "${physical_journey}" == true ]]; then
+if [[ ("${scenario}" == single || "${scenario}" == opener) && "${physical_journey}" == true ]]; then
     zentty_product_prepare_input "${backend}" "${log}" "${startup_attempts}" ||
         fail "controlled ${backend} input did not become ready"
     if [[ "${backend}" == x11 ]]; then
         xdotool windowsize --sync "${ZENTTY_PRODUCT_WINDOW_ID}" 820 640
     fi
     sleep 0.1
+    if [[ "${scenario}" == opener ]]; then
+        # The real Ghostty screen-file action uses the same fallback opener as
+        # URL clicks, without depending on font-specific link coordinates.
+        for invocation in 1 2 3; do
+            zentty_product_key "${backend}" F8
+            for ((attempt = 0; attempt < 100; attempt++)); do
+                count="$(grep -Fc 'warning(os-open): open stderr=GH183-last' "${log}" || true)"
+                [[ "${count}" -eq "${invocation}" ]] && break
+                [[ "$(stat -c %s "${log}")" -lt 1048576 ]] || fail "opener flooded the product log"
+                sleep 0.05
+            done
+            [[ "${count}" -eq "${invocation}" ]] || fail "opener did not finish reading stderr"
+        done
+        [[ "$(wc -l <"${ZENTTY_OPENER_RECEIPTS}")" -eq 3 ]] || fail "controlled opener was not invoked three times"
+        while read -r opener_pid; do
+            for ((attempt = 0; attempt < 100; attempt++)); do
+                [[ -e "/proc/${opener_pid}" ]] || break
+                sleep 0.05
+            done
+            [[ ! -e "/proc/${opener_pid}" ]] || fail "opener child was not reaped"
+        done <"${ZENTTY_OPENER_RECEIPTS}"
+        [[ "$(grep -Fxc 'warning(os-open): open stderr=' "${log}" || true)" -eq 3 ]] ||
+            fail "blank stderr records were repeated or lost"
+    fi
     zentty_product_type "${backend}" zentty-rust-input
     zentty_product_key "${backend}" Return
 fi
