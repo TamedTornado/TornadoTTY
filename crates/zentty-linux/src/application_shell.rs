@@ -59,6 +59,8 @@ mod project_context_runtime;
 mod remote_paste;
 pub(crate) mod server_runtime;
 mod shell_signal;
+#[cfg(test)]
+mod sidebar_geometry_tests;
 pub(crate) mod shortcut_registry;
 pub(crate) mod shortcut_runtime;
 mod signal_arguments;
@@ -5403,7 +5405,9 @@ fn build_shell_widgets() -> ShellWidgets {
     body.set_shrink_start_child(true);
     let sidebar = gtk::Box::new(gtk::Orientation::Vertical, 6);
     let sidebar_scroll = gtk::ScrolledWindow::new();
-    sidebar_scroll.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
+    // The animated sidebar overlays a separately reserved column. Do not let
+    // title/control minimum widths enlarge it over the terminal beneath it.
+    sidebar_scroll.set_policy(gtk::PolicyType::External, gtk::PolicyType::Automatic);
     sidebar_scroll.set_child(Some(&sidebar));
     let content = gtk::Box::new(gtk::Orientation::Vertical, 0);
     content.set_hexpand(true);

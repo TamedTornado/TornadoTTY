@@ -245,3 +245,26 @@ No full qualification or screenshot-baseline rewrite. Actual Codex visual QA
 remains for Jason's restart; PTY reflow is tested, not a claim about every TUI.
 
 Built in build/gh185 and atomically installed without restarting the active app.
+
+### Follow-up: real left-edge overlap after resize
+
+Jason's screenshot after restarting into 51bf7e73 still showed clipped left-edge
+text. Confirmed running executable matched installed; this was not stale-client
+QA. Column-count testing missed a separate geometry defect: sidebar is an
+overlay above a reserved column, and GTK minimum sizing can make it exceed that
+reservation. A previous Working spinner populates a non-ellipsizing prefix in
+a homogeneous GtkStack; the hidden activity child still affects Ready sizing.
+
+New real-GTK composed sidebar/terminal-viewport test reproduces after Working ->
+Ready and narrowing to 180px: sidebar width 206px, terminal starts at x=188px,
+so 18px of the terminal are covered. An initially stable title did not reproduce;
+the test now exercises both active and previously active title states. The fix
+ellipsizes the activity prefix and uses External horizontal policy for sidebar
+scrolling so child minimum sizes cannot enlarge the overlay reservation.
+No protocol/session data or terminal text interpretation changed.
+
+PASS: allocated widget bounds never overlap through 420/180/280/180 widths,
+including Working and Ready; same focused X11 physical-drag/real-PTY journey
+(70 -> 66 -> 80 columns), lane switching and Peek. Added the geometry check to
+the existing matrix. No full qualification. Rebuilt and atomically installed;
+Jason's running client is not restarted. User visual confirmation remains open.

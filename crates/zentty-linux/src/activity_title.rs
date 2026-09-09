@@ -17,6 +17,9 @@ pub(crate) fn widget(name: &str, text: &str) -> gtk::Stack {
 
     let activity = gtk::Box::new(gtk::Orientation::Horizontal, 0);
     let prefix = activity_label(&format!("{name}-activity-prefix"));
+    // A title is presentation, not a minimum-width demand on its sidebar.
+    // The homogeneous stack measures this child even after it becomes hidden.
+    prefix.set_ellipsize(gtk::pango::EllipsizeMode::End);
     let spinner = activity_label(&format!("{name}-activity-spinner"));
     spinner.set_width_chars(1);
     spinner.set_max_width_chars(1);
