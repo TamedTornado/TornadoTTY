@@ -849,22 +849,19 @@ run_gemini_terminal_notifications() {
     zentty_product_wait_for_log "${log}" 'terminal-ready-pane=pane-1' 'notification terminal did not initialize' || fail "terminal not ready"
     touch "${state_directory}/ready"
     zentty_product_wait_for_log "${log}" \
-        'zentty-linux: terminal-notification pane=pane-1 title="Gemini" body="Action required"' \
-        "real Gemini action notification did not cross the Ghostty embedding boundary" 600 || fail "terminal notification missing"
-    zentty_product_wait_for_log "${log}" \
         'sidebar-agent-status pane=pane-1 phase=NeedsInput interaction=Approval attention=true' \
         "Gemini action notification did not establish approval attention"
     # Start the rate-limit interval after GTK consumed the first request,
     # not merely after the PTY writer emitted it during startup.
     touch "${state_directory}/complete"
     zentty_product_wait_for_log "${log}" \
-        'zentty-linux: terminal-notification pane=pane-1 title="Gemini" body="Session complete"' \
-        "real Gemini completion notification did not cross the Ghostty embedding boundary" 600 || fail "completion notification missing"
-    zentty_product_wait_for_log "${log}" \
         'sidebar-agent-status pane=pane-1 phase=Idle interaction=None attention=false' \
         "Gemini completion notification did not establish ready state"
 
     wait_for_product "Gemini terminal-notification product run" 200
+    [[ "$(grep -Fc 'zentty-linux: terminal-notification pane=pane-1' "${log}")" == 2 ]] ||
+        fail "both real Gemini OSC notifications must cross the embedding boundary"
+    ! grep -Fq 'desktop-terminal' "${log}" || fail "managed agent notification bypassed canonical attention policy"
     if grep -Fq 'g_application_send_notification: assertion' "${log}"; then
         fail "terminal notification fell through to an unregistered native application"
     fi

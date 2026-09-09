@@ -790,18 +790,25 @@ impl PaneRuntimeCoordinator {
     ) {
         let notification_id = pane_id.to_owned();
         let weak = Rc::downgrade(shell);
+        let notification_widget = surface.widget().downgrade();
         surface.on_desktop_notification(move |title, body| {
-            eprintln!(
-                "zentty-linux: terminal-notification pane={notification_id} title={title:?} body={body:?}"
-            );
+            eprintln!("zentty-linux: terminal-notification pane={notification_id}");
             let weak = weak.clone();
+            let notification_widget = notification_widget.clone();
             let notification_id = notification_id.clone();
             glib::idle_add_local_once(move || {
                 let Some(shell) = weak.upgrade() else {
                     return;
                 };
                 let mut shell = shell.borrow_mut();
-                if shell.shutting_down {
+                if shell.shutting_down
+                    || !shell
+                        .pane_runtime
+                        .surface(&notification_id)
+                        .is_some_and(|surface| {
+                            notification_widget.upgrade().as_ref() == Some(surface.widget())
+                        })
+                {
                     return;
                 }
                 if shell.state.reconcile_terminal_notification(
@@ -811,6 +818,24 @@ impl PaneRuntimeCoordinator {
                     unix_time_ms(),
                 ) {
                     shell.refresh_sidebar_metadata();
+                }
+                // Managed agents own attention policy (including duplicate and
+                // automatic-approval suppression). Raw OSC must not bypass it.
+                if shell.state.pane_agent_status(&notification_id).is_some() {
+                    return;
+                }
+                if let Some(worklane_id) = shell.state.worklane_id_for_pane(&notification_id)
+                    && let Some(handler) = &shell.application_action_handler
+                {
+                    handler(super::ApplicationAction::TerminalNotification {
+                        target: zentty_core::AttentionTarget::new(
+                            &shell.window_template.id,
+                            worklane_id,
+                            &notification_id,
+                        ),
+                        title,
+                        body,
+                    });
                 }
             });
         });

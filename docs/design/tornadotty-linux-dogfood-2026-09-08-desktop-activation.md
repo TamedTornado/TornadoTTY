@@ -354,3 +354,66 @@ GUI and CLI without restarting Jason's active client. No full qualification.
 Wayland runtime keymap/remap/multi-pane focus check also PASS after building its
 missing existing wayland-keycode-driver prerequisite; the first invocation was
 blocked by that absent executable, not a passing run.
+
+### GH-171: real terminal desktop delivery and activation
+
+The GH-187 native-send guard removed an invalid API call but did not deliver
+ordinary terminal notifications. The extended `rust-notifications-settings`
+journey is red on dc3e2687: a real OSC777 crosses the embedded surface callback,
+but its title/body never reaches the real notification daemon. The strengthened
+`product-desktop-activation` journey is independently red on the remaining
+unregistered-application cgroup lookup.
+
+Ownership is now explicit: Ghostty retains its private process-default
+GhosttyApplication; the host DesktopActivation owns desktop identity,
+registration, activation and window association. The private engine application
+is deliberately not registered as a competing desktop application. Ordinary
+OSC delivery uses the host's existing notification proxy and bounded pane-action
+registry, asynchronously with a two-second call deadline and bounded in-flight
+requests. Managed agents still use canonical attention policy, not duplicate raw
+OSC delivery. Stale surface callbacks are rejected and terminal title/body are
+no longer copied into production logs. Engine commit
+0f3d611e9d0402738dfd93dbe163c9c99d8ea1f2 acquires the shared GIO session bus for
+cgroup scopes independently of application registration; hard/soft failure
+policy and connection-reference ownership are preserved.
+
+Initial focused X11 and native-Wayland delivery/click checks PASS: actual
+notification-daemon receipt has the intended title/body once, physical click
+on its real X11 popup selects the original of two product panes, and the CLI
+confirms canonical focus. Wayland here means the real product uses Wayland;
+Ubuntu's notification-daemon itself uses the wrapper-owned X11 display.
+The missing-daemon extension PASS on Wayland without attempting another Notify.
+The first click extension exposed a fixture bug: split children inherited the
+same command and competed to emit the notification. A first-child ownership
+claim now makes the originating PTY deterministic. A wrong expected credential
+label was also corrected from `absent` to the existing `none` representation.
+
+The first engine integration attempt was BLOCKED by the bundle validator:
+using the sibling source with an absolute cache path embedded an absolute
+layer-shell RUNPATH. No validator was relaxed. Rebuilding the committed engine
+through the normal pinned managed checkout restores the supported bundle path.
+Focused notification payload/visibility-policy mutation run: 7 generated,
+5 caught, 2 unviable, no survivors. This is not blanket mutation coverage of
+GTK registration or all asynchronous service paths. Full qualification not run.
+Final pinned integration and installed/live status follow below.
+
+Final pinned ReleaseSafe integration PASS on X11 and Wayland: terminal OSC
+receipt once, real popup click, canonical origin-pane focus with two surfaces,
+missing-daemon containment, primary/secondary desktop activation, two windows,
+missing-bus startup rejection, clean normal activation shutdown, no application
+assertion, and both Gemini OSC state transitions without generic duplication.
+Existing X11 notification/settings journey PASS, including CLI delivery,
+sound hints, import, persistence and explicit unavailable paths. Eight focused
+notification unit tests PASS (mutation baseline). Matrix schema/coverage PASS.
+Shell syntax PASS; standalone shellcheck reports pre-existing sourced-global
+and source-following diagnostics, not claimed clean.
+
+Broader `rust-attention-inbox` is FAIL on both this change and predecessor
+build/gh185-input: it expects two unresolved approvals but gets two items with
+only one unresolved after a viewed approval. Removing inherited agent-tool
+environment did not change that result. This is not certified as a passing
+agent activation integration run, nor repaired by changing its assertion;
+tracked with existing lifecycle-versus-unread issue #175. The new terminal path
+and unit token/action registry checks pass independently. GH-171 remains open
+for outstanding acceptance audit and live desktop QA; no claim of blanket
+registration/async mutation coverage or full release qualification.

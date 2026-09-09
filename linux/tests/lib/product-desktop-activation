@@ -81,5 +81,7 @@ EOF
     zentty_wait_for_owned_process "${product_pid}" "desktop activation primary" 200 ||
         fail "activated primary did not shut down normally"
     product_pid=""
+    ! grep -Eq 'g_application_.*assertion|GLib-GIO-CRITICAL' "${log}" ||
+        fail "desktop/cgroup lifecycle used an unregistered application"
     echo "Rust product smoke passed: ${backend}, scenario=activation, forwarded=1, explicit-windows=2"
 }

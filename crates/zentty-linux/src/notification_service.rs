@@ -1,5 +1,7 @@
+use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, VecDeque};
 use std::process::{Command, Stdio};
+use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, SyncSender, TrySendError};
@@ -157,7 +159,8 @@ pub(crate) struct DesktopAttentionActivation {
 
 pub(crate) struct AttentionNotificationService {
     proxy: Option<gio::DBusProxy>,
-    registry: DesktopNotificationRegistry,
+    registry: Rc<RefCell<DesktopNotificationRegistry>>,
+    pending_terminal: Rc<Cell<usize>>,
     signals: Receiver<DesktopSignal>,
     dropped_signals: Arc<AtomicU64>,
     next_drop_report_at: u64,
@@ -190,7 +193,8 @@ impl AttentionNotificationService {
         }
         Self {
             proxy,
-            registry: DesktopNotificationRegistry::default(),
+            registry: Rc::default(),
+            pending_terminal: Rc::default(),
             signals,
             dropped_signals,
             next_drop_report_at: 1,
@@ -217,7 +221,8 @@ impl AttentionNotificationService {
         };
         let actions = vec!["default".to_owned(), "Jump to Pane".to_owned()];
         let id = send_with_proxy(proxy, &title, &body, &actions, config, false)?;
-        if let Some((evicted_id, evicted_total)) = self.registry.track(id, item.target.clone())
+        if let Some((evicted_id, evicted_total)) =
+            self.registry.borrow_mut().track(id, item.target.clone())
             && evicted_total.is_power_of_two()
         {
             eprintln!(
@@ -227,10 +232,60 @@ impl AttentionNotificationService {
         Ok(id)
     }
 
+    pub(crate) fn send_terminal(
+        &self,
+        target: AttentionTarget,
+        title: &str,
+        body: &str,
+        config: &NotificationsConfig,
+    ) -> Result<(), String> {
+        let proxy = self
+            .proxy
+            .as_ref()
+            .filter(|proxy| proxy.name_owner().is_some())
+            .ok_or_else(|| "no freedesktop notification service is available".to_owned())?;
+        if self.pending_terminal.get() >= MAX_TRACKED_DESKTOP_NOTIFICATIONS {
+            return Err("terminal notification delivery capacity reached".to_owned());
+        }
+        let actions = vec!["default".to_owned(), "Jump to Pane".to_owned()];
+        let parameters = notification_parameters(title, body, &actions, config, false)?;
+        let registry = Rc::downgrade(&self.registry);
+        let pending = Rc::clone(&self.pending_terminal);
+        pending.set(pending.get() + 1);
+        proxy.call(
+            "Notify",
+            Some(&parameters),
+            gio::DBusCallFlags::NONE,
+            CALL_TIMEOUT_MS,
+            gio::Cancellable::NONE,
+            move |response| {
+                pending.set(pending.get() - 1);
+                let Some(registry) = registry.upgrade() else {
+                    return;
+                };
+                match response {
+                    Ok(response) => {
+                        if let Some((id,)) = response.get::<(u32,)>() {
+                            registry.borrow_mut().track(id, target);
+                            eprintln!("zentty-linux: desktop-terminal service-id={id} result=sent");
+                        } else {
+                            eprintln!("zentty-linux: desktop-terminal result=invalid-reply");
+                        }
+                    }
+                    Err(error) => eprintln!(
+                        "zentty-linux: desktop-terminal result=unavailable detail={error}"
+                    ),
+                }
+            },
+        );
+        Ok(())
+    }
+
     pub(crate) fn drain_activations(&mut self) -> Vec<DesktopAttentionActivation> {
         let mut activations = Vec::new();
         while let Ok(signal) = self.signals.try_recv() {
-            if let Some(activation) = apply_desktop_signal(&mut self.registry, signal) {
+            if let Some(activation) = apply_desktop_signal(&mut self.registry.borrow_mut(), signal)
+            {
                 activations.push(activation);
             }
         }
@@ -408,29 +463,7 @@ fn send_with_proxy(
     if proxy.name_owner().is_none() {
         return Err("no freedesktop notification service is available".into());
     }
-    let mut hints = HashMap::<String, glib::Variant>::new();
-    if silent {
-        hints.insert("suppress-sound".into(), true.to_variant());
-    } else if CustomSoundStore::is_custom_name(&config.sound_name) {
-        let path = CustomSoundStore::path_for_name(&config.sound_name)?;
-        let path = path
-            .to_str()
-            .ok_or_else(|| "custom sound path is not valid UTF-8".to_owned())?;
-        hints.insert("sound-file".into(), path.to_variant());
-    } else if !config.sound_name.is_empty() {
-        hints.insert("sound-name".into(), config.sound_name.to_variant());
-    }
-    let parameters = (
-        zentty_core::PRODUCT_NAME,
-        0_u32,
-        "",
-        title,
-        body,
-        actions.to_vec(),
-        hints,
-        -1_i32,
-    )
-        .to_variant();
+    let parameters = notification_parameters(title, body, actions, config, silent)?;
     let response = proxy
         .call_sync(
             "Notify",
@@ -444,6 +477,38 @@ fn send_with_proxy(
         .get::<(u32,)>()
         .map(|(id,)| id)
         .ok_or_else(|| "desktop notification service returned an invalid reply".into())
+}
+
+fn notification_parameters(
+    title: &str,
+    body: &str,
+    actions: &[String],
+    config: &NotificationsConfig,
+    silent: bool,
+) -> Result<glib::Variant, String> {
+    let mut hints = HashMap::<String, glib::Variant>::new();
+    if silent {
+        hints.insert("suppress-sound".into(), true.to_variant());
+    } else if CustomSoundStore::is_custom_name(&config.sound_name) {
+        let path = CustomSoundStore::path_for_name(&config.sound_name)?;
+        let path = path
+            .to_str()
+            .ok_or_else(|| "custom sound path is not valid UTF-8".to_owned())?;
+        hints.insert("sound-file".into(), path.to_variant());
+    } else if !config.sound_name.is_empty() {
+        hints.insert("sound-name".into(), config.sound_name.to_variant());
+    }
+    Ok((
+        zentty_core::PRODUCT_NAME,
+        0_u32,
+        "",
+        title,
+        body,
+        actions.to_vec(),
+        hints,
+        -1_i32,
+    )
+        .to_variant())
 }
 
 fn notification_proxy() -> Result<gio::DBusProxy, String> {
@@ -485,6 +550,54 @@ mod tests {
         MAX_TRACKED_DESKTOP_NOTIFICATIONS, SettingsLauncher, apply_desktop_signal,
         desktop_attention_decision, enqueue_desktop_signal, settings_launcher,
     };
+
+    #[test]
+    fn terminal_payload_preserves_content_action_and_sound_policy() {
+        let config = zentty_core::NotificationsConfig {
+            sound_name: "complete".to_owned(),
+            ..Default::default()
+        };
+        let actions = vec!["default".to_owned(), "Jump to Pane".to_owned()];
+        for silent in [false, true] {
+            let payload = super::notification_parameters(
+                "Build ready",
+                "All checks passed",
+                &actions,
+                &config,
+                silent,
+            )
+            .unwrap();
+            let (app, replaces, icon, title, body, actual_actions, hints, expiry) = payload
+                .get::<(
+                    String,
+                    u32,
+                    String,
+                    String,
+                    String,
+                    Vec<String>,
+                    std::collections::HashMap<String, gtk::glib::Variant>,
+                    i32,
+                )>()
+                .unwrap();
+            assert_eq!(app, zentty_core::PRODUCT_NAME);
+            assert_eq!(replaces, 0);
+            assert!(icon.is_empty());
+            assert_eq!(title, "Build ready");
+            assert_eq!(body, "All checks passed");
+            assert_eq!(actual_actions, actions);
+            assert_eq!(expiry, -1);
+            if silent {
+                assert_eq!(hints["suppress-sound"].get::<bool>(), Some(true));
+                assert!(!hints.contains_key("sound-name"));
+            } else {
+                assert_eq!(
+                    hints["sound-name"].get::<String>().as_deref(),
+                    Some("complete")
+                );
+                assert!(!hints.contains_key("suppress-sound"));
+            }
+        }
+    }
 
     #[test]
     fn visible_pane_delivery_policy_preserves_defaults_and_focused_suppression() {

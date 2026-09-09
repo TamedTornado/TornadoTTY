@@ -119,6 +119,11 @@ pub(crate) struct ApplicationRuntimes {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum ApplicationAction {
+    TerminalNotification {
+        target: zentty_core::AttentionTarget,
+        title: String,
+        body: String,
+    },
     ActivateAttention(zentty_core::AttentionTarget),
     ActivateFleetPane {
         target: zentty_core::AttentionTarget,
@@ -816,6 +821,11 @@ impl ApplicationShell {
     pub(crate) fn refresh_attention_inbox(&self) {
         let inbox = self.attention_inbox.borrow();
         self.chrome.render_attention(inbox.items());
+    }
+
+    pub(crate) fn contains_attention_target(&self, target: &zentty_core::AttentionTarget) -> bool {
+        self.window_template.id == target.window_id
+            && self.state.worklane_id_for_pane(&target.pane_id) == Some(target.worklane_id.as_str())
     }
 
     pub(crate) fn attention_target_is_visibly_displayed(

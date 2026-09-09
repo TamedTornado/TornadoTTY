@@ -4,6 +4,8 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 product="${ZENTTY_LINUX_BINARY:-${repo_root}/build/linux/bin/zentty-linux}"
 backend="${GDK_BACKEND:-}"
+scenario="${ZENTTY_NOTIFICATIONS_SCENARIO:-settings}"
+unset ZENTTY_AGENT_TOOL
 run_root="$(mktemp -d)"
 state_directory="${run_root}/state"
 receipt="${run_root}/notifications.receipt"
@@ -105,9 +107,20 @@ cat >"${cli_child}" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 umask 077
+if ! mkdir "${ZENTTY_NOTIFICATION_CLI_RECEIPT}.owner" 2>/dev/null; then
+    exec sleep 120
+fi
 printf 'socket=%s\ntoken=%s\ncli=%s\n' \
     "${ZENTTY_INSTANCE_SOCKET}" "${ZENTTY_PANE_TOKEN}" "${ZENTTY_CLI_BIN}" \
     >"${ZENTTY_NOTIFICATION_CLI_RECEIPT}"
+if [[ "${ZENTTY_NOTIFICATIONS_SCENARIO:-settings}" == terminal ]]; then
+    while [[ ! -f "${ZENTTY_NOTIFICATION_CLI_RECEIPT}.notify" ]]; do sleep 0.02; done
+    printf '\033]777;notify;Controlled terminal title;Controlled terminal body\007'
+    while [[ ! -f "${ZENTTY_NOTIFICATION_CLI_RECEIPT}.unavailable" ]]; do sleep 0.02; done
+    # Ghostty intentionally rate-limits desktop requests to one per second.
+    sleep 1.1
+    printf '\033]777;notify;Unavailable terminal title;Unavailable terminal body\007'
+fi
 exec sleep 120
 EOF
 chmod 0700 "${cli_child}"
@@ -149,6 +162,7 @@ start_product() {
     tornadotty_product_receipt_prepare "${product}" "${event_receipt}" ||
         fail "typed product receipt could not be prepared for launch ${launch_count}"
     rm -f -- "${cli_receipt}"
+    rmdir "${cli_receipt}.owner" 2>/dev/null || true
     tornadotty_product_session_start "${session_directory}" "${product}" \
         --resource "${display_resource}" -- \
         env GDK_SCALE=1 \
@@ -217,6 +231,51 @@ open_notification_settings() {
 }
 
 start_product
+if [[ "${scenario}" == terminal ]]; then
+    cli_socket="$(sed -n 's/^socket=//p' "${cli_receipt}")"
+    cli_token="$(sed -n 's/^token=//p' "${cli_receipt}")"
+    cli_binary="$(sed -n 's/^cli=//p' "${cli_receipt}")"
+    env ZENTTY_INSTANCE_SOCKET="${cli_socket}" ZENTTY_PANE_TOKEN="${cli_token}" \
+        "${cli_binary}" split right --json >"${run_root}/split.json" || fail "second real pane could not be created"
+    zentty_product_wait_for_log "${log}" 'focus-pane pane=pane-2' \
+        "second pane was not focused before notification" || fail "second pane focus missing"
+    touch "${cli_receipt}.notify"
+    for _ in {1..200}; do
+        grep -Fq 'string "Controlled terminal body"' "${receipt}" && break
+        sleep 0.05
+    done
+    grep -Fq 'string "Controlled terminal title"' "${receipt}" || fail "real OSC title was not delivered"
+    grep -Fq 'string "Controlled terminal body"' "${receipt}" || fail "real OSC body was not delivered"
+    [[ "$(grep -Fc 'string "Controlled terminal body"' "${receipt}")" == 1 ]] || fail "OSC delivery was duplicated"
+    notification_window=""
+    for _ in {1..100}; do
+        notification_window="$(xdotool search --onlyvisible --pid "${daemon_pid}" 2>/dev/null | tail -1 || true)"
+        [[ "${notification_window}" =~ ^[1-9][0-9]*$ ]] && break
+        sleep 0.02
+    done
+    [[ "${notification_window}" =~ ^[1-9][0-9]*$ ]] || fail "real daemon popup was not mapped"
+    xdotool mousemove --window "${notification_window}" 100 35 click 1
+    zentty_product_wait_for_log "${log}" \
+        'desktop-attention-activate service-id=1 action=default credential=none window=window-1 worklane=worklane-1 pane=pane-1 result=focused' \
+        "real notification click did not activate its originating pane" || fail "terminal click-to-focus failed"
+    env ZENTTY_INSTANCE_SOCKET="${cli_socket}" ZENTTY_PANE_TOKEN="${cli_token}" \
+        "${cli_binary}" list panes --json >"${run_root}/panes.json"
+    jq -e 'length == 2 and any(.[]; .id == "pane-1" and .isFocused == true)' \
+        "${run_root}/panes.json" >/dev/null || fail "notification activation did not change canonical pane focus"
+    kill -TERM "${daemon_pid}"
+    wait "${daemon_pid}" || true
+    daemon_pid=""
+    touch "${cli_receipt}.unavailable"
+    zentty_product_wait_for_log "${log}" \
+        'desktop-terminal result=unavailable detail=no freedesktop notification service is available' \
+        "missing notification daemon did not fail gracefully" || fail "unavailable-service handling failed"
+    [[ "$(grep -Fc 'desktop-terminal result=unavailable' "${log}")" == 1 ]] || fail "unavailable notification was retried"
+    ! grep -Fq 'Unavailable terminal body' "${receipt}" || fail "notification attempted delivery without daemon"
+    ! grep -Eq 'GLib-GIO-CRITICAL|g_application_.*assertion' "${log}" || fail "invalid application lifecycle"
+    stop_product
+    echo "Rust terminal desktop notification passed: ${backend}, real-pty=OSC777 real-daemon=receipt click=real-popup focus=canonical-pane unavailable=contained"
+    exit 0
+fi
 open_notification_settings
 
 settings_key alt+n

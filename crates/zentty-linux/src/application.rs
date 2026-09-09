@@ -605,6 +605,33 @@ impl ApplicationCoordinator {
     ) {
         let mut refresh_attention = false;
         match action {
+            crate::application_shell::ApplicationAction::TerminalNotification {
+                target,
+                title,
+                body,
+            } => {
+                let coordinator = coordinator.borrow();
+                let Some(shell) = coordinator.shells.get(&target.window_id) else {
+                    return;
+                };
+                let shell = shell.borrow();
+                if !shell.contains_attention_target(&target) {
+                    return;
+                }
+                if !shell.notify_when_pane_visible()
+                    && shell.attention_target_is_visibly_displayed(&target)
+                {
+                    return;
+                }
+                if let Err(error) = coordinator.desktop_notifications.send_terminal(
+                    target,
+                    &title,
+                    &body,
+                    &coordinator.config.notifications,
+                ) {
+                    eprintln!("zentty-linux: desktop-terminal result=unavailable detail={error}");
+                }
+            }
             crate::application_shell::ApplicationAction::ActivateAttention(target) => {
                 let shell = coordinator.borrow().shells.get(&target.window_id).cloned();
                 let activated = shell.as_ref().is_some_and(|shell| {

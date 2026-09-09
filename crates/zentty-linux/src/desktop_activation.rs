@@ -42,9 +42,9 @@ impl DesktopActivation {
                 pending_activation.set(true);
             }
         });
-        // Ghostty owns the process-default application: its post-fork cgroup
-        // path downcasts that object to GhosttyApplication. Desktop registration
-        // and our explicit window association do not require replacing it.
+        // Ghostty owns the private process-default GhosttyApplication and its
+        // native lifecycle. The host alone registers the desktop identity and
+        // associates windows; never replace the engine's private default.
         application
             .register(gio::Cancellable::NONE)
             .map_err(|error| {
