@@ -324,3 +324,33 @@ live logs are not fixed by the notification-delivery guard.
 Build staged in build/gh186; GUI, CLI and matching engine library installed
 atomically (engine RUNPATH normalized as packaging does). Live client and Codex
 accounts untouched. User logout QA pending next restart.
+
+### GH-185: deterministic printable-key corruption repair
+
+Extended the existing keyboard-compose journey with exact mixed-case alphabet,
+digits and punctuation PTY text. Predecessor emits ESC[67;5u instead of C and
+function-key sequences instead of punctuation. This reproduces the same class
+as stray `4;5u` in the restored-shell command, without random filenames or
+repeated retries. GTK remapKey did not recognize uppercase/shifted symbols and
+fell back to physical Ctrl/function-key positions assigned by virtual keymaps;
+eventMods then synthesized Ctrl. Engine 7e695b7a1e841086ed8a9ba14d73397fb37cf8ca
+normalizes uppercase lookup and rejects non-writing-system physical fallback
+for printable logical symbols. Real modifier mapping and writing-system physical
+identity are preserved; focused Zig assertions added (not independently run).
+
+PASS: extended real PTY compose/dead-key/mixed-text checks on X11 and Wayland;
+X11 runtime US/German keymap switching/remapping/multi-pane focus; native Wayland
+completed-restore now executes the physical replacement-shell command and exits
+cleanly. Initial X11 extension switched keymaps before GTK consumed prior
+compose events; actor now publishes their actual PTY receipt before the switch.
+No assertion relaxed. The existing restored-exit Wayland path joins the matrix.
+
+Intermittent live switch latency is NOT claimed fixed. Added slow-only (>=50ms)
+per-stage render/chrome timings with lane ID and durations only: no terminal
+text, timer, polling service or new framework. Future slow switches can identify
+chrome/server/context/attention/layout costs without a short live trace window.
+Build staged in build/gh185-input; installed atomically with matching engine,
+GUI and CLI without restarting Jason's active client. No full qualification.
+Wayland runtime keymap/remap/multi-pane focus check also PASS after building its
+missing existing wayland-keycode-driver prerequisite; the first invocation was
+blocked by that absent executable, not a passing run.

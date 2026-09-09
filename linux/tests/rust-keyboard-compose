@@ -70,6 +70,8 @@ compose_hex="$(printf '%s' "${compose_value}" | od -An -tx1 | tr -d ' \n')"
 printf 'dead-key=%s hex=%s\ncompose=%s hex=%s\n' \
     "${dead_key_value}" "${dead_hex}" "${compose_value}" "${compose_hex}" \
     >"${ZENTTY_KEY_RECEIPT}"
+IFS= read -r text_value
+printf 'text=%s\n' "$text_value" >>"${ZENTTY_KEY_RECEIPT}"
 ACTOR
 chmod +x "${actor}"
 
@@ -96,15 +98,28 @@ else
     wtype -k Multi_key -k a -k e -k Return
 fi
 
+text_value='abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789<>:/.-_'
+for _ in {1..150}; do
+    [[ -f "$receipt" ]] && grep -Fxq 'compose=æ hex=c3a6' "$receipt" && break
+    sleep .02
+done
+grep -Fxq 'compose=æ hex=c3a6' "$receipt" || fail "compose input did not complete before switching keymaps"
+if [[ "$backend" == x11 ]]; then
+    setxkbmap -layout us -variant '' -option ''
+fi
+zentty_product_type "$backend" "$text_value"
+zentty_product_key "$backend" Return
+
 for _ in {1..300}; do
     [[ -f "${receipt}" ]] && grep -Fxq 'dead-key=é hex=c3a9' "${receipt}" &&
-        grep -Fxq 'compose=æ hex=c3a6' "${receipt}" && break
+        grep -Fxq 'compose=æ hex=c3a6' "${receipt}" && grep -Fxq "text=$text_value" "$receipt" && break
     kill -0 "${product_pid}" 2>/dev/null || break
     sleep 0.02
 done
 grep -Fxq 'dead-key=é hex=c3a9' "${receipt}" || fail "dead-key PTY receipt is not exact"
 grep -Fxq 'compose=æ hex=c3a6' "${receipt}" || fail "Compose PTY receipt is not exact"
-[[ "$(wc -l <"${receipt}")" -eq 2 ]] || fail "PTY receipt line count is not exact"
+grep -Fxq "text=$text_value" "$receipt" || fail "mixed-case/punctuation PTY text was corrupted"
+[[ "$(wc -l <"${receipt}")" -eq 3 ]] || fail "PTY receipt line count is not exact"
 
 set +e
 wait "${product_pid}"

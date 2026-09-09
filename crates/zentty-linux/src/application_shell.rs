@@ -3880,11 +3880,14 @@ impl ApplicationShell {
     }
 
     pub(crate) fn render(&self) {
+        let started = std::time::Instant::now();
         self.pane_drag_source_state
             .advance(self.pane_drag_payloads());
         self.rendered_columns.borrow_mut().clear();
         self.render_sidebar();
+        let sidebar_elapsed = started.elapsed();
         self.refresh_pane_presentation();
+        let presentation_elapsed = started.elapsed();
 
         let single_column = self.state.active_columns().len() == 1;
         self.pane_scroll.set_hscrollbar_policy(
@@ -3955,6 +3958,15 @@ impl ApplicationShell {
         eprintln!("zentty-linux: topology={}", self.topology_receipt());
         eprintln!("zentty-linux: geometry={}", self.geometry_receipt());
         crate::test_receipts::workspace(&self.window_template.id, &self.state);
+        let total = started.elapsed();
+        if total >= Duration::from_millis(50) {
+            eprintln!(
+                "tornadotty: slow-worklane-render lane={} sidebar-ms={} presentation-ms={} layout-ms={} total-ms={}",
+                self.state.active_worklane_id(), sidebar_elapsed.as_millis(),
+                presentation_elapsed.saturating_sub(sidebar_elapsed).as_millis(),
+                total.saturating_sub(presentation_elapsed).as_millis(), total.as_millis()
+            );
+        }
     }
 
     fn build_column_overlay(
@@ -4631,20 +4643,34 @@ impl ApplicationShell {
     }
 
     fn render_chrome(&self, summaries: &[zentty_core::SidebarWorklaneSummary]) {
+        let started = std::time::Instant::now();
         self.chrome.render(
             summaries,
             self.state.can_navigate_back(),
             self.state.can_navigate_forward(),
         );
+        let chrome_elapsed = started.elapsed();
         self.chrome
             .configure_servers(&self.ranked_servers(), self.state.active_worklane_id());
+        let servers_elapsed = started.elapsed();
         self.chrome.set_open_with_context_available(
             open_with_runtime::focused_context_is_available(
                 &self.open_with_runtime.catalog,
                 open_with_runtime::focused_context(self).as_ref(),
             ),
         );
+        let context_elapsed = started.elapsed();
         self.refresh_attention_inbox();
+        let total = started.elapsed();
+        if total >= Duration::from_millis(50) {
+            eprintln!(
+                "tornadotty: slow-worklane-chrome lane={} chrome-ms={} servers-ms={} context-ms={} attention-ms={} total-ms={}",
+                self.state.active_worklane_id(), chrome_elapsed.as_millis(),
+                servers_elapsed.saturating_sub(chrome_elapsed).as_millis(),
+                context_elapsed.saturating_sub(servers_elapsed).as_millis(),
+                total.saturating_sub(context_elapsed).as_millis(), total.as_millis()
+            );
+        }
     }
 
     fn reconcile_attention(&self, summaries: &[zentty_core::SidebarWorklaneSummary]) {
