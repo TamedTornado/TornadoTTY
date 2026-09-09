@@ -417,3 +417,12 @@ tracked with existing lifecycle-versus-unread issue #175. The new terminal path
 and unit token/action registry checks pass independently. GH-171 remains open
 for outstanding acceptance audit and live desktop QA; no claim of blanket
 registration/async mutation coverage or full release qualification.
+
+Deployment receipt: TornadoTTY ed4c6e8cd807f34255d1ddd02d09596538d32a9e and
+Ghostty 0f3d611e9d0402738dfd93dbe163c9c99d8ea1f2 are pushed. The clean committed
+ReleaseSafe build repeats the X11 real terminal delivery/click/unavailable check
+successfully. GUI, CLI and both matching shared libraries were installed by
+atomic rename, with the engine RUNPATH normalized to `$ORIGIN` as packaging
+requires; all four installed files byte-verified against the prepared artifacts.
+`/usr/bin/tornadotty --version` reports ed4c6e8cd807. Existing GUI/agent processes
+were not restarted or changed; live validation awaits Jason's next restart.
