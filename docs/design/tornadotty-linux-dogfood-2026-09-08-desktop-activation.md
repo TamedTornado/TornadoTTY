@@ -268,3 +268,12 @@ including Working and Ready; same focused X11 physical-drag/real-PTY journey
 (70 -> 66 -> 80 columns), lane switching and Peek. Added the geometry check to
 the existing matrix. No full qualification. Rebuilt and atomically installed;
 Jason's running client is not restarted. User visual confirmation remains open.
+
+Jason confirmed wrapping/clipping improved after 412f7852, but the divider looked
+like a thick white strip. Keep the native 8px hit area; paint it in the sidebar
+background with a centered 1px muted line, explicitly clearing theme borders,
+padding and shadows. This is a styling correction, not a geometry change.
+Focused physical divider/PTY resize, lane switching and Peek pass after the
+styling change. An isolated Yaru launch had no CSS parser errors, but attempted
+Xvfb image captures were blank, so those are not visual confirmation. Installed
+atomically; final appearance remains user QA, no full qualification run.

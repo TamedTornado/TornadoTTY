@@ -437,8 +437,11 @@ pub(crate) fn install_styles() {
     provider.load_from_string(
         "paned.tornadotty-sidebar-split > separator {\n\
              min-width: 8px;\n\
-             background-image: linear-gradient(to right, transparent 3px, alpha(currentColor, 0.25) 3px, alpha(currentColor, 0.25) 4px, transparent 4px);\n\
-             background-color: transparent;\n\
+             border: none; padding: 0; box-shadow: none;\n\
+             background-color: #17191d;\n\
+             background-image: linear-gradient(#454a54, #454a54);\n\
+             background-size: 1px 100%;\n\
+             background-position: center; background-repeat: no-repeat;\n\
          }\n\
          .zentty-pane-frame {\n\
              border: 2px solid alpha(white, 0.08);\n\
