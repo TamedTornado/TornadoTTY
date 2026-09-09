@@ -220,3 +220,28 @@ ZenTTY/pane-14, and Regulate/pane-22 and their working directories, but that is
 not a replacement for the lost complete restore envelope. No guessed workspace
 was written. Original long-running hang remains unproven separately from this
 confirmed startup regression.
+
+### Sep 9: sidebar resize clips terminal edges; narrow divider target
+
+Jason observed right-edge clipping after widening the sidebar and broken left
+alignment at minimum width, plus a hard-to-grab divider. Repair single-column
+allocation updates (previously conditional on multi-column model scaling),
+including the first allocation. Single-column resize need not await the
+multi-column sidebar-settling guard. Use GTK External horizontal policy rather
+than Never: Never propagates retained child minimum width into its viewport.
+Reset the single-column horizontal offset on resize. Native GtkPaned now uses
+an eight-pixel separator hit area with a thin painted line.
+
+Extended the existing X11 worklane-switch journey with physical divider drags
+and real `stty size` replies from the PTY. The finalized test waits for initial
+sidebar allocation before its baseline and locates the return drag using actual
+sidebar width, rather than an assumed coordinate. Against the installed build
+it fails: columns 71 -> 71 -> 81 (widening does not shrink). Repaired build
+passes: 70 -> 66 -> 80. It then passes original worklane switching and Peek;
+native Wayland switching/Peek also pass (sidebar pointer drag tested on X11).
+Intermediate single-column-only fixes failed until the GTK viewport sizing
+feedback was removed. No assertion was waived. ShellCheck and diff checks pass.
+No full qualification or screenshot-baseline rewrite. Actual Codex visual QA
+remains for Jason's restart; PTY reflow is tested, not a claim about every TUI.
+
+Built in build/gh185 and atomically installed without restarting the active app.

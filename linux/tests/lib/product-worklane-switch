@@ -6,6 +6,10 @@ zentty_check_worklane_switch() {
 printf '\033]2;ready-%s\a' "$ZENTTY_PANE_ID"
 while IFS= read -r line; do
     [[ "$line" == exit ]] && exit 0
+    if [[ "$line" == size-* ]]; then
+        printf '\033]2;%s-%s\a' "$line" "$(stty size)"
+        continue
+    fi
     printf '\033]2;ack-%s-%s\a' "$ZENTTY_PANE_ID" "$line"
 done
 EOF
@@ -15,6 +19,9 @@ EOF
         --command "exec '${barrier}/shell'" >"${log}" 2>&1 &
     product_pid=$!
     zentty_product_prepare_input "${backend}" "${log}" "${startup_attempts}" || fail "first pane unavailable"
+    if [[ "$backend" == x11 ]]; then
+        zentty_check_sidebar_terminal_resize
+    fi
     zentty_product_ctrl_key "${backend}" t
     for ((attempt=0; attempt<100; attempt++)); do
         grep -Fq 'value=ready-pane-2' "${log}" && break
@@ -60,4 +67,53 @@ EOF
     zentty_wait_for_owned_process "${product_pid}" "worklane switch primary" 200 || fail "switch product did not close"
     product_pid=""
     echo "Rust product smoke passed: ${backend}, scenario=worklane-switch"
+}
+
+zentty_check_sidebar_terminal_resize() {
+    local initial_columns narrow_columns wide_columns width attempt label
+    # Surface initialization precedes the first GTK sidebar allocation and
+    # PTY resize. Do not use the temporary startup geometry as our baseline.
+    zentty_product_wait_for_log "$log" 'sidebar-width=280' 'initial sidebar allocation missing' || fail "initial sidebar unavailable"
+    sleep 1
+    for label in initial narrow wide; do
+        case "$label" in
+            narrow)
+                xdotool mousemove --window "$ZENTTY_PRODUCT_WINDOW_ID" 282 350 mousedown 1
+                sleep .15
+                xdotool mousemove --sync --window "$ZENTTY_PRODUCT_WINDOW_ID" 325 350 mouseup 1
+                ;;
+            wide)
+                width="$(grep -F 'sidebar-width=' "$log" | tail -1 | cut -d= -f2)"
+                xdotool mousemove --window "$ZENTTY_PRODUCT_WINDOW_ID" "$((width + 2))" 350 mousedown 1
+                sleep .15
+                xdotool mousemove --sync --window "$ZENTTY_PRODUCT_WINDOW_ID" 180 350 mouseup 1
+                ;;
+        esac
+        sleep .3
+        if [[ "$label" != initial ]]; then
+            width="$(grep -F 'sidebar-width=' "$log" | tail -1 | cut -d= -f2)"
+            if [[ "$label" == narrow ]]; then
+                (( width >= 310 )) || fail "sidebar wide drag did not reach target: $width"
+            else
+                (( width <= 185 )) || fail "sidebar minimum drag did not reach target"
+            fi
+        fi
+        zentty_product_type "$backend" "size-$label"
+        zentty_product_key "$backend" Return
+        for ((attempt=0; attempt<60; attempt++)); do
+            grep -Eq "value=size-$label-[0-9]+ [0-9]+" "$log" && break
+            sleep .05
+        done
+        local columns
+        columns="$(grep -Eo "value=size-$label-[0-9]+ [0-9]+" "$log" | tail -1 | awk '{print $2}')"
+        [[ "$columns" =~ ^[0-9]+$ ]] || fail "PTY size response missing"
+        case "$label" in
+            initial) initial_columns=$columns ;;
+            narrow) narrow_columns=$columns ;;
+            wide) wide_columns=$columns ;;
+        esac
+    done
+    (( narrow_columns < initial_columns )) || fail "sidebar widening did not shrink terminal columns"
+    (( wide_columns > initial_columns )) || fail "sidebar minimum did not expand terminal columns"
+    echo "sidebar-resize: PTY columns $initial_columns -> $narrow_columns -> $wide_columns"
 }

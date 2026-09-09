@@ -1335,11 +1335,13 @@ impl ApplicationShell {
     pub(crate) fn reconcile_pane_widths(&mut self) {
         let expected_sidebar_width =
             SidebarWidthPreference::clamped(self.preferred_sidebar_width.get(), self.body.width());
-        if !pane_width_allocation_is_settled(
-            self.sidebar_visibility.mode(),
-            self.sidebar_scroll.width(),
-            expected_sidebar_width,
-        ) {
+        if self.state.active_columns().len() > 1
+            && !pane_width_allocation_is_settled(
+                self.sidebar_visibility.mode(),
+                self.sidebar_scroll.width(),
+                expected_sidebar_width,
+            )
+        {
             return;
         }
         let viewport_width = self.pane_viewport_width();
@@ -1347,15 +1349,25 @@ impl ApplicationShell {
             return;
         }
         let previous_width = self.last_pane_viewport_width.replace(viewport_width);
-        if previous_width <= 1 || previous_width == viewport_width {
+        if previous_width == viewport_width {
             return;
         }
-        let factor = f64::from(viewport_width) / f64::from(previous_width);
+        let factor = if previous_width > 1 {
+            f64::from(viewport_width) / f64::from(previous_width)
+        } else {
+            1.0
+        };
         if self.state.scale_multi_column_widths(factor) {
-            self.apply_column_width_requests();
             eprintln!(
                 "zentty-linux: pane-readable-width previous={previous_width} current={viewport_width} factor={factor:.6} result=scaled"
             );
+        }
+        // A single column fills the viewport too, even though it has no
+        // multi-column model widths to scale. Retained widgets must receive
+        // the new allocation after sidebar or window resizing.
+        self.apply_column_width_requests();
+        if self.state.active_columns().len() == 1 {
+            self.pane_scroll.hadjustment().set_value(0.0);
         }
     }
 
@@ -3877,7 +3889,10 @@ impl ApplicationShell {
             if pane_layout_can_overflow_horizontally(self.state.active_columns().len()) {
                 gtk::PolicyType::Automatic
             } else {
-                gtk::PolicyType::Never
+                // Never propagates the retained child's minimum width back
+                // into the viewport, preventing it from following the divider.
+                // External hides the bar without that sizing feedback loop.
+                gtk::PolicyType::External
             },
         );
         let column_widths = self.resolved_column_widths();
@@ -5381,6 +5396,8 @@ fn build_shell_widgets() -> ShellWidgets {
     window.set_title(Some(zentty_core::PRODUCT_NAME));
     window.set_default_size(1000, 700);
     let body = gtk::Paned::new(gtk::Orientation::Horizontal);
+    body.set_wide_handle(true);
+    body.add_css_class("tornadotty-sidebar-split");
     body.set_position(SidebarWidthPreference::DEFAULT);
     body.set_resize_start_child(false);
     body.set_shrink_start_child(true);

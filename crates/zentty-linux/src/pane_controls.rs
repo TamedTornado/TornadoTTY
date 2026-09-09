@@ -435,7 +435,12 @@ fn set_revealed(controls: &gtk::Box, revealed: &Cell<bool>, pane_id: &str, value
 pub(crate) fn install_styles() {
     let provider = gtk::CssProvider::new();
     provider.load_from_string(
-        ".zentty-pane-frame {\n\
+        "paned.tornadotty-sidebar-split > separator {\n\
+             min-width: 8px;\n\
+             background-image: linear-gradient(to right, transparent 3px, alpha(currentColor, 0.25) 3px, alpha(currentColor, 0.25) 4px, transparent 4px);\n\
+             background-color: transparent;\n\
+         }\n\
+         .zentty-pane-frame {\n\
              border: 2px solid alpha(white, 0.08);\n\
          }\n\
          .zentty-pane-frame-focused {\n\
