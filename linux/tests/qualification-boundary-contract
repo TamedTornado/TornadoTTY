@@ -33,6 +33,7 @@ while IFS=$'\t' read -r id command; do
         "${command}" == *"linux/tests/rust-agent-ipc"* ||
         "${command}" == *"linux/tests/rust-multi-window"* ||
         "${command}" == *"linux/tests/rust-session-restore-driver"* ||
+        "${command}" == *"linux/tests/rust-session-restore"* ||
         "${command}" == *"linux/tests/rust-product-smoke"* ]] ||
         fail "executable product cell ${id} does not launch the delivered Rust product"
     [[ "${command}" != *"fixture"* && "${command}" != *"self-test"* ]] ||

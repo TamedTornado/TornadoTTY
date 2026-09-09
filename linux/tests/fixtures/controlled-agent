@@ -440,6 +440,13 @@ case "${profile}" in
         grep -Fq '"enableNotifications": true' "${settings}" ||
             fail "Gemini terminal notifications were not enabled"
         printf '\033]777;notify;Gemini;Action required\a'
+        if [[ -n "${ZENTTY_GEMINI_COMPLETION_GATE:-}" ]]; then
+            for _ in {1..400}; do
+                [[ -e "${ZENTTY_GEMINI_COMPLETION_GATE}" ]] && break
+                sleep .05
+            done
+            [[ -e "${ZENTTY_GEMINI_COMPLETION_GATE}" ]] || fail "completion gate did not open"
+        fi
         # Ghostty intentionally admits at most one desktop notification per
         # second. Exercise both accepted events rather than weakening or
         # bypassing its product-owned rate limiter.

@@ -381,6 +381,15 @@ assert_completed_restore_shell() {
         'zentty-linux: topology=worklane-main[title=Nimbu API,color=blue]:pane-agent,pane-shell,pane-ordinary-inactive|worklane-second-agent[title=Second agent,color=none]:pane-agent-two*|worklane-active[title=Active shell,color=none]:pane-shell-active' \
         "completed restore changed the durable workspace topology" ||
         fail "completed restore erased a pane or worklane"
+    zentty_product_prepare_input "${backend}" "${log}" || fail "replacement shell input unavailable"
+    zentty_product_type "${backend}" "printf replacement-accepted > '${state_dir}/replacement-input'"
+    zentty_product_key "${backend}" Return
+    for _ in $(seq 1 60); do
+        [[ -s "${state_dir}/replacement-input" ]] && break
+        sleep .05
+    done
+    [[ "$(cat "${state_dir}/replacement-input" 2>/dev/null)" == replacement-accepted ]] ||
+        fail "replacement shell did not execute physical input"
 }
 
 if [[ "${ZENTTY_CODEX_ALIAS_RESTORE_ONLY:-false}" == true ]]; then

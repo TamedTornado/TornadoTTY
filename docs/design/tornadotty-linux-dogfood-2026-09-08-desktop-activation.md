@@ -277,3 +277,50 @@ Focused physical divider/PTY resize, lane switching and Peek pass after the
 styling change. An isolated Yaru launch had no CSS parser errors, but attempted
 Xvfb image captures were blank, so those are not visual confirmation. Installed
 atomically; final appearance remains user QA, no full qualification run.
+
+## GH-186 / GH-187: restored-agent exit and notification ownership
+
+At 11:49:28, Bro's restored child exited, a new surface reused pane-1's ID,
+then no replacement terminal-ready arrived. At 11:49:32 a pane-control
+split-right action created pane-4; its trigger remains unconfirmed with Jason.
+Do not describe the split as spontaneous model mutation. The blank pane is
+reproduced by the existing completed-restore journey: shell PID never attaches.
+
+Mounted layout keys now include actual frame identity as well as durable pane
+IDs/geometry. Replacing a runtime under the same ID invalidates its old layout;
+ordinary navigation keeps the same widgets. Existing completed/retried restore
+checks now also type a command into the real replacement shell and assert its
+filesystem result. Both X11 cases pass. Successful replacement exposed the typed
+receipt reader's false duplicate-ready rule: it now permits Ready -> Exit ->
+Ready for the same pane while still rejecting consecutive duplicate Ready or
+Exit. Nine receipt contract tests pass, including repeated replacement cycles.
+This is lifecycle correction, not removing event validation.
+
+GH-187 is independent: Ghostty emits its desktop-notification signal to the
+host then calls GIO with an intentionally unregistered engine application.
+Engine commit 34c80b9d58ad4906311af4c9722801afb9a23e10 keeps the signal delivery,
+then performs native delivery only for registered applications. No second
+application registration/global-default replacement, no change to core OSC
+policy/rate limiting. Standalone registered Ghostty retains its native branch.
+Existing Gemini OSC journey, exposed as a focused scenario, reproduces the
+critical on the predecessor and passes on X11 and Wayland after repair, with
+host approval/ready state assertions retained. Test setup now clears inherited
+ZENTTY_AGENT_TOOL (we run inside Codex), captures actor errors, and uses the
+existing start-gate mechanism plus a completion gate so the second notification's
+rate-limit interval begins after GTK consumes the first. Initially both queued
+notifications arrived together and rate-limited; no product limiter was changed.
+A discarded canonical-executable-alias hypothesis did not change shipped code.
+
+Remaining failures are not concealed: native Wayland completed-restore now
+mounts its shell but physical input acquired a stray `4;5u` sequence, like the
+prior #185 input failure. A labwc comparison failed test input-window identity.
+X11 switch regression failed to grab the minimum sidebar target; Wayland
+switching/Peek passed with no repeated renderer initialization. These are NOT
+full green qualification claims and remain under #185/#182; no broad retries
+or full qualification were run. Matrix validates the focused cases using the
+existing drivers. Separate unregistered cgroup-connection assertions seen in
+live logs are not fixed by the notification-delivery guard.
+
+Build staged in build/gh186; GUI, CLI and matching engine library installed
+atomically (engine RUNPATH normalized as packaging does). Live client and Codex
+accounts untouched. User logout QA pending next restart.

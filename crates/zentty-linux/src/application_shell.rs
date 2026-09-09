@@ -3916,7 +3916,7 @@ impl ApplicationShell {
         let columns = self.state.active_columns();
         let viewport_height = self.pane_viewport_height();
         let mut mounted = self.mounted_layouts.borrow_mut();
-        mounted.reconcile(&self.pane_box, &self.state);
+        mounted.reconcile(&self.pane_box, &self.state, &self.pane_runtime);
         if let Some(existing) = mounted.columns(self.state.active_worklane_id()) {
             *self.rendered_columns.borrow_mut() = existing.clone();
         } else {
@@ -3936,6 +3936,7 @@ impl ApplicationShell {
             mounted.insert(
                 self.state.active_worklane(),
                 self.rendered_columns.borrow().clone(),
+                &self.pane_runtime,
             );
         }
         drop(mounted);

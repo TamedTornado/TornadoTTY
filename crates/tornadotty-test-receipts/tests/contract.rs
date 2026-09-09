@@ -341,3 +341,14 @@ fn writer_enforces_total_bytes_before_producing_an_invalid_stream() {
     assert!(bytes.len() <= MAX_FILE_BYTES);
     ReceiptStream::parse(&bytes).unwrap();
 }
+
+#[test]
+fn replacement_terminal_requires_an_exit_between_ready_events() {
+    let mut bytes = record(1, r#"{"category":"lifecycle","state":"process_started"}"#);
+    for (index, state) in ["terminal_ready", "child_exited", "terminal_ready", "child_exited", "terminal_ready"].iter().enumerate() {
+        bytes.push_str(&record(index as u64 + 2, &format!(r#"{{"category":"lifecycle","state":"{state}","pane_id":"pane-1"}}"#)));
+    }
+    ReceiptStream::parse(bytes.as_bytes()).expect("same pane may own sequential replacement terminals");
+    bytes.push_str(&record(7, r#"{"category":"lifecycle","state":"terminal_ready","pane_id":"pane-1"}"#));
+    assert_eq!(ReceiptStream::parse(bytes.as_bytes()).unwrap_err().kind(), ReceiptErrorKind::DuplicateEvent);
+}

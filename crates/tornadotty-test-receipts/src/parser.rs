@@ -177,7 +177,7 @@ fn validate_order(
             state: LifecycleState::TerminalReady,
             pane_id: Some(pane_id),
         } => {
-            if ready_panes.insert(pane_id.clone()) {
+            if ready_panes.insert(pane_id.clone()) || exited_panes.remove(pane_id) {
                 Ok(())
             } else {
                 Err(error(
