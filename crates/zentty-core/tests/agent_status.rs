@@ -5,6 +5,39 @@ use zentty_core::{
 };
 
 #[test]
+fn codex_ready_titles_do_not_create_attention_before_the_semantic_notification() {
+    let mut store = AgentStatusStore::default();
+    let mut inbox = zentty_core::AttentionInbox::default();
+    let target = zentty_core::AttentionTarget::new("window", "bro", "pane");
+    store.apply(event_for("pane", br#"{"version":1,"event":"agent.running","agent":{"name":"Codex"},"session":{"id":"session"}}"#), 1);
+    for now in [10_000, 20_000, 30_000] {
+        store.apply_terminal_title("pane", "Working · Bro", now);
+        inbox.observe(target.clone(), store.status_for_pane("pane"), now);
+        store.apply_terminal_title("pane", "Ready | Bro", now + 1);
+        assert_eq!(
+            store.status_for_pane("pane").unwrap().phase,
+            AgentPhase::Idle
+        );
+        inbox.observe(target.clone(), store.status_for_pane("pane"), now + 1);
+        inbox.advance(now + 5_000);
+        assert!(
+            inbox.drain_deliveries().is_empty(),
+            "presentation-only Ready must not notify during a continuing Codex goal"
+        );
+        assert!(inbox.items().is_empty());
+    }
+    assert!(store.apply_terminal_notification("pane", None, Some("Review the result"), 40_000));
+    inbox.observe(target.clone(), store.status_for_pane("pane"), 40_000);
+    inbox.advance(43_000);
+    assert_eq!(inbox.drain_deliveries().len(), 1);
+    assert_eq!(inbox.items().len(), 1);
+    store.apply_terminal_notification("pane", None, Some("Review the result"), 44_000);
+    inbox.observe(target, store.status_for_pane("pane"), 44_000);
+    inbox.advance(47_000);
+    assert!(inbox.drain_deliveries().is_empty());
+}
+
+#[test]
 fn delayed_process_death_cannot_stop_a_newer_status_or_recreated_session() {
     let mut store = AgentStatusStore::default();
     let running = || {

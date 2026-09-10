@@ -419,6 +419,10 @@ fn attention_candidate(status: &PaneAgentStatus) -> Option<(AttentionState, &'st
                 .clone()
                 .unwrap_or_else(|| interaction_fallback(status.interaction).to_owned()),
         )),
+        // Codex Ready/title and Stop-hook state is presentation, not proof of
+        // completion: a goal or queued input may immediately continue. Its
+        // goal-aware TUI's semantic terminal notification owns attention.
+        AgentPhase::Idle if status.agent_name.eq_ignore_ascii_case("codex") => None,
         AgentPhase::Idle => Some((
             AttentionState::Ready,
             "Agent ready",

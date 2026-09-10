@@ -167,6 +167,14 @@ case "${profile}" in
         printf 'response=%s\n' "${response}" >"${receipt}"
         printf '\033]9;Controlled deployment finished\007'
         ;;
+    codex-startup-scroll)
+        exec 2>>"${ZENTTY_CONTROLLED_AGENT_START_RECEIPT}"
+        [[ -x "${ZENTTY_REAL_CODEX_BINARY:-}" ]] || fail "real Codex binary is required"
+        printf -v real_command '%q ' "${ZENTTY_REAL_CODEX_BINARY}" "$@"
+        exec script --quiet --flush --return \
+            --log-out "${ZENTTY_CODEX_STARTUP_OUTPUT}.${ZENTTY_PANE_ID}" \
+            --log-in "${ZENTTY_CODEX_STARTUP_INPUT}.${ZENTTY_PANE_ID}" --command "${real_command}"
+        ;;
     codex-permission)
         require_helper
         codex_has_hook PermissionRequest "$@" || fail "Codex PermissionRequest hook is missing"
@@ -190,6 +198,9 @@ case "${profile}" in
         printf '%s' \
             '{"session_id":"codex-e2e","turn_id":"turn-e2e","transcript_path":null,"cwd":"/tmp","hook_event_name":"PermissionRequest","model":"gpt-5.6","permission_mode":"default","tool_name":"shell","tool_input":{"command":"cargo test"}}' |
             "${helper}" ipc agent-event --adapter=codex
+        # Codex may render Ready between continued goal turns without its
+        # goal-aware TUI emitting a semantic completion notification.
+        printf '\033]2;Ready | Bro\007'
         printf 'permission-request-emitted\n' >>"${ZENTTY_CONTROLLED_AGENT_START_RECEIPT}"
         IFS= read -r _ <"${permission_gate}"
         # The runner selects the user-review outcome by releasing the exact

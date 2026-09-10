@@ -94,7 +94,7 @@ cleanup() {
 trap cleanup EXIT
 
 case "${scenario}" in
-    terminal-notifications) ;;
+    terminal-notifications | codex-startup-scroll) ;;
     full | installed-gemini | codex-enrichment | codex-review-routing | copilot-presentation | amp-plugin | cursor-hooks | droid-hooks | kimi-hooks | remaining-hooks | event-coalescing | overload) ;;
     *) fail "ZENTTY_AGENT_IPC_SCENARIO must be full, installed-gemini, codex-enrichment, codex-review-routing, copilot-presentation, amp-plugin, cursor-hooks, droid-hooks, kimi-hooks, remaining-hooks, event-coalescing, or overload" ;;
 esac
@@ -241,6 +241,9 @@ run_adapter() {
         zentty_product_wait_for_log "${log}" \
             'sidebar-agent-status pane=pane-1 phase=Running interaction=None attention=false' \
             "Codex did not remain running while its approval reviewer was unresolved" 600
+        zentty_product_wait_for_log "${log}" \
+            'sidebar-agent-status pane=pane-1 phase=Idle interaction=None attention=false' \
+            "Codex Ready title did not reach presentation without inventing human attention" 600
         if grep -Fq 'kind=agent.needs-input session=codex-e2e' "${log}" ||
             grep -Fq 'sidebar-agent-status pane=pane-1 phase=NeedsInput' "${log}" ||
             grep -Fq 'desktop-attention id=' "${log}"; then
@@ -539,6 +542,88 @@ run_codex_lifecycle() {
     rm -rf -- "${state_directory}"
     log=""
     state_directory=""
+}
+
+run_codex_startup_scroll() {
+    local evidence_directory pointer_window pane socket token
+    [[ "${backend}" == x11 || "${ZENTTY_NESTED_WAYLAND_OUTER_X11_INPUT:-}" == 1 ]] ||
+        fail "real Codex wheel probe requires X11 or the existing Wayland outer pointer bridge"
+    [[ -x "${ZENTTY_REAL_CODEX_BINARY:-}" ]] || fail "ZENTTY_REAL_CODEX_BINARY is required"
+    command -v script >/dev/null || fail "script is required for the real Codex PTY capture"
+    command -v perl >/dev/null || fail "perl is required for the input-byte assertion"
+    log="$(mktemp)"
+    state_directory="$(mktemp -d)"
+    private_home="$(mktemp -d)"
+    start_receipt="$(mktemp)"
+    evidence_directory="$(mktemp -d /tmp/tornadotty-codex-startup.XXXXXX)"
+    mkdir -p "${private_home}/codex" "${private_home}/work"
+    XDG_CONFIG_HOME="${private_home}/xdg-config" zentty_product_disable_lifecycle_confirmations
+    cat >"${private_home}/codex/config.toml" <<EOF
+model = "controlled-model"
+model_provider = "controlled"
+[model_providers.controlled]
+name = "Controlled startup only"
+base_url = "http://127.0.0.1:9/v1"
+wire_api = "responses"
+requires_openai_auth = false
+[projects."${private_home}/work"]
+trust_level = "trusted"
+EOF
+    (
+        cd "${private_home}/work"
+        PATH="${fake_bin}:${PATH}" HOME="${private_home}" CODEX_HOME="${private_home}/codex" \
+        GDK_SCALE=1 GDK_DPI_SCALE=1 \
+        XDG_CONFIG_HOME="${private_home}/xdg-config" \
+        ZENTTY_CONTROLLED_AGENT_START_RECEIPT="${start_receipt}" \
+        ZENTTY_CONTROLLED_AGENT_PROFILE=codex-startup-scroll \
+        ZENTTY_CODEX_STARTUP_OUTPUT="${private_home}/terminal.out" \
+        ZENTTY_CODEX_STARTUP_INPUT="${private_home}/terminal.in" \
+        exec "${product}" --command codex --state-directory "${state_directory}" --no-session-restore
+    ) >"${log}" 2>&1 &
+    product_pid=$!
+    zentty_product_prepare_input "${backend}" "${log}" || fail "startup probe input unavailable"
+    zentty_product_wait_for_log "${log}" 'terminal-ready-pane=pane-1' \
+        "real startup probe PTY did not initialize" 600 || fail "real startup probe lacks a live PTY"
+    for _ in {1..200}; do
+        grep -Fq 'started pid:' "${start_receipt}" && break
+        sleep 0.05
+    done
+    socket="$(sed -n 's/.* socket:\([^ ]*\).*/\1/p' "${start_receipt}" | head -1)"
+    token="$(sed -n 's/.* token:\([^ ]*\).*/\1/p' "${start_receipt}" | head -1)"
+    [[ -S "${socket}" && "${token}" =~ ^[0-9a-f]{64}$ ]] || fail "isolated startup CLI endpoint is missing"
+    ZENTTY_INSTANCE_SOCKET="${socket}" ZENTTY_PANE_TOKEN="${token}" \
+        "${helper}" split right --equal >/dev/null || fail "real second Codex pane did not open"
+    zentty_product_wait_for_log "${log}" 'terminal-ready-pane=pane-2' \
+        "new right Codex pane did not initialize" 600 || fail "right startup pane lacks a PTY"
+    pointer_window="${ZENTTY_PRODUCT_WINDOW_ID:-${ZENTTY_NESTED_WAYLAND_OUTER_X11_WINDOW:-}}"
+    [[ -n "${pointer_window}" ]] || pointer_window="${ZENTTY_NESTED_WAYLAND_OUTER_X11_WINDOW:?}"
+    echo "Real Codex startup wheel diagnostic: evidence=${evidence_directory}"
+    for pane in pane-1 pane-2; do
+        for _ in {1..200}; do
+            if [[ -f "${private_home}/terminal.out.${pane}" ]] && \
+                grep -aq 'Ask Codex to do anything' "${private_home}/terminal.out.${pane}"; then
+                break
+            fi
+            sleep 0.05
+        done
+        grep -aq 'Ask Codex to do anything' "${private_home}/terminal.out.${pane}" ||
+            fail "real Codex did not produce its normal input prompt"
+        # This diagnostic uses no user credentials, history or model requests.
+        # Retain only isolated fixture output for investigation if startup differs.
+        cp "${private_home}/terminal.out.${pane}" "${evidence_directory}/terminal.out.${pane}"
+        if [[ "${pane}" == pane-1 ]]; then
+            xdotool mousemove --window "${pointer_window}" 450 350 click --repeat 3 --delay 50 4
+        else
+            xdotool mousemove --window "${pointer_window}" 850 350 click --repeat 3 --delay 50 4
+        fi
+        sleep 0.3
+        cp "${private_home}/terminal.in.${pane}" "${evidence_directory}/terminal.in.${pane}"
+        perl -0777 -ne 'exit(/\e(?:\[|O)[AB]/ ? 1 : 0)' "${evidence_directory}/terminal.in.${pane}" ||
+            fail "wheel injected cursor Up/Down into fresh Codex input"
+    done
+    zentty_product_close_window "${backend}"
+    wait_for_product "real Codex startup wheel probe" 200
+    echo "Real Codex startup wheel control passed: ${backend}, two-panes, no-cursor-key-injection, private-home, no-user-auth, no-model-prompt; reported failure not reproduced"
 }
 
 run_codex_review_routing() {
@@ -1152,6 +1237,11 @@ run_event_coalescing() {
     state_directory=""
     private_home=""
 }
+
+if [[ "${scenario}" == codex-startup-scroll ]]; then
+    run_codex_startup_scroll
+    exit 0
+fi
 
 if [[ "${scenario}" == terminal-notifications ]]; then
     run_gemini_terminal_notifications

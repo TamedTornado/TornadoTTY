@@ -62,6 +62,10 @@ fn phase_status(
     updated_at: u64,
 ) -> PaneAgentStatus {
     let mut status = status(interaction, text, updated_at);
+    // These generic lifecycle tests cover agents whose Idle event is a
+    // completion signal. Codex's separate semantic channel is tested through
+    // AgentStatusStore in agent_status.rs.
+    status.agent_name = "Claude".to_owned();
     status.phase = phase;
     status
 }

@@ -426,3 +426,50 @@ atomic rename, with the engine RUNPATH normalized to `$ORIGIN` as packaging
 requires; all four installed files byte-verified against the prepared artifacts.
 `/usr/bin/tornadotty --version` reports ed4c6e8cd807. Existing GUI/agent processes
 were not restarted or changed; live validation awaits Jason's next restart.
+
+### September 10: Bro notification bursts and asymmetric wheel report
+
+Installed ed4c6e8c / engine 0f3d611e9, native Wayland. GH-143 recurrence:
+Bro pane-1 delivered Ready notifications at 10:11:18, 10:11:47 and 10:12:06 CEST
+(service IDs 9–11); its actual Codex terminal notification at 10:12:06 then
+produced ID 12 at 10:12:09. Confirmed remaining owner mismatch: the agent store
+keeps Codex title/Idle presentation separate from goal-aware semantic OSC, but
+the shared AttentionInbox still promoted every Codex Idle transition to Ready
+attention. It bypassed the existing semantic-only hook policy.
+
+Repair: Codex Idle remains presentation and is not an attention candidate;
+Codex's semantic OSC still supplies attention. No debounce, timer or global
+notification suppression added. Other agents' explicit Idle completion behavior
+is unchanged. New store-to-inbox regression is RED for repeated Working/Ready
+cycles before the repair, then GREEN with exactly one semantic notification and
+no duplicate. Existing real codex-review-routing journey is independently RED
+when the controlled PTY emits Ready without semantic OSC, then PASS on X11 and
+Wayland after the repair. Core checks: 40 agent-status + 15 attention-inbox tests
+PASS. Focused attention_candidate mutation: 6 caught, 4 unviable, no survivors.
+Matrix schema and shell syntax PASS; full qualification not run.
+
+GH-188: Jason reports ordinary new pane -> start Codex immediately gives wheel
+cycling input history in the right Bro pane while left scrolls output. Both
+observed processes used codex-cli 0.154.0, the same executable inode and terminal
+identity. The right pane disappeared before live terminal mode inspection; no
+live pane was closed/restarted by the investigation. Alternate-scroll cursor-key
+translation matches the symptom, but its cause is UNCONFIRMED, not attributed
+to a picker/transcript action Jason did not report.
+
+Added an opt-in diagnostic to the existing rust-agent-ipc journey:
+ZENTTY_AGENT_IPC_SCENARIO=codex-startup-scroll plus ZENTTY_REAL_CODEX_BINARY.
+It launches the installed real CLI through managed wrappers in two private
+panes, captures real PTY input/output via script, uses a credential-free local
+provider without submitting a model prompt, and sends physical wheel input.
+X11 and labwc-backed native Wayland controls PASS with no cursor-key injection;
+the reported failure was NOT REPRODUCED. This does not qualify real-account
+history scrolling or claim a repair. Early diagnostic attempts had an incorrect
+missing-file poll condition and lacked isolated close-confirmation settings;
+those fixture failures were corrected, not reported as product failures.
+Private evidence directories are printed by the diagnostic; no user auth or
+terminal contents were copied into it. GH-188 stays open.
+
+Sidebar screenshot: the small `~` under the named Bro worklane is the focused
+pane's home directory. Source and live CLI confirm focused-pane cwd drives that
+subtitle; it is not a missing label. Mixed-directory worklanes make the meaning
+misleading. No speculative sidebar rendering change was made.
