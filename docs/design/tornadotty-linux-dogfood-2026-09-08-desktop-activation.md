@@ -534,3 +534,48 @@ speculative fix or passing regression is claimed. Separately, pre-exit timing
 records repeatedly locate 1.38–1.47 seconds in ranked_servers/configure_servers,
 with other chrome phases near zero (GH-185). Repeated engine page-capacity logs
 occur both before and after relaunch. Neither observation is proven causal.
+
+GH-190 logging follow-up (local, publication/install pending): added a hook to
+Ghostty's existing GLib writer for GDK fatal display-I/O messages. Before GDK
+exits it queries the default native Wayland display without dispatch/roundtrip
+and records observed errno, wl_display_get_error, protocol code, object ID and
+at most 96 bytes of static protocol-interface name. An atomic guard permits
+one record per process. No terminal contents, protocol payloads, full
+WAYLAND_DEBUG, network submission or new log files are introduced. The host
+also logs PID and compiled build identity once on actual GUI startup, after
+help/version early exits. Records use existing stderr/journal logging; a lost
+transport without available protocol state still requires compositor evidence.
+
+Extended the existing updates/privacy journey with display-disconnect. The
+private nested compositor PID must actually own the selected private socket
+before the fixture terminates it; the user's desktop is never selected by name.
+RED on gh189-no-tray: no native failure record. GREEN on the local integrated
+engine/host build: actual GTK/Ghostty terminal ready, compositor termination,
+nonzero client exit and exactly one bounded record (errno=32, display-error=0,
+protocol-code=0, object-id=0, interface=none), plus running build identity.
+This reproduces controlled transport loss, NOT the original incident or an
+EPROTO violation. GDK can fail flushing before libwayland stores a display
+error; the fixture therefore checks the observed EPIPE/ECONNRESET errno as well
+as display/protocol state rather than incorrectly requiring get_error != 0.
+
+Also PASS: X11 real in-window fleet/tray-removal smoke, matrix schema/coverage,
+shell syntax and Zig formatting. The CLI journey's help/version checks pass,
+but its unknown-option assertion FAILS unchanged on both old and new products:
+it expects TornadoTTY while the existing error prefix is zentty-linux. No
+unrelated prefix change or relaxed assertion was made. Initial fixture mistakes
+(relative socket name and nonexistent surface-ready marker) were corrected;
+a Zig binding namespace compile error was corrected to wl.Interface. No full
+qualification, protocol-violation test or original-crash repair is claimed.
+
+Local evidence: /tmp/gh190-red.log, /tmp/gh190-green-abi.log,
+/tmp/gh190-x11.log, /tmp/gh190-cli-baseline.log. Auto-review blocked committing
+and pushing the native hook to the separate TamedTornado/ghostty fork even after
+remote ownership verification. Engine edits and host tests remain local pending
+explicit repository publication approval; linux/ghostty.lock is unchanged and
+no installation or live-client restart has occurred.
+
+Jason subsequently explicitly approved publication, pinning and installation.
+Engine b62d1c57fe7d265ab030fd25c96742e1b11442b8 is pushed to his
+TamedTornado/ghostty fork and pinned by this host change. Final clean pinned
+build verification and atomic installation follow; the running client remains
+untouched and will acquire these diagnostics only on its next launch.

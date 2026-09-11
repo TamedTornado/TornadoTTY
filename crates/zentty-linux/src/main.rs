@@ -294,6 +294,11 @@ fn run() -> Result<(), String> {
             return Ok(());
         }
     };
+    eprintln!(
+        "tornadotty: startup pid={} {}",
+        std::process::id(),
+        version_text().replace('\n', " ")
+    );
     test_receipts::initialize()?;
     let config = ConfigStore::load_default()?;
     if let Some(warning) = config.warning.as_deref() {

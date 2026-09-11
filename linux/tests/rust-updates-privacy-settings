@@ -216,6 +216,53 @@ wait_for_error_reporting() {
     return 1
 }
 
+if [[ "${ZENTTY_DIAGNOSTICS_SCENARIO:-}" == display-disconnect ]]; then
+    [[ "${backend}" == wayland ]] || fail "display disconnect requires native Wayland"
+    compositor_pid="${ZENTTY_NESTED_WAYLAND_OUTER_X11_PID:-}"
+    [[ "${compositor_pid}" =~ ^[1-9][0-9]*$ ]] || fail "private compositor PID missing"
+    # Confirm the wrapper-owned compositor serves this private runtime socket;
+    # never select a compositor by process name or touch the user's desktop.
+    socket="${WAYLAND_DISPLAY}"
+    [[ "${socket}" == /* ]] || socket="${XDG_RUNTIME_DIR}/${socket}"
+    [[ "${socket}" == "${XDG_RUNTIME_DIR}/"* && -S "${socket}" ]] ||
+        fail "display must be a private runtime socket"
+    [[ "$(stat -c %u "${socket}")" == "$(id -u)" ]] || fail "socket owner mismatch"
+    socket_inode="$(awk -v path="${socket}" '$8 == path { print $7; exit }' /proc/net/unix)"
+    [[ "${socket_inode}" =~ ^[1-9][0-9]*$ ]] || fail "private socket inode unavailable"
+    owns_socket=false
+    for descriptor in /proc/"${compositor_pid}"/fd/*; do
+        if [[ "$(readlink "${descriptor}" 2>/dev/null || true)" == "socket:[${socket_inode}]" ]]; then
+            owns_socket=true
+            break
+        fi
+    done
+    [[ "${owns_socket}" == true ]] || fail "wrapper PID does not own the private Wayland socket"
+    start_product false
+    zentty_product_wait_for_log "${log}" 'terminal-ready-pane=' \
+        "real Ghostty surface did not initialize" || fail "surface startup failed"
+    kill -TERM "${compositor_pid}"
+    for _ in {1..200}; do
+        kill -0 "${product_pid}" 2>/dev/null || break
+        sleep 0.03
+    done
+    kill -0 "${product_pid}" 2>/dev/null && fail "client did not exit after display loss"
+    status=0
+    wait "${product_pid}" || status=$?
+    product_pid=""
+    [[ "${status}" -ne 0 ]] || fail "display loss incorrectly reported clean exit"
+    [[ "$(grep -c 'display-failure backend=wayland' "${log}")" == 1 ]] ||
+        fail "expected one native failure record"
+    # A failed wl_display_flush can leave get_error() at zero. The captured
+    # errno still identifies EPIPE (32) or ECONNRESET (104); no EPROTO/interface.
+    grep -Eq 'errno=(32|104) display-error=(0|32|104) protocol-code=0 object-id=0 interface=none' "${log}" ||
+        fail "transport loss was not distinguished from a protocol violation"
+    grep -Eq 'tornadotty: startup pid=[0-9]+ .*Commit: [0-9a-f]+' "${log}" ||
+        fail "startup omitted running build identity"
+    grep 'display-failure backend=wayland' "${log}"
+    echo "rust-updates-privacy-settings-wayland: PASS display-disconnect native-error build-identity bounded-record nonzero-exit"
+    exit 0
+fi
+
 start_product
 open_page
 zentty_product_wait_for_log "${log}" \
