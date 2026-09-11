@@ -579,3 +579,15 @@ Engine b62d1c57fe7d265ab030fd25c96742e1b11442b8 is pushed to his
 TamedTornado/ghostty fork and pinned by this host change. Final clean pinned
 build verification and atomic installation follow; the running client remains
 untouched and will acquire these diagnostics only on its next launch.
+
+Final receipt: clean host d194792702f6f5287ed5ced77fa5fcc47916ff97 and engine
+b62d1c57fe7d265ab030fd25c96742e1b11442b8 are pushed. Integrated stage
+build/gh190-diagnostics passes the native Wayland disconnect journey again
+(/tmp/gh190-green-final.log) and X11 in-window fleet/tray-removal smoke
+(/tmp/gh190-x11-final.log). GUI, CLI and matching libraries were atomically
+installed; executable/library comparisons pass, with the engine compared after
+normal packaging RUNPATH normalization to $ORIGIN. Installed --version reports
+clean d194792702f6 and ldd resolves both bundled libraries. Live GUI PID 2570984
+retained its executable inode and was not restarted. Logging activates on the
+next user launch, not retroactively in that process. GH-190 remains open for
+original-cause investigation; the diagnostic transport-loss test is not a fix.
