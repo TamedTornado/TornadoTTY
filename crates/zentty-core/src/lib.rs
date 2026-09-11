@@ -63,7 +63,7 @@ pub use agent_status::{
 pub use app_config::{
     AgentCaffeinationConfig, AgentIntegrationsConfig, AgentTeamsConfig, AppConfig,
     AppearanceConfig, ClipboardConfig, ConfirmationsConfig, ErrorReportingConfig,
-    FocusFollowsMouseDelay, MenuBarConfig, NewWorklanePlacement, NotificationsConfig,
+    FocusFollowsMouseDelay, NewWorklanePlacement, NotificationsConfig,
     OpenWithConfig, OpenWithCustomApp, PaneConfig, PaneLayoutConfig, PaneRightBehaviorMode,
     PartialAppConfig, RestoreConfig, ServerBrowserCustomApp, ServerDetectionConfig, SidebarConfig,
     SidebarVisibilityMode, UpdateChannel, UpdatesConfig, WorklaneConfig,

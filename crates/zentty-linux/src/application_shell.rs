@@ -132,7 +132,6 @@ pub(crate) enum ApplicationAction {
     DismissAttention(u64),
     ClearAttention,
     AgentCaffeinationChanged(bool),
-    StatusNotifierChanged(bool),
     CommitPaneDrop(PaneDropOutcome),
 }
 
@@ -2121,7 +2120,6 @@ impl ApplicationShell {
                 self.config.open_with = snapshot.config.open_with;
                 self.config.agent_teams = snapshot.config.agent_teams;
                 self.config.agent_caffeination = snapshot.config.agent_caffeination;
-                self.config.menu_bar = snapshot.config.menu_bar;
                 self.config.agent_integrations = snapshot.config.agent_integrations;
             }
             Err(error) => {
@@ -2298,16 +2296,15 @@ impl ApplicationShell {
                 }),
                 agent_teams: self.config.agent_teams,
                 agent_caffeination: self.config.agent_caffeination,
-                menu_bar: self.config.menu_bar,
                 agent_integrations: self.config.agent_integrations.clone(),
                 available_agent_wrappers: self.agent_events.available_integration_wrappers(),
-                apply_agents: Rc::new(move |teams, caffeination, menu_bar, integrations| {
+                apply_agents: Rc::new(move |teams, caffeination, integrations| {
                     let shell = agents_weak.upgrade().ok_or_else(|| {
                         "Tornado TTY window closed while applying Agents settings".to_owned()
                     })?;
                     shell
                         .borrow_mut()
-                        .apply_agents(teams, caffeination, menu_bar, integrations)
+                        .apply_agents(teams, caffeination, integrations)
                 }),
                 initial_section: section,
             },
@@ -2495,13 +2492,11 @@ impl ApplicationShell {
         &mut self,
         teams: zentty_core::AgentTeamsConfig,
         caffeination: zentty_core::AgentCaffeinationConfig,
-        menu_bar: zentty_core::MenuBarConfig,
         integrations: zentty_core::AgentIntegrationsConfig,
     ) -> Result<(), String> {
         let path = crate::config_store::ConfigStore::update_default_agents(
             teams,
             caffeination,
-            menu_bar,
             &integrations,
         )?;
         self.agent_events.set_agent_teams_enabled(teams.enabled);
@@ -2509,13 +2504,9 @@ impl ApplicationShell {
             .set_agent_integrations(integrations.states.clone());
         self.config.agent_teams = teams;
         self.config.agent_caffeination = caffeination;
-        self.config.menu_bar = menu_bar;
         self.config.agent_integrations = integrations;
         self.request_application_action(ApplicationAction::AgentCaffeinationChanged(
             caffeination.enabled,
-        ));
-        self.request_application_action(ApplicationAction::StatusNotifierChanged(
-            menu_bar.show_status_item,
         ));
         eprintln!(
             "zentty-linux: agent-settings result=persisted path={} teams={} new-panes-only=true",

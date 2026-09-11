@@ -73,7 +73,6 @@ pub(crate) struct SettingsContext {
     pub(crate) apply_dev_servers: ApplyDevServers,
     pub(crate) agent_teams: zentty_core::AgentTeamsConfig,
     pub(crate) agent_caffeination: zentty_core::AgentCaffeinationConfig,
-    pub(crate) menu_bar: zentty_core::MenuBarConfig,
     pub(crate) agent_integrations: zentty_core::AgentIntegrationsConfig,
     pub(crate) available_agent_wrappers: std::collections::BTreeSet<String>,
     pub(crate) apply_agents: ApplyAgents,
@@ -297,7 +296,6 @@ pub(crate) fn show(
     let agents_page = crate::agents_settings::build(
         settings_context.agent_teams,
         settings_context.agent_caffeination,
-        settings_context.menu_bar,
         settings_context.agent_integrations,
         &settings_context.available_agent_wrappers,
         settings_context.apply_agents,

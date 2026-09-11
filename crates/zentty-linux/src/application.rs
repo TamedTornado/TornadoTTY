@@ -35,7 +35,6 @@ pub(crate) struct ApplicationCoordinator {
     attention_inbox: Rc<RefCell<zentty_core::AttentionInbox>>,
     desktop_notifications: crate::notification_service::AttentionNotificationService,
     fleet_snapshot: Vec<zentty_core::FleetPaneSnapshot>,
-    status_notifier: Option<crate::status_notifier::StatusNotifierItem>,
     sleep_inhibition_state: zentty_core::AgentSleepInhibitionState,
     sleep_inhibitor: crate::sleep_inhibitor::SystemdSleepInhibitor,
     command: Option<String>,
@@ -120,7 +119,6 @@ impl ApplicationCoordinator {
             attention_inbox: Rc::new(RefCell::new(zentty_core::AttentionInbox::default())),
             desktop_notifications: crate::notification_service::AttentionNotificationService::new(),
             fleet_snapshot: Vec::new(),
-            status_notifier: None,
             sleep_inhibition_state: zentty_core::AgentSleepInhibitionState::default(),
             sleep_inhibitor: crate::sleep_inhibitor::SystemdSleepInhibitor::new(
                 sleep_inhibitor_capability,
@@ -184,21 +182,8 @@ impl ApplicationCoordinator {
             }
             Self::refresh_worklane_destination_catalogs(&coordinator);
         }
-        Self::install_status_notifier(&coordinator);
         Self::install_config_watch(&coordinator)?;
         Ok(coordinator)
-    }
-
-    fn install_status_notifier(coordinator: &Rc<RefCell<Self>>) {
-        let weak = Rc::downgrade(coordinator);
-        let activate = Rc::new(move || {
-            let Some(coordinator) = weak.upgrade() else {
-                return;
-            };
-            glib::idle_add_local_once(move || Self::show_agent_fleet(&coordinator));
-        });
-        coordinator.borrow_mut().status_notifier =
-            Some(crate::status_notifier::StatusNotifierItem::new(activate));
     }
 
     fn install_config_watch(coordinator: &Rc<RefCell<Self>>) -> Result<(), String> {
@@ -702,12 +687,6 @@ impl ApplicationCoordinator {
                 coordinator.borrow_mut().config.agent_caffeination.enabled = enabled;
                 eprintln!(
                     "zentty-linux: sleep-inhibitor setting-enabled={enabled} source=agents-settings"
-                );
-            }
-            crate::application_shell::ApplicationAction::StatusNotifierChanged(enabled) => {
-                coordinator.borrow_mut().config.menu_bar.show_status_item = enabled;
-                eprintln!(
-                    "zentty-linux: status-notifier setting-enabled={enabled} source=agents-settings"
                 );
             }
             crate::application_shell::ApplicationAction::CommitPaneDrop(outcome) => {
@@ -1421,9 +1400,6 @@ impl ApplicationCoordinator {
             })
         });
         self.refresh_sleep_inhibitor(has_running_agent);
-        if let Some(status_notifier) = self.status_notifier.as_mut() {
-            status_notifier.refresh(self.config.menu_bar.show_status_item, &snapshot);
-        }
         if snapshot == self.fleet_snapshot {
             return;
         }
@@ -1447,25 +1423,6 @@ impl ApplicationCoordinator {
             shell.borrow().refresh_fleet(&snapshot);
         }
         self.fleet_snapshot = snapshot;
-    }
-
-    fn show_agent_fleet(coordinator: &Rc<RefCell<Self>>) {
-        let active_id = coordinator
-            .borrow()
-            .window_set
-            .active_id()
-            .map(str::to_owned);
-        let Some(active_id) = active_id else {
-            return;
-        };
-        if let Err(error) = Self::present_shell(coordinator, &active_id, true) {
-            eprintln!("zentty-linux: status-notifier activation=failed detail={error}");
-            return;
-        }
-        if let Some(shell) = coordinator.borrow().shells.get(&active_id) {
-            shell.borrow().show_agent_fleet();
-            eprintln!("zentty-linux: status-notifier activation=opened-fleet window={active_id}");
-        }
     }
 
     fn refresh_sleep_inhibitor(&mut self, has_running_agent: bool) {

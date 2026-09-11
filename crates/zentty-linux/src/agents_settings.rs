@@ -5,14 +5,12 @@ use std::rc::Rc;
 use gtk::prelude::*;
 use zentty_core::{
     AgentCaffeinationConfig, AgentIntegrationState, AgentIntegrationsConfig, AgentTeamsConfig,
-    MenuBarConfig,
 };
 
 pub(crate) type ApplyAgents = Rc<
     dyn Fn(
         AgentTeamsConfig,
         AgentCaffeinationConfig,
-        MenuBarConfig,
         AgentIntegrationsConfig,
     ) -> Result<(), String>,
 >;
@@ -41,7 +39,6 @@ const UNAVAILABLE_PERSISTENT: [(&str, &str); 8] = [
 struct State {
     teams: AgentTeamsConfig,
     caffeination: AgentCaffeinationConfig,
-    menu_bar: MenuBarConfig,
     integrations: AgentIntegrationsConfig,
     apply: ApplyAgents,
     updating: Cell<bool>,
@@ -52,20 +49,17 @@ struct State {
 pub(crate) fn build(
     teams: AgentTeamsConfig,
     caffeination: AgentCaffeinationConfig,
-    menu_bar: MenuBarConfig,
     integrations: AgentIntegrationsConfig,
     available_wrappers: &BTreeSet<String>,
     apply: ApplyAgents,
 ) -> gtk::Widget {
     let caffeination_available =
         crate::sleep_inhibitor::SleepInhibitorCapability::discover().available();
-    let status_item_available = crate::status_notifier::watcher_available();
     eprintln!(
-        "zentty-linux: agent-settings loaded teams={} wrappers-available={} source-unavailable={} status-item-available={} caffeination-available={}",
+        "zentty-linux: agent-settings loaded teams={} wrappers-available={} source-unavailable={} caffeination-available={}",
         teams.enabled,
         available_wrappers.len(),
         UNAVAILABLE_PERSISTENT.len(),
-        status_item_available,
         caffeination_available,
     );
     let root = gtk::Box::new(gtk::Orientation::Vertical, 16);
@@ -87,7 +81,6 @@ pub(crate) fn build(
     let state = Rc::new(RefCell::new(State {
         teams,
         caffeination,
-        menu_bar,
         integrations,
         apply,
         updating: Cell::new(false),
@@ -105,22 +98,6 @@ pub(crate) fn build(
         "Claude Code agent _teams (experimental)",
         "Expose Tornado TTY's tmux-compatible team environment to newly created panes.",
         &teams_switch,
-    ));
-    let status_item_switch = gtk::Switch::builder()
-        .active(menu_bar.show_status_item)
-        .sensitive(status_item_available)
-        .valign(gtk::Align::Center)
-        .build();
-    status_item_switch.set_widget_name("settings-agents-status-item");
-    instrument_focus(&status_item_switch, "status-item");
-    behavior.append(&setting_row(
-        "Show agent status in s_ystem tray",
-        if status_item_available {
-            "Publish the same in-window fleet through the desktop StatusNotifierItem host."
-        } else {
-            "Unavailable: no desktop StatusNotifierItem watcher. The in-window fleet remains available."
-        },
-        &status_item_switch,
     ));
     let caffeination_switch = gtk::Switch::builder()
         .active(caffeination.enabled)
@@ -205,15 +182,6 @@ pub(crate) fn build(
     }
     {
         let state = Rc::clone(&state);
-        status_item_switch.connect_active_notify(move |control| {
-            if state.borrow().updating.get() {
-                return;
-            }
-            apply_status_item(&state, control);
-        });
-    }
-    {
-        let state = Rc::clone(&state);
         caffeination_switch.connect_active_notify(move |control| {
             if state.borrow().updating.get() {
                 return;
@@ -234,40 +202,6 @@ pub(crate) fn build(
         .build();
     scroll.update_property(&[gtk::accessible::Property::Label("Agents Settings")]);
     scroll.upcast()
-}
-
-fn apply_status_item(state: &Rc<RefCell<State>>, control: &gtk::Switch) {
-    let (teams, caffeination, accepted, integrations, apply) = {
-        let state = state.borrow();
-        (
-            state.teams,
-            state.caffeination,
-            state.menu_bar,
-            state.integrations.clone(),
-            Rc::clone(&state.apply),
-        )
-    };
-    let requested = MenuBarConfig {
-        show_status_item: control.is_active(),
-    };
-    if !has_changed(&accepted, &requested) {
-        return;
-    }
-    match apply(teams, caffeination, requested, integrations) {
-        Ok(()) => {
-            let mut state = state.borrow_mut();
-            state.menu_bar = requested;
-            state.status.set_text("");
-            eprintln!(
-                "zentty-linux: agent-settings control=status-item enabled={} result=applied",
-                requested.show_status_item
-            );
-        }
-        Err(error) => {
-            rollback_switch(state, control, accepted.show_status_item);
-            report_error(state, "status-item", &error);
-        }
-    }
 }
 
 fn effective_state(
@@ -311,12 +245,11 @@ fn has_changed<T: PartialEq>(accepted: &T, requested: &T) -> bool {
 }
 
 fn apply_teams(state: &Rc<RefCell<State>>, control: &gtk::Switch) {
-    let (accepted, caffeination, menu_bar, integrations, apply) = {
+    let (accepted, caffeination, integrations, apply) = {
         let state = state.borrow();
         (
             state.teams,
             state.caffeination,
-            state.menu_bar,
             state.integrations.clone(),
             Rc::clone(&state.apply),
         )
@@ -327,7 +260,7 @@ fn apply_teams(state: &Rc<RefCell<State>>, control: &gtk::Switch) {
     if !has_changed(&accepted, &requested) {
         return;
     }
-    match apply(requested, caffeination, menu_bar, integrations) {
+    match apply(requested, caffeination, integrations) {
         Ok(()) => {
             let mut state = state.borrow_mut();
             state.teams = requested;
@@ -342,12 +275,11 @@ fn apply_teams(state: &Rc<RefCell<State>>, control: &gtk::Switch) {
 }
 
 fn apply_caffeination(state: &Rc<RefCell<State>>, control: &gtk::Switch) {
-    let (teams, accepted, menu_bar, integrations, apply) = {
+    let (teams, accepted, integrations, apply) = {
         let state = state.borrow();
         (
             state.teams,
             state.caffeination,
-            state.menu_bar,
             state.integrations.clone(),
             Rc::clone(&state.apply),
         )
@@ -358,7 +290,7 @@ fn apply_caffeination(state: &Rc<RefCell<State>>, control: &gtk::Switch) {
     if !has_changed(&accepted, &requested) {
         return;
     }
-    match apply(teams, requested, menu_bar, integrations) {
+    match apply(teams, requested, integrations) {
         Ok(()) => {
             let mut state = state.borrow_mut();
             state.caffeination = requested;
@@ -381,12 +313,11 @@ fn apply_integration(
     id: &str,
     requested: AgentIntegrationState,
 ) {
-    let (teams, caffeination, menu_bar, mut integrations, accepted, apply) = {
+    let (teams, caffeination, mut integrations, accepted, apply) = {
         let state = state.borrow();
         (
             state.teams,
             state.caffeination,
-            state.menu_bar,
             state.integrations.clone(),
             effective_state(&state.integrations, id, false),
             Rc::clone(&state.apply),
@@ -396,7 +327,7 @@ fn apply_integration(
         return;
     }
     integrations.states.insert(id.to_owned(), requested);
-    match apply(teams, caffeination, menu_bar, integrations.clone()) {
+    match apply(teams, caffeination, integrations.clone()) {
         Ok(()) => {
             let mut state = state.borrow_mut();
             state.integrations = integrations;

@@ -473,3 +473,39 @@ Sidebar screenshot: the small `~` under the named Bro worklane is the focused
 pane's home directory. Source and live CLI confirm focused-pane cwd drives that
 subtitle; it is not a missing label. Mixed-directory worklanes make the meaning
 misleading. No speculative sidebar rendering change was made.
+
+### September 11 / GH-189: remove the system-tray feature
+
+Jason explicitly requested removal, not another tray implementation. GNOME's
+watcher listed one live process twice, through the dedicated SNI name and the
+public desktop application name, with inert red warning icons. The old client's
+supported config reload (`menu_bar.show_status_item=false`) withdrew the owned
+SNI name and unexported /StatusNotifierItem without restarting any pane. GNOME
+retained the public-name alias despite that object returning UnknownMethod.
+The desktop application identity was not released and GNOME Shell/extensions
+were not restarted to force cache cleanup; the cached alias may remain until
+Jason's next coordinated client restart.
+
+Deleted the complete tray module, publication/refresh/activation wiring, settings
+switch and active config model/writer. Legacy menu_bar input is ignored by new
+builds, including old true values; it cannot restore the feature. Retained the
+in-window Agent Status route, Settings/Quit, sleep inhibition and regular desktop
+notifications. Removed positive tray scenarios and current inventory claims;
+kept the controlled watcher solely to prove absence of publication.
+
+Focused regression RED on the previous build: its tray name still exists.
+GREEN X11 and native Wayland: no SNI name, watcher registration or SNI object on
+any product-owned D-Bus connection, while the real GTK in-window panel and Quit
+work with legacy setting=true. Also PASS: 27 core config tests; config-store
+transaction test; full X11 two-window fleet lifecycle/exact-PTY routing; X11
+Agents settings; native Wayland primary/secondary activation, multiple windows
+and missing-bus handling; real terminal notification receipt/click/unavailable
+service journey on X11. Matrix schema and shell syntax PASS. No full qualification.
+
+Initial fixture failures were obsolete Zentty-branded palette queries (updated
+to the current action description), and inherited installed wrapper PATH in the
+Agents settings test (rerun with an explicit real-Codex/system PATH). An early
+compile caught over-removal of the shared in-window show_agent_fleet method;
+restored it while removing only its tray caller. No failed assertion was relaxed.
+Feature-inventory JSON parses; its broader audit is BLOCKED by the checkout's
+missing audited public tag v0.1.7, not certified as a passing release audit.

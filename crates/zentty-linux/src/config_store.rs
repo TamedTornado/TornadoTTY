@@ -10,7 +10,7 @@ use zentty_linux::platform::{UserDirectory, resolve_user_path};
 
 use zentty_core::{
     AgentCaffeinationConfig, AgentIntegrationsConfig, AgentTeamsConfig, AppConfig,
-    AppearanceConfig, ClipboardConfig, ConfirmationsConfig, FALLBACK_DARK_THEME, MenuBarConfig,
+    AppearanceConfig, ClipboardConfig, ConfirmationsConfig, FALLBACK_DARK_THEME,
     NotificationsConfig, OpenWithConfig, PaneConfig, PaneLayoutConfig, RestoreConfig,
     ServerDetectionConfig, ShortcutBinding, SidebarConfig, ThemeMode, ThemeSpec, UpdatesConfig,
     WorklaneConfig, update_ghostty_value,
@@ -305,11 +305,10 @@ impl ConfigStore {
     pub(crate) fn update_default_agents(
         teams: AgentTeamsConfig,
         caffeination: AgentCaffeinationConfig,
-        menu_bar: MenuBarConfig,
         integrations: &AgentIntegrationsConfig,
     ) -> Result<PathBuf, String> {
         let path = default_config_file()?;
-        Self::update_agents(&path, teams, caffeination, menu_bar, integrations)?;
+        Self::update_agents(&path, teams, caffeination, integrations)?;
         Ok(path)
     }
 
@@ -317,7 +316,6 @@ impl ConfigStore {
         path: &Path,
         teams: AgentTeamsConfig,
         caffeination: AgentCaffeinationConfig,
-        menu_bar: MenuBarConfig,
         integrations: &AgentIntegrationsConfig,
     ) -> Result<(), String> {
         let target = resolve_config_target(path)?;
@@ -336,7 +334,6 @@ impl ConfigStore {
             for section in [
                 "agent_teams",
                 "agent_caffeination",
-                "menu_bar",
                 "agent_integrations",
             ] {
                 document
@@ -348,7 +345,6 @@ impl ConfigStore {
             }
             document["agent_teams"]["enabled"] = toml_edit::value(teams.enabled);
             document["agent_caffeination"]["enabled"] = toml_edit::value(caffeination.enabled);
-            document["menu_bar"]["show_status_item"] = toml_edit::value(menu_bar.show_status_item);
             document["agent_integrations"]["grandfathered_v1"] =
                 toml_edit::value(integrations.grandfathered_v1);
             let mut states = toml_edit::Table::new();
@@ -1216,7 +1212,7 @@ mod tests {
     use zentty_core::{
         AgentCaffeinationConfig, AgentIntegrationState, AgentIntegrationsConfig, AgentTeamsConfig,
         AppConfig, BackgroundOpacity, ClipboardConfig, CommandFlattenAggressiveness,
-        ConfirmationsConfig, FocusFollowsMouseDelay, MenuBarConfig, NewWorklanePlacement,
+        ConfirmationsConfig, FocusFollowsMouseDelay, NewWorklanePlacement,
         NotificationsConfig, OpenWithConfig, OpenWithCustomApp, PaneConfig, PaneLayoutConfig,
         PaneRightBehaviorMode, RestoreConfig, ServerBrowserCustomApp, ServerDetectionConfig,
         SidebarConfig, SidebarVisibilityMode, ThemeMode, ThemeSpec, WorklaneConfig,
@@ -1775,9 +1771,6 @@ mod tests {
         .unwrap();
         let teams = AgentTeamsConfig { enabled: true };
         let caffeination = AgentCaffeinationConfig { enabled: false };
-        let menu_bar = MenuBarConfig {
-            show_status_item: false,
-        };
         let integrations = AgentIntegrationsConfig {
             states: std::collections::BTreeMap::from([
                 ("claude".into(), AgentIntegrationState::Off),
@@ -1786,7 +1779,7 @@ mod tests {
             grandfathered_v1: true,
         };
 
-        ConfigStore::update_agents(&path, teams, caffeination, menu_bar, &integrations).unwrap();
+        ConfigStore::update_agents(&path, teams, caffeination, &integrations).unwrap();
 
         let source = fs::read_to_string(&path).unwrap();
         assert!(source.contains("# keep me"));
@@ -1795,7 +1788,7 @@ mod tests {
         let parsed = AppConfig::parse_toml(&source).unwrap();
         assert_eq!(parsed.agent_teams, teams);
         assert_eq!(parsed.agent_caffeination, caffeination);
-        assert_eq!(parsed.menu_bar, menu_bar);
+        assert!(!source.contains("menu_bar"));
         assert_eq!(parsed.agent_integrations, integrations);
         remove(&root);
     }

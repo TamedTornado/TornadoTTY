@@ -5,6 +5,15 @@ use zentty_core::{
 };
 
 #[test]
+fn removed_tray_configuration_is_ignored_for_legacy_files() {
+    let defaults = AppConfig::parse_toml("").unwrap();
+    for value in ["true", "false", "[]"] {
+        let legacy = format!("[menu_bar]\nshow_status_item = {value}\n");
+        assert_eq!(AppConfig::parse_toml(&legacy).unwrap(), defaults);
+    }
+}
+
+#[test]
 fn appearance_defaults_and_source_compatible_values_are_explicit() {
     let defaults = AppConfig::parse_toml("").unwrap().appearance;
     assert_eq!(defaults.theme_mode, ThemeMode::Dark);
@@ -385,7 +394,6 @@ fn agent_settings_use_source_defaults_sections_and_forward_compatible_states() {
     let defaults = AppConfig::parse_toml("").unwrap();
     assert!(!defaults.agent_teams.enabled);
     assert!(defaults.agent_caffeination.enabled);
-    assert!(defaults.menu_bar.show_status_item);
     assert!(!defaults.agent_integrations.grandfathered_v1);
     assert!(defaults.agent_integrations.states.is_empty());
 
@@ -408,7 +416,6 @@ fn agent_settings_use_source_defaults_sections_and_forward_compatible_states() {
     .unwrap();
     assert!(configured.agent_teams.enabled);
     assert!(!configured.agent_caffeination.enabled);
-    assert!(!configured.menu_bar.show_status_item);
     assert!(configured.agent_integrations.grandfathered_v1);
     assert_eq!(
         configured.agent_integrations.states["claude"],
@@ -428,7 +435,6 @@ fn agent_settings_use_source_defaults_sections_and_forward_compatible_states() {
     for source in [
         "[agent_teams]\nenabled = \"yes\"\n",
         "[agent_caffeination]\nenabled = 1\n",
-        "[menu_bar]\nshow_status_item = []\n",
         "[agent_integrations]\ngrandfathered_v1 = \"no\"\n",
     ] {
         assert!(

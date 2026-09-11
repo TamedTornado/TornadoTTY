@@ -179,7 +179,6 @@ pub struct AppConfig {
     pub panes: PaneConfig,
     pub agent_teams: AgentTeamsConfig,
     pub agent_caffeination: AgentCaffeinationConfig,
-    pub menu_bar: MenuBarConfig,
     pub agent_integrations: AgentIntegrationsConfig,
     pub shortcuts: Vec<ShortcutBinding>,
 }
@@ -216,7 +215,6 @@ impl AppConfig {
             panes: document.panes.into_config()?,
             agent_teams: document.agent_teams.into_config(),
             agent_caffeination: document.agent_caffeination.into_config(),
-            menu_bar: document.menu_bar.into_config(),
             agent_integrations: document.agent_integrations.into_config(),
             shortcuts: document.shortcuts.into_bindings()?,
         })
@@ -312,9 +310,6 @@ impl AppConfig {
                 AgentCaffeinationDocument,
                 |document: AgentCaffeinationDocument| Ok(document.into_config())
             ),
-            menu_bar: section!(menu_bar, MenuBarDocument, |document: MenuBarDocument| Ok(
-                document.into_config()
-            )),
             agent_integrations: section!(
                 agent_integrations,
                 AgentIntegrationsDocument,
@@ -364,7 +359,6 @@ struct Document {
     panes: PaneDocument,
     agent_teams: AgentTeamsDocument,
     agent_caffeination: AgentCaffeinationDocument,
-    menu_bar: MenuBarDocument,
     agent_integrations: AgentIntegrationsDocument,
     shortcuts: ShortcutDocument,
 }
@@ -855,33 +849,6 @@ impl AgentCaffeinationDocument {
     fn into_config(self) -> AgentCaffeinationConfig {
         AgentCaffeinationConfig {
             enabled: self.enabled.unwrap_or(true),
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct MenuBarConfig {
-    pub show_status_item: bool,
-}
-
-impl Default for MenuBarConfig {
-    fn default() -> Self {
-        Self {
-            show_status_item: true,
-        }
-    }
-}
-
-#[derive(Deserialize, Default)]
-#[serde(default)]
-struct MenuBarDocument {
-    show_status_item: Option<bool>,
-}
-
-impl MenuBarDocument {
-    fn into_config(self) -> MenuBarConfig {
-        MenuBarConfig {
-            show_status_item: self.show_status_item.unwrap_or(true),
         }
     }
 }
