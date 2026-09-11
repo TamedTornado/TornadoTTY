@@ -509,3 +509,28 @@ compile caught over-removal of the shared in-window show_agent_fleet method;
 restored it while removing only its tray caller. No failed assertion was relaxed.
 Feature-inventory JSON parses; its broader audit is BLOCKED by the checkout's
 missing audited public tag v0.1.7, not certified as a passing release audit.
+
+### September 11 / GH-190: unexpected Wayland disconnect and GUI exit
+
+At 09:56:59 CEST the old daily-dogfood GUI (PID 2796474, started September 10)
+exited after GNOME logged `WL: error in client communication` and GDK logged
+`Error flushing display: Broken pipe`. The user relaunched at 09:57:01; the new
+GUI is the installed clean 9899e7d951ad build. The dying process predates the
+tray-removal install. GNOME Shell stayed alive; its stack-position assertion
+occurred after relaunch and is not established as causal. No contemporaneous
+panic, segfault, OOM or kernel GPU-reset evidence was found. Existing apport
+reports predate this incident and must not be treated as its crash trace.
+
+Bounded private journal extracts and recovery snapshot copies were preserved
+under /tmp/tornadotty-crash-20260911.LRBmlt; originals were not modified. Relaunch
+accepted three agent restore drafts and retained the saved worklane topology;
+this is not certification of every resumed agent's health. No live client was
+launched, killed or restarted by the investigation.
+
+The display disconnect is a confirmed exit mechanism, not a root cause. Neither
+client nor compositor journal gives a protocol opcode or underlying reason.
+GH-190 tracks reproduction, bounded diagnostics and a focused repair; no
+speculative fix or passing regression is claimed. Separately, pre-exit timing
+records repeatedly locate 1.38–1.47 seconds in ranked_servers/configure_servers,
+with other chrome phases near zero (GH-185). Repeated engine page-capacity logs
+occur both before and after relaunch. Neither observation is proven causal.
