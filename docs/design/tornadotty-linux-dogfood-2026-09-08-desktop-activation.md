@@ -591,3 +591,50 @@ clean d194792702f6 and ldd resolves both bundled libraries. Live GUI PID 2570984
 retained its executable inode and was not restarted. Logging activates on the
 next user launch, not retroactively in that process. GH-190 remains open for
 original-cause investigation; the diagnostic transport-loss test is not a fix.
+
+### September 18 / GH-191: new pane bottom clipped behind the dock
+
+Jason's screenshot reports bottom-of-terminal clipping, NOT a theme/contrast
+defect (the initial investigation misread it). Switching worklanes away and
+back clears it. Running host is clean d194792702f6, Ghostty b62d1c57fe7d.
+Bounded sizing-only journal inspection shows a vertical split at 10:36:51
+increasing the pane viewport from 1298 to 1312 pixels without a window resize;
+the new right pane at 10:57:07 inherited that height. Switching away/back at
+11:18 restored 1298. No live input, settings, terminals or processes changed.
+
+Confirmed related GTK defect: the pane scroller used vertical PolicyType::Never,
+which lets content minimum requests enlarge its allocation. The focused
+pane_geometry_tests regression stacks framed panes, shrinks the available
+window, then adds a full-height neighbor: RED, viewport/pane bottom 606 in a
+600-pixel window. External keeps the vertical scrollbar hidden without letting
+content dictate viewport size; the same test is GREEN. This corrects actual
+allocation, not merely paint clipping or a dock-specific height subtraction.
+
+The existing divider-layout Rust journey now drives below/right splits and
+worklane return, obtains real PTY size reports and checks a colored last-row
+band in compositor screenshots. Initial real-product controls pass on BOTH
+the old and repaired builds; those controls alone do not reproduce or certify
+the original GNOME incident. Final coverage includes zero terminal padding,
+space-reserving horizontal scrollbars, full-width overflowing columns, and all
+21 one-pixel height alignments within a terminal row. Those controls also pass
+on the old build; only the focused GTK allocation test is a RED/GREEN repair
+receipt. The exact original GNOME/dock incident remains NOT REPRODUCED.
+First fixture run selected the wrong pane on return (Ctrl+Tab selects the
+first pane); corrected to reverse navigation, not a relaxed geometry assertion.
+The initial sandboxed Xvfb startup and Ghostty-source fetch were blocked;
+private-display execution and the already verified clean pinned engine checkout
+were used. No dependency policy was bypassed.
+
+Final local stage: build/gh191-clipping (ReleaseSafe, unchanged pinned engine).
+PASS: focused GTK regression; 15 allocation tests; 9 receipt-contract and 3
+driver tests; driver Clippy; shell syntax; matrix schema/coverage. Real-product
+X11 and native Wayland journeys both PASS last-row visibility, split/switch
+geometry and all row-boundary resize checks (/tmp/gh191-final-x11.log and
+/tmp/gh191-final-wayland.log). Strict host Clippy FAILS on unchanged workload
+documentation/style errors; no unrelated repair or lint suppression added.
+An operator invocation omitted matrix --validate-only, started two prerequisite
+cells, and failed (network/suppression evidence); it is not a full qualification
+receipt. The corrected validation-only command passes. No full qualification
+completed, installation performed, or live client restarted. GH-191 stays open
+for original-incident desktop verification; the confirmed allocation defect
+is repaired locally.

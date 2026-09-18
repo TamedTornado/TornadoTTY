@@ -25,6 +25,9 @@ case "${backend}" in
         ;;
     *) fail "GDK_BACKEND must be x11 or wayland" ;;
 esac
+for dependency in bash xdotool import convert compare; do
+    command -v "${dependency}" >/dev/null || fail "${dependency} is required"
+done
 [[ -n "${DBUS_SESSION_BUS_ADDRESS:-}" ]] || fail "a private session bus is required"
 [[ -n "${XDG_CONFIG_HOME:-}" ]] || fail "isolated XDG_CONFIG_HOME is required"
 [[ -x "${product}" ]] || fail "product is not executable: ${product}"

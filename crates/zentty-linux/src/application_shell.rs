@@ -54,6 +54,8 @@ mod mounted_layouts;
 pub(crate) mod open_with_runtime;
 mod pane_action_recovery;
 mod pane_context;
+#[cfg(test)]
+mod pane_geometry_tests;
 mod pane_runtime;
 mod project_context_runtime;
 mod remote_paste;
@@ -5444,7 +5446,10 @@ fn build_shell_widgets() -> ShellWidgets {
     pane_box.set_hexpand(true);
     pane_box.set_vexpand(true);
     let pane_scroll = gtk::ScrolledWindow::new();
-    pane_scroll.set_policy(gtk::PolicyType::Automatic, gtk::PolicyType::Never);
+    // Never propagates stacked pane minimum-height requests into the overlay,
+    // allowing it to grow beyond the window's available content area. External
+    // still hides the vertical scrollbar, but keeps the viewport parent-sized.
+    pane_scroll.set_policy(gtk::PolicyType::Automatic, gtk::PolicyType::External);
     pane_scroll.set_hexpand(true);
     pane_scroll.set_vexpand(true);
     pane_scroll.set_child(Some(&pane_box));

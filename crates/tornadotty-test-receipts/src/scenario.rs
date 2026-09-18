@@ -320,9 +320,21 @@ fn run_divider_layout(
     create_owner_directory(&state)?;
     create_owner_directory(&session)?;
     let receipt = state.join("product-events.ndjson");
+    let actor = root.join("pane-layout-actor");
+    fs::write(
+        &actor,
+        include_str!("../../../linux/tests/fixtures/pane-layout-actor"),
+    )
+    .map_err(|error| format!("could not prepare layout PTY actor: {error}"))?;
+    fs::write(
+        root.join("visual-evidence"),
+        include_str!("../../../linux/tests/lib/visual-evidence"),
+    )
+    .map_err(|error| format!("could not prepare shared capture helper: {error}"))?;
     let config_home = std::env::var_os("XDG_CONFIG_HOME")
         .ok_or_else(|| "divider-layout requires isolated XDG_CONFIG_HOME".to_owned())?;
-    let config_dir = PathBuf::from(config_home).join("zentty");
+    let config_home = PathBuf::from(config_home);
+    let config_dir = config_home.join("zentty");
     fs::create_dir_all(&config_dir)
         .map_err(|error| format!("could not create isolated config directory: {error}"))?;
     fs::write(
@@ -337,6 +349,16 @@ fn run_divider_layout(
         ),
     )
     .map_err(|error| format!("could not write isolated layout config: {error}"))?;
+    let ghostty_dir = config_home.join("ghostty");
+    fs::create_dir_all(&ghostty_dir)
+        .map_err(|error| format!("could not create isolated terminal config: {error}"))?;
+    // Extra bottom padding can conceal a viewport over-allocation. The last
+    // row must fit even when the user chooses a zero-padding terminal.
+    fs::write(
+        ghostty_dir.join("config"),
+        "window-padding-x = 0\nwindow-padding-y = 0\n",
+    )
+    .map_err(|error| format!("could not write isolated terminal config: {error}"))?;
 
     let driver = std::env::current_exe()
         .map_err(|error| format!("could not locate journey driver: {error}"))?;
@@ -351,8 +373,14 @@ fn run_divider_layout(
             "TORNADOTTY_TEST_RECEIPT_FILE={}",
             receipt.display()
         ))
+        .arg(format!("TORNADOTTY_LAYOUT_ROOT={}", root.display()))
+        .arg("GTK_OVERLAY_SCROLLING=0")
         .arg(product)
-        .args(["--command", "sleep 60", "--state-directory"])
+        .args([
+            "--command",
+            &format!("bash '{}'", actor.display()),
+            "--state-directory",
+        ])
         .arg(&state)
         .arg("--no-session-restore")
         .stdout(Stdio::null())
@@ -360,7 +388,7 @@ fn run_divider_layout(
         .spawn()
         .map_err(|error| format!("could not start product supervisor: {error}"))?;
 
-    let scenario_result = observe_divider_layout(&driver, &session, &receipt, backend)
+    let scenario_result = observe_divider_layout(&driver, &session, &receipt, backend, root)
         .and_then(|()| send_input_key(&driver, &session, backend, "ctrl+q"))
         .and_then(|()| {
             driver_success(
@@ -394,6 +422,7 @@ fn observe_divider_layout(
     session: &Path,
     receipt: &Path,
     backend: Backend,
+    root: &Path,
 ) -> Result<(), String> {
     driver_success(
         driver,
@@ -416,7 +445,8 @@ fn observe_divider_layout(
         )?;
     }
     focus_input_target(driver, session, backend)?;
-    send_input_key(driver, session, backend, "ctrl+d")?;
+    let initial = layout_geometry(driver, session, backend, root, "pane-1", "initial")?;
+    send_input_key(driver, session, backend, "ctrl+shift+d")?;
     driver_success(
         driver,
         &["wait"],
@@ -425,10 +455,17 @@ fn observe_divider_layout(
             "10000",
             "1",
             "action",
-            "split-pane-right",
+            "split-pane-below",
             "completed",
             "pane-2",
         ],
+    )?;
+    send_input_key(driver, session, backend, "ctrl+d")?;
+    driver_success(
+        driver,
+        &["wait"],
+        &[receipt],
+        &["10000", "1", "terminal-ready", "pane-3"],
     )?;
     driver_success(
         driver,
@@ -440,9 +477,180 @@ fn observe_divider_layout(
             "pane-layout",
             "window-1",
             "worklane-1",
-            "column-worklane-1=pane-1;column-pane-2=pane-2",
+            "column-worklane-1=pane-1,pane-2;column-pane-3=pane-3",
         ],
+    )?;
+    let beside = layout_geometry(driver, session, backend, root, "pane-3", "beside")?;
+    visible_last_row(
+        driver,
+        session,
+        backend,
+        root,
+        "beside",
+        beside[0] / beside[2],
+    )?;
+    send_input_key(driver, session, backend, "ctrl+t")?;
+    driver_success(
+        driver,
+        &["wait"],
+        &[receipt],
+        &["10000", "1", "terminal-ready", "pane-4"],
+    )?;
+    send_input_key(driver, session, backend, "ctrl+shift+Tab")?;
+    let returned = layout_geometry(driver, session, backend, root, "pane-3", "returned")?;
+    visible_last_row(
+        driver,
+        session,
+        backend,
+        root,
+        "returned",
+        returned[0] / returned[2],
+    )?;
+    println!(
+        "layout PTY text-area heights: initial={} new-neighbor={} after-switch={}",
+        initial[0], beside[0], returned[0]
+    );
+    if initial[0] != beside[0] || beside[0] != returned[0] {
+        return Err(format!(
+            "full-height pane geometry changed after split/worklane switch: initial={initial:?}, beside={beside:?}, returned={returned:?}"
+        ));
+    }
+    check_resized_last_rows(
+        driver,
+        session,
+        receipt,
+        backend,
+        root,
+        returned[0] / returned[2],
     )
+}
+
+fn check_resized_last_rows(
+    driver: &Path,
+    session: &Path,
+    receipt: &Path,
+    backend: Backend,
+    root: &Path,
+    cell_height: u32,
+) -> Result<(), String> {
+    // Cover every row-boundary alignment rather than allowing cell rounding
+    // to hide a small over-allocation. Resizing is confined to our owned X11
+    // product window, or the private compositor output for native Wayland.
+    let window = match backend {
+        Backend::X11 => input_target(driver, session, backend)?.1,
+        Backend::Wayland => std::env::var("ZENTTY_NESTED_WAYLAND_OUTER_X11_WINDOW")
+            .map_err(|_| "missing private compositor resize window".to_owned())?,
+    };
+    if !(1..=128).contains(&cell_height) {
+        return Err(format!("invalid terminal cell height: {cell_height}"));
+    }
+    send_input_key(driver, session, backend, "ctrl+1")?;
+    for offset in 0..cell_height {
+        let height = (600 + offset).to_string();
+        require_command(
+            Command::new("xdotool").args(["windowsize", "--sync", &window, "1024", &height]),
+            "resize controlled layout",
+        )?;
+        driver_success(
+            driver,
+            &["wait"],
+            &[receipt],
+            &["10000", "1", "window-geometry", "window-1", "1024", &height],
+        )?;
+        let phase = format!("resize-{offset}");
+        let resized = layout_geometry(driver, session, backend, root, "pane-3", &phase)?;
+        visible_last_row(
+            driver,
+            session,
+            backend,
+            root,
+            &phase,
+            resized[0] / resized[2],
+        )?;
+    }
+    Ok(())
+}
+
+fn visible_last_row(
+    driver: &Path,
+    session: &Path,
+    backend: Backend,
+    root: &Path,
+    phase: &str,
+    cell_height: u32,
+) -> Result<(), String> {
+    let window = match backend {
+        Backend::X11 => input_target(driver, session, backend)?.1,
+        Backend::Wayland => std::env::var("ZENTTY_NESTED_WAYLAND_OUTER_X11_WINDOW")
+            .map_err(|_| "missing private compositor capture window".to_owned())?,
+    };
+    let screenshot = root.join(format!("{phase}.png"));
+    require_command(
+        Command::new("bash")
+            .args([
+                "-c",
+                "source \"$1\"; zentty_visual_capture_stable \"$2\" import -window \"$3\"",
+                "capture",
+            ])
+            .arg(root.join("visual-evidence"))
+            .arg(&screenshot)
+            .arg(window),
+        "capture last terminal row",
+    )?;
+    let output = Command::new("convert")
+        .arg(&screenshot)
+        .args([
+            "-fill", "black", "+opaque", "#ff00ff", "-fill", "white", "-opaque", "#ff00ff",
+            "-format", "%@", "info:",
+        ])
+        .output()
+        .map_err(|error| format!("could not inspect last row: {error}"))?;
+    if !output.status.success() {
+        return Err("last-row pixel inspection failed".to_owned());
+    }
+    let bounds = String::from_utf8_lossy(&output.stdout);
+    let height = bounds
+        .split('x')
+        .nth(1)
+        .and_then(|v| v.split('+').next())
+        .and_then(|v| v.parse::<u32>().ok());
+    if height != Some(cell_height) {
+        return Err(format!(
+            "terminal last row clipped in {phase}: visible={bounds}, expected-height={cell_height}"
+        ));
+    }
+    Ok(())
+}
+
+fn layout_geometry(
+    driver: &Path,
+    session: &Path,
+    backend: Backend,
+    root: &Path,
+    pane: &str,
+    phase: &str,
+) -> Result<Vec<u32>, String> {
+    send_input_text(driver, session, backend, phase)?;
+    send_input_key(driver, session, backend, "Return")?;
+    let path = root.join(format!("{pane}-{phase}"));
+    let deadline = Instant::now() + DEADLINE;
+    loop {
+        if let Ok(value) = fs::read_to_string(&path) {
+            let geometry = value
+                .split_whitespace()
+                .map(str::parse::<u32>)
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|error| format!("invalid PTY geometry: {error}"))?;
+            if geometry.len() != 4 || geometry.contains(&0) {
+                return Err(format!("incomplete PTY geometry: {value}"));
+            }
+            return Ok(geometry);
+        }
+        if Instant::now() >= deadline {
+            return Err(format!("no PTY geometry for {pane}/{phase}"));
+        }
+        thread::sleep(POLL);
+    }
 }
 
 fn focus_input_target(driver: &Path, session: &Path, backend: Backend) -> Result<(), String> {

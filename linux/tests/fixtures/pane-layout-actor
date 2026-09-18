@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Controlled PTY child for the existing divider-layout journey. Query the
+# terminal's real text-area pixels, not a model or log-derived approximation.
+stty -echo
+while IFS= read -r phase; do
+    [[ "${phase}" =~ ^[a-z0-9-]+$ ]] || exit 64
+    stty -icanon min 0 time 30
+    printf '\033[14t'
+    IFS= read -r -dt response
+    [[ "${response}" =~ ^$'\033'\[4\;([0-9]+)\;([0-9]+)$ ]] || exit 65
+    height="${BASH_REMATCH[1]}"
+    width="${BASH_REMATCH[2]}"
+    read -r rows columns < <(stty size)
+    stty icanon
+    # A full last-row band makes clipped terminal rows visible in screenshots.
+    color='255;0;255'
+    [[ "${phase}" != initial ]] || color='0;255;128'
+    printf '\033[2J\033[%s;1H\033[48;2;%sm%*s\033[0m\033[H\033[?25l' "${rows}" "${color}" "${columns}" ''
+    printf '%s %s %s %s\n' "${height}" "${width}" "${rows}" "${columns}" \
+        >"${TORNADOTTY_LAYOUT_ROOT}/${ZENTTY_PANE_ID}-${phase}.tmp"
+    mv "${TORNADOTTY_LAYOUT_ROOT}/${ZENTTY_PANE_ID}-${phase}.tmp" \
+        "${TORNADOTTY_LAYOUT_ROOT}/${ZENTTY_PANE_ID}-${phase}"
+done
