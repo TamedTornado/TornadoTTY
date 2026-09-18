@@ -670,3 +670,19 @@ is now 66307:75497503. Root-private rollback executables are retained at
 refspec as a repository; explicit repository/refspec push succeeded and its
 remote head was verified. The repair becomes active only on Jason's next
 restart; GH-191 stays open for confirmation of the original desktop incident.
+
+Subsequent user report, still on the OLD running build: Codex was producing a
+large amount of text over a prolonged period; Jason scrolled upward into
+scrollback while output continued, then observed the terminal bottom below
+the desktop dock again. Jason explicitly confirmed he had NOT restarted into
+the newly installed build. This is additional reproduction evidence, not a
+failed verification of 248373e4f35d. Recovery behavior for this recurrence was
+not reported; switching worklanes cleared the earlier incident.
+
+GH-191 follow-up validation must exercise sustained real PTY output plus
+physical upward scrolling while output continues, checking terminal geometry
+and last-row visibility before/after returning to the live bottom. Existing
+split/resize checks do not cover this sequence. Automated reproduction and
+verification of this sequence on the repaired build are NOT RUN; post-restart
+desktop confirmation remains pending. These steps are recorded in GH-191 as
+well as this report, rather than relying on conversation context.
