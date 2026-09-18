@@ -638,3 +638,16 @@ receipt. The corrected validation-only command passes. No full qualification
 completed, installation performed, or live client restarted. GH-191 stays open
 for original-incident desktop verification; the confirmed allocation defect
 is repaired locally.
+
+Clean-commit rerun caught a fixture isolation error: X11's initial/new-neighbor
+PTY height was 651, then 630 after async Git metadata expanded the inherited
+checkout's header (pane viewport 656 -> 641). Native Wayland passed that run.
+This was a legitimate available-height change, not evidence of clipped rows.
+The layout supervisor now starts in its private non-project directory rather
+than the caller's checkout; geometry equality and full-row assertions remain
+unchanged. Corrected-fixture revalidation PASS on X11 (651 pixels before/new
+neighbor/return) and native Wayland (672 throughout), including all last-row
+checks; /tmp/gh191-isolated-{x11,wayland}.log. Driver Clippy, ShellCheck and
+edited-test formatting PASS. Repair commit d51877e5ed6bd7c2e65a4587681b24eca1159faf
+is local, unpushed and uninstalled; the source checkout is not a desktop test
+fixture anymore.

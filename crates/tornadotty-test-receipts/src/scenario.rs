@@ -375,6 +375,9 @@ fn run_divider_layout(
         ))
         .arg(format!("TORNADOTTY_LAYOUT_ROOT={}", root.display()))
         .arg("GTK_OVERLAY_SCROLLING=0")
+        // Do not inherit the source checkout: asynchronous Git chrome can
+        // legitimately change the available height between measurements.
+        .current_dir(root)
         .arg(product)
         .args([
             "--command",
