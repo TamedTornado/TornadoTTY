@@ -651,3 +651,22 @@ checks; /tmp/gh191-isolated-{x11,wayland}.log. Driver Clippy, ShellCheck and
 edited-test formatting PASS. Repair commit d51877e5ed6bd7c2e65a4587681b24eca1159faf
 is local, unpushed and uninstalled; the source checkout is not a desktop test
 fixture anymore.
+
+Jason then authorized pushing and local installation for the next restart.
+Repair d51877e5ed6bd7c2e65a4587681b24eca1159faf and fixture correction
+248373e4f35dd5a5257b613bed5c847aa796f406 are pushed to the fork's linux/port.
+Clean ReleaseSafe build/gh191-clipping is installed: GUI and CLI replaced by
+same-filesystem atomic renames and byte-verified. Existing libraries match the
+stage exactly after the normal engine `$ORIGIN` RUNPATH normalization, so they
+were retained; themes, shell integrations and engine resources also match.
+Installed GUI --version and CLI version both identify 248373e4f35d; ldd resolves
+both bundled libraries. CLI --help is unsupported on both old and new builds;
+the documented version command is the successful CLI verification.
+
+Live clients 5627 and 2292325 retain their original executable inode 66307:75555043
+and start times; neither was restarted or signaled. Installed executable inode
+is now 66307:75497503. Root-private rollback executables are retained at
+/tmp/tornadotty-gh191-rollback.CcxikO. The first push invocation misparsed its
+refspec as a repository; explicit repository/refspec push succeeded and its
+remote head was verified. The repair becomes active only on Jason's next
+restart; GH-191 stays open for confirmation of the original desktop incident.
