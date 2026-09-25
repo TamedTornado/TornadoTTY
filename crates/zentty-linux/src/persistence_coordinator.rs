@@ -1,5 +1,6 @@
 use std::path::{Path, PathBuf};
 use std::time::Duration;
+mod column_identity;
 use zentty_linux::platform::{UserDirectory, resolve_user_path};
 
 use zentty_core::{
@@ -347,13 +348,19 @@ fn project_restored_workspace(
         .windows
         .iter()
         .cloned()
-        .map(|window| WindowSnapshot {
-            restored_drafts: envelope
-                .restore_draft_windows
-                .iter()
-                .find(|drafts| drafts.window_id == window.id)
-                .map_or_else(Vec::new, |drafts| drafts.pane_drafts.clone()),
-            window,
+        .map(|mut window| {
+            let repaired = column_identity::repair(&mut window);
+            if repaired > 0 {
+                eprintln!("tornadotty: restore-column-identities repaired={repaired}");
+            }
+            WindowSnapshot {
+                restored_drafts: envelope
+                    .restore_draft_windows
+                    .iter()
+                    .find(|drafts| drafts.window_id == window.id)
+                    .map_or_else(Vec::new, |drafts| drafts.pane_drafts.clone()),
+                window,
+            }
         })
         .collect::<Vec<_>>();
     validate_window_snapshots(&windows)?;
@@ -672,6 +679,48 @@ mod tests {
 
         assert_eq!(launch.active_window_id.as_deref(), Some("window-main"));
         assert!(launch.warning.is_none());
+    }
+
+    #[test]
+    fn startup_repairs_duplicate_columns_without_discarding_panes_or_geometry() {
+        let directory = TestDirectory::new("startup-duplicate-columns");
+        let store = directory.store();
+        let mut source = envelope();
+        let template = source.workspace.windows[0].clone();
+        let mut state = WorkspaceState::new("lane", "pane-1");
+        assert!(state.split_focused_pane_right("pane-2"));
+        assert!(state.split_focused_pane_right("pane-3"));
+        let mut window = state.to_window_recipe(&template);
+        let lane = &mut window.worklanes[0];
+        lane.columns[0].id = "duplicate-2".to_owned();
+        lane.columns[1].id = "duplicate".to_owned();
+        lane.columns[2].id = "duplicate".to_owned();
+        lane.focused_column_id = Some("duplicate".to_owned());
+        source.workspace.windows = vec![window.clone()];
+        source.restore_draft_windows[0].pane_drafts[0].pane_id = "pane-2".to_owned();
+        let drafts = source.restore_draft_windows[0].pane_drafts.clone();
+        store.save_snapshot(&source).unwrap();
+        store.mark_clean_exit(1.0).unwrap();
+
+        let (_, launch) = PersistenceCoordinator::start(&directory.0, true, 2.0).unwrap();
+        assert_eq!(
+            launch.windows.len(),
+            1,
+            "repair must not discard the workspace"
+        );
+        assert!(store.snapshot_path().exists());
+        assert_eq!(launch.windows[0].restored_drafts, drafts);
+        // Ambiguous saved selection resolves to the first matching column,
+        // exactly as before the repair; geometry and all pane data are intact.
+        window.worklanes[0].columns[2].id = "duplicate-3".to_owned();
+        assert_eq!(launch.windows[0].window, window);
+        let restored = WorkspaceState::from_window_recipe(&window).unwrap();
+        assert_eq!(restored.focused_pane_id(), Some("pane-2"));
+        assert_eq!(restored.active_pane_ids(), ["pane-1", "pane-2", "pane-3"]);
+        let mut corrected = source;
+        corrected.workspace.windows = vec![window];
+        let (again, _) = super::project_restored_workspace(&corrected).unwrap();
+        assert_eq!(again[0].window, launch.windows[0].window);
     }
 
     #[test]

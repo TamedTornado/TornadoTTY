@@ -2140,6 +2140,35 @@ fn source_grid_isolates_a_selected_pane_without_replacing_its_live_identity() {
 }
 
 #[test]
+fn reflow_expansion_keeps_columns_unique_and_every_pane_selectable() {
+    let mut state = WorkspaceState::new("lane", "pane-1");
+    assert!(state.split_focused_pane_below("pane-2"));
+    assert!(state.split_focused_pane_right("pane-3"));
+    assert!(state.arrange_panes_per_column(1));
+    let ids = state
+        .active_columns()
+        .iter()
+        .map(|column| &column.id)
+        .collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(ids.len(), 3);
+    for pane in ["pane-1", "pane-2", "pane-3"] {
+        assert!(state.select_pane(pane));
+        assert_eq!(state.focused_pane_id(), Some(pane));
+    }
+    assert!(state.arrange_panes_per_column(3));
+    assert!(state.arrange_panes_per_column(1));
+    assert_eq!(state.focused_pane_id(), Some("pane-3"));
+    assert_eq!(state.active_pane_ids(), ["pane-1", "pane-2", "pane-3"]);
+    let template = SessionRestoreEnvelope::from_json(V3_ENVELOPE)
+        .unwrap()
+        .workspace
+        .windows
+        .remove(0);
+    let restored = WorkspaceState::from_window_recipe(&state.to_window_recipe(&template)).unwrap();
+    assert_eq!(restored.active_columns(), state.active_columns());
+}
+
+#[test]
 fn source_arrangement_presets_reflow_stable_panes_and_preserve_focus() {
     const SOURCE: &str = include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),

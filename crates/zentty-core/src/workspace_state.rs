@@ -1317,6 +1317,14 @@ impl WorkspaceState {
         if !(1..=4).contains(&panes_per_column) {
             return false;
         }
+        // Retained positional identities may already have the name derived
+        // from a later chunk's first pane. Reserve them before expanding.
+        let mut reserved_ids = self
+            .worklanes
+            .iter()
+            .flat_map(|lane| &lane.columns)
+            .map(|column| column.id.clone())
+            .collect::<BTreeSet<_>>();
         let worklane = self.active_worklane_mut();
         let before = worklane.columns.clone();
         let focused_pane_id = before
@@ -1338,10 +1346,20 @@ impl WorkspaceState {
             } else {
                 first_id.clone()
             };
+            let id = if let Some(column) = before.get(index) {
+                column.id.clone()
+            } else {
+                let base = format!("column-{first_id}");
+                let mut candidate = base.clone();
+                let mut suffix = 2;
+                while !reserved_ids.insert(candidate.clone()) {
+                    candidate = format!("{base}-{suffix}");
+                    suffix += 1;
+                }
+                candidate
+            };
             rebuilt.push(PaneColumnState {
-                id: before
-                    .get(index)
-                    .map_or_else(|| format!("column-{first_id}"), |column| column.id.clone()),
+                id,
                 width: widths[index.min(widths.len() - 1)],
                 pane_heights: vec![1.0 / small_count_as_f64(chunk.len()); chunk.len()],
                 panes: chunk,

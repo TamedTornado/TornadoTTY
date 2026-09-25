@@ -3427,7 +3427,22 @@ impl ApplicationShell {
                 total.saturating_add(*width + PaneLayoutPolicy::INTER_PANE_SPACING)
             });
         let adjustment = self.pane_scroll.hadjustment();
+        let weak = self.self_handle.borrow().clone();
+        let requested_lane = self.state.active_worklane_id().to_owned();
+        let requested_pane = self.state.focused_pane_id().map(str::to_owned);
         glib::timeout_add_local_once(Duration::from_millis(50), move || {
+            let Some(shell) = weak.upgrade() else {
+                return;
+            };
+            let shell = shell.borrow();
+            // A sidebar selection may have already revealed another pane.
+            // Do not move its viewport back to an obsolete layout request.
+            if shell.state.active_worklane_id() != requested_lane
+                || shell.state.focused_pane_id() != requested_pane.as_deref()
+            {
+                return;
+            }
+            drop(shell);
             let maximum = (adjustment.upper() - adjustment.page_size()).max(0.0);
             adjustment.set_value(f64::from(target).min(maximum));
             eprintln!(

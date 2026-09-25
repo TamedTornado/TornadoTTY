@@ -296,8 +296,8 @@ fn divider_layout(product: &Path, backend: Backend) -> Result<(), String> {
     let session_id = controlled_input_session_id(backend)?;
     let run_root = create_named_run_root("divider-layout")?;
     let result = run_divider_layout(product, backend, &session_id, &run_root);
-    if let Err(error) = fs::remove_dir_all(&run_root)
-        && result.is_ok()
+    if result.is_ok()
+        && let Err(error) = fs::remove_dir_all(&run_root)
     {
         return Err(format!("could not remove scenario directory: {error}"));
     }
@@ -345,7 +345,10 @@ fn run_divider_layout(
             "confirm_before_closing_window = false\n",
             "confirm_before_quitting = false\n",
             "[pane_layout]\n",
-            "right_split_behavior = \"alwaysSplit\"\n"
+            "right_split_behavior = \"alwaysSplit\"\n",
+            "[[shortcuts.bindings]]\ncommand_id = \"pane.arrange.height.full\"\nshortcut = \"command+option+1\"\n",
+            "[[shortcuts.bindings]]\ncommand_id = \"pane.arrange.height.two_per_column\"\nshortcut = \"command+option+2\"\n",
+            "[[shortcuts.bindings]]\ncommand_id = \"pane.arrange.height.three_per_column\"\nshortcut = \"command+option+3\"\n"
         ),
     )
     .map_err(|error| format!("could not write isolated layout config: {error}"))?;
@@ -440,6 +443,9 @@ fn observe_divider_layout(
         &["10000", "1", "terminal-ready", "pane-1"],
     )?;
     if matches!(backend, Backend::Wayland) {
+        if std::env::var("ZENTTY_NESTED_WAYLAND_INPUT_COMPOSITOR").as_deref() == Ok("labwc") {
+            send_input_key(driver, session, backend, "F11")?;
+        }
         driver_success(
             driver,
             &["wait"],
@@ -525,6 +531,172 @@ fn observe_divider_layout(
         backend,
         root,
         returned[0] / returned[2],
+    )?;
+    check_reflow_return(driver, session, backend, root)
+}
+
+fn check_reflow_return(
+    driver: &Path,
+    session: &Path,
+    backend: Backend,
+    root: &Path,
+) -> Result<(), String> {
+    // Expand [1,2],[3] into full-width columns, then return to stacked
+    // panes. Previously the expansion reused column 3's identity twice,
+    // stranding an empty overlay in the viewport after the next reflow.
+    send_input_key(driver, session, backend, "ctrl+alt+1")?;
+    click_layout_sidebar(driver, session, backend, 170)?;
+    send_input_key(driver, session, backend, "ctrl+alt+3")?;
+    click_layout_sidebar(driver, session, backend, 290)?;
+    capture_layout(driver, session, backend, root, "stacked-settled")?;
+    let stacked = layout_geometry(driver, session, backend, root, "pane-3", "stacked")?;
+    capture_layout(driver, session, backend, root, "stacked")?;
+    click_layout_sidebar(driver, session, backend, 357)?;
+    click_layout_sidebar(driver, session, backend, 110)?;
+    // Inspect the pixels before sending input or selecting another pane.
+    visible_last_row(
+        driver,
+        session,
+        backend,
+        root,
+        "stacked-return",
+        stacked[0] / stacked[2],
+    )?;
+    let returned = layout_geometry(driver, session, backend, root, "pane-3", "stacked-return")?;
+    if returned != stacked {
+        return Err(format!(
+            "stacked pane geometry changed on return: {stacked:?} -> {returned:?}"
+        ));
+    }
+    send_input_key(driver, session, backend, "ctrl+alt+2")?;
+    send_input_key(driver, session, backend, "ctrl+alt+1")?;
+    send_input_key(driver, session, backend, "ctrl+1")?;
+    for (pane, y) in [("pane-1", 170), ("pane-2", 230), ("pane-3", 290)] {
+        click_layout_sidebar(driver, session, backend, y)?;
+        let phase = format!("full-width-{pane}");
+        capture_layout(driver, session, backend, root, &format!("{phase}-settled"))?;
+        let geometry = layout_geometry(driver, session, backend, root, pane, &phase)?;
+        visible_last_row(
+            driver,
+            session,
+            backend,
+            root,
+            &phase,
+            geometry[0] / geometry[2],
+        )?;
+    }
+    println!(
+        "layout reflow: stacked header round-trip pixels and all three full-width sidebar selections PASS"
+    );
+    check_stationary_divider(driver, session, backend, root)
+}
+
+fn check_stationary_divider(
+    driver: &Path,
+    session: &Path,
+    backend: Backend,
+    root: &Path,
+) -> Result<(), String> {
+    send_input_key(driver, session, backend, "ctrl+alt+2")?;
+    capture_layout(driver, session, backend, root, "two-pane-reflow-settled")?;
+    click_layout_sidebar(driver, session, backend, 170)?;
+    capture_layout(driver, session, backend, root, "two-pane-divider")?;
+    let before_geometry =
+        layout_geometry(driver, session, backend, root, "pane-1", "divider-before")?;
+    let (transport, window) = input_target(driver, session, backend)?;
+    driver_success(
+        driver,
+        &["input", "verify"],
+        &[session],
+        &[transport, &window],
+    )?;
+    let log = session.join("product.log");
+    let pointer = "pane-divider-pointer id=pane-divider-column-worklane-1-after-pane-1 state=enter";
+    let resize = "pane-divider-resize axis=vertical column=column-worklane-1 after=pane-1 ";
+    let count = |needle: &str| -> Result<usize, String> {
+        fs::read_to_string(&log)
+            .map(|text| text.matches(needle).count())
+            .map_err(|error| error.to_string())
+    };
+    let before = count(pointer)?;
+    let mut found = false;
+    for y in (70..590).step_by(3) {
+        require_command(
+            Command::new("xdotool").args([
+                "mousemove",
+                "--sync",
+                "--window",
+                &window,
+                "700",
+                &y.to_string(),
+            ]),
+            "locate divider",
+        )?;
+        thread::sleep(Duration::from_millis(20));
+        if count(pointer)? > before {
+            found = true;
+            break;
+        }
+    }
+    if !found {
+        return Err("physical pointer did not find the two-pane divider".to_owned());
+    }
+    let before = count(resize)?;
+    require_command(
+        Command::new("xdotool").args(["mousedown", "1"]),
+        "press divider",
+    )?;
+    // Move slowly across multiple allocations, as a person does when nudging
+    // a split. One instantaneous motion cannot expose moving-origin feedback.
+    for _ in 0..10 {
+        require_command(
+            Command::new("xdotool").args(["mousemove_relative", "--sync", "--", "0", "2"]),
+            "drag divider",
+        )?;
+        thread::sleep(Duration::from_millis(30));
+    }
+    thread::sleep(Duration::from_millis(250));
+    let settled = count(resize)?;
+    thread::sleep(Duration::from_millis(300));
+    require_command(
+        Command::new("xdotool").args(["mouseup", "1"]),
+        "release divider",
+    )?;
+    if settled <= before || count(resize)? != settled {
+        return Err("divider did not move once and settle under the stationary pointer".to_owned());
+    }
+    click_layout_sidebar(driver, session, backend, 170)?;
+    capture_layout(driver, session, backend, root, "divider-after-settled")?;
+    let after_geometry =
+        layout_geometry(driver, session, backend, root, "pane-1", "divider-after")?;
+    if after_geometry[0] <= before_geometry[0] || after_geometry[0] - before_geometry[0] > 40 {
+        return Err(format!(
+            "small divider drag produced wrong PTY size: {before_geometry:?} -> {after_geometry:?}"
+        ));
+    }
+    println!("layout divider: physical drag settles under stationary pointer PASS");
+    Ok(())
+}
+
+fn click_layout_sidebar(
+    driver: &Path,
+    session: &Path,
+    backend: Backend,
+    y: u32,
+) -> Result<(), String> {
+    let (transport, window) = match backend {
+        Backend::X11 => input_target(driver, session, backend)?,
+        Backend::Wayland => (
+            "outer-x11",
+            std::env::var("ZENTTY_NESTED_WAYLAND_OUTER_X11_WINDOW")
+                .map_err(|_| "missing private compositor pointer window".to_owned())?,
+        ),
+    };
+    driver_success(
+        driver,
+        &["input", "click"],
+        &[session],
+        &[transport, &window, "120", &y.to_string()],
     )
 }
 
@@ -582,24 +754,7 @@ fn visible_last_row(
     phase: &str,
     cell_height: u32,
 ) -> Result<(), String> {
-    let window = match backend {
-        Backend::X11 => input_target(driver, session, backend)?.1,
-        Backend::Wayland => std::env::var("ZENTTY_NESTED_WAYLAND_OUTER_X11_WINDOW")
-            .map_err(|_| "missing private compositor capture window".to_owned())?,
-    };
-    let screenshot = root.join(format!("{phase}.png"));
-    require_command(
-        Command::new("bash")
-            .args([
-                "-c",
-                "source \"$1\"; zentty_visual_capture_stable \"$2\" import -window \"$3\"",
-                "capture",
-            ])
-            .arg(root.join("visual-evidence"))
-            .arg(&screenshot)
-            .arg(window),
-        "capture last terminal row",
-    )?;
+    let screenshot = capture_layout(driver, session, backend, root, phase)?;
     let output = Command::new("convert")
         .arg(&screenshot)
         .args([
@@ -623,6 +778,34 @@ fn visible_last_row(
         ));
     }
     Ok(())
+}
+
+fn capture_layout(
+    driver: &Path,
+    session: &Path,
+    backend: Backend,
+    root: &Path,
+    phase: &str,
+) -> Result<PathBuf, String> {
+    let window = match backend {
+        Backend::X11 => input_target(driver, session, backend)?.1,
+        Backend::Wayland => std::env::var("ZENTTY_NESTED_WAYLAND_OUTER_X11_WINDOW")
+            .map_err(|_| "missing private compositor capture window".to_owned())?,
+    };
+    let screenshot = root.join(format!("{phase}.png"));
+    require_command(
+        Command::new("bash")
+            .args([
+                "-c",
+                "source \"$1\"; zentty_visual_capture_stable \"$2\" timeout --foreground --kill-after=1s 5s import -window \"$3\"",
+                "capture",
+            ])
+            .arg(root.join("visual-evidence"))
+            .arg(&screenshot)
+            .arg(window),
+        "capture last terminal row",
+    )?;
+    Ok(screenshot)
 }
 
 fn layout_geometry(

@@ -687,6 +687,43 @@ verification of this sequence on the repaired build are NOT RUN; post-restart
 desktop confirmation remains pending. These steps are recorded in GH-191 as
 well as this report, rather than relying on conversation context.
 
+### September 25: live lag inspection (no repair or restart)
+
+Jason reported current lag. Read-only host sampling at approximately 10:35–10:37
+CEST identified GUI PID 269662, running for three days. Its executable inode
+matches the installed clean ReleaseSafe build 248373e4f35d. Recent user-journal
+slow-worklane diagnostics confirm stalls: server-chrome processing took 826,
+3702, 971 and 642 ms; the corresponding worst full worklane render was 3729 ms
+(sidebar 3726 ms, layout 2 ms). This localizes measured wall-clock delay to the
+server-control ranking/configuration portion of render_chrome, not terminal
+layout; it does not establish the underlying blocking operation.
+
+Five-second pidstat sample: GUI CPU 12.6% of one core, RSS about 928 MiB,
+no major faults or measured disk traffic. Main-thread CPU in a subsequent
+three-second sample was 6%. Host had about 75 GiB available and no swap use,
+but substantial I/O pressure (some avg10 about 51%, full about 32%) and bursts
+of Java and other background CPU work. Contention may contribute; it is not
+proven to explain the measured UI stalls. Last five minutes had 2137 application
+journal lines, 68 fleet-popover renders and 65 changed agent events. No recent
+kernel warning entries were returned. Checks: pidstat, vmstat, /proc/pressure,
+journalctl filtered to the GUI PID, executable inode/version comparison, and
+source inspection. No live client settings, processes or workspace were changed;
+no repair, regression test, install, commit or push performed. Root cause and
+post-repair responsiveness remain unverified.
+
+Follow-up: Jason localized the symptom to intermittent worklane switches, then
+reported input lag too. Bounded live traces and low-rate perf sampling did not
+capture another logged server-control stall. The ioctl trace with stack unwinding
+coincided with the reported heavier lag and may have amplified it; detached it
+promptly, and do not use that interval as clean reproduction evidence. No ioctl
+over 30 ms appeared in that capture. Subsequent sampling without strace found
+the UI thread mostly in event polling (78/100 wait-state observations), with
+6 futex waits and 16 running/other observations. Jason then reported no issues.
+All captures completed; TracerPid is zero. No repair applied. Server-menu
+replacement on a changed visible server list remains a candidate for the earlier
+logged stalls, not a confirmed root cause. The existing unchanged-menu fast
+path explains why that work is conditional, but does not prove why it stalled.
+
 ### September 25: Roblox Working state without spinner (GH-192)
 
 Jason reports Codex working in Roblox with Working labels but no spinner.
@@ -739,6 +776,33 @@ errors before checking the binary. ShellCheck FAILS on existing source-following
 and intentional single-quoted child-command diagnostics; no suppressions added.
 No full qualification, install, live restart, commit or push. Live confirmation
 pending; repair is local for Jason's requested bug-fix batch before a new release.
+
+### September 25: GH-185 follow-up investigation, no latency repair
+
+Reviewed server ranking/control code and prior issue evidence. A temporary
+measurement in the existing window_chrome lifecycle-test module alternated two
+seven-entry server lists in a real GTK window, 40 times per run, on private
+software-rendered X11 and native Wayland. Also opened each menu before its next
+replacement. Updates remained millisecond/sub-millisecond scale; the live
+multi-second delay was NOT REPRODUCED. This small GTK control does not include
+the full live workspace, hardware driver or three-day process history. GTK
+4.14.5 source confirms replacement unparents the old popover and realized
+popovers own native renderers, but this alone does not establish our stall cause.
+
+A bounded 60-second eBPF duration-only sample measured three live GTK calls:
+completed tooltip and accessibility updates peaked at 14/41 microseconds;
+there were zero set_popover completions. No stacks or terminal contents were
+captured, and no ptrace stops used. Jason confirmed no lag at this time. Probe
+process completed and detached. This non-recurrence cannot exonerate the menu
+replacement path or attribute earlier lag to host I/O pressure.
+
+No speculative behavior fix retained. Temporary diagnostic test removed after
+saving /tmp/gh185-menu-diagnostic.patch; receipts are
+/tmp/gh185-menu-{baseline,open-baseline,wayland-baseline}.log and
+/tmp/gh185-widget-timing.{bt,log}. No integrated rebuild, full qualification,
+installation or live restart. Existing slow-worklane stage logs remain in place;
+next useful evidence is a recurrence separating ranking, primary-control
+updates and menu replacement. GH-185 remains unresolved.
 
 ### September 25: GH-174 notification launch capability repair
 
@@ -801,3 +865,88 @@ in attention_inbox/workload_policy/workspace_recipe. One new semicolon lint was
 fixed before the final lint run. No full qualification, installation, live client
 restart, commit or push. Actual installed Codex human/automatic-review QA remains
 pending the coordinated bug-batch release. GH-174 remains open for that adoption.
+
+### 2026-09-25: Regulate selection and blank worklane reports (#194, #195)
+
+- Jason reported that the third of three full-width panes could not be selected,
+  then that returning to the same lane after arranging three stacked panes showed
+  white until selecting a specific pane. Running installed GUI remains
+  `248373e4f35d`; newer source fixes are not installed.
+- Read-only journal evidence at 14:10:51 CEST shows duplicate column identities:
+  `column-pane-2,column-pane-18,column-pane-18`. Repeated pane-18 selections at
+  14:10:57–59 were followed by focus returning to pane-17. After the user's
+  arrange-height-three action at 14:11:11, all three selections succeeded.
+  Duplicate identities are confirmed; their creation path is not yet reproduced.
+  Tracked with regression and safe persistence acceptance criteria in
+  [#194](https://github.com/TamedTornado/TornadoTTY/issues/194).
+- At 14:12:13, lane selection logged one-column layout and pane-13 focus; the
+  next explicit pane-17 selection at 14:12:14 matches the reported recovery.
+  Logs establish navigation, not rendered pixels. All three panes remain in the
+  model. Cached layout visibility/allocation, scrolling, and redraw are hypotheses,
+  not a confirmed common cause. Separate visual regression criteria are in
+  [#195](https://github.com/TamedTornado/TornadoTTY/issues/195).
+- Evidence obtained with bounded `journalctl --user _PID=269662` time filters
+  and read-only workspace listing. No live client restart or workspace changes,
+  no behavior patch, and no new automated regression run yet.
+
+### 2026-09-25: reflow repair and divider oscillation investigation
+
+- #194 reproduced red in `reflow_expansion_keeps_columns_unique_and_every_pane_selectable`:
+  expanding `[pane1,pane2],[pane3]` reused the second column's ID and generated
+  that same ID for column three. Reflow now reserves existing window-wide IDs
+  before generating new ones. Focus, order and recipe round-trip are covered.
+- #195 also reproduced visually in the existing isolated divider-layout journey:
+  old `248373e4f35d` rendered an entirely white content area after reflow and a
+  worklane-header round trip (`/tmp/gh195-return-baseline.log`, screenshot under
+  `/tmp/gh195-baseline-evidence/`). Duplicate IDs overwrote the mounted-column
+  map entry, leaving an untracked empty overlay. Preventing the identity
+  collision restores visible terminals without unmounting inactive worklanes.
+- The extended X11 journey passes header return pixel checks and physical
+  sidebar selection/input to all three full-width PTYs with the reflow repair.
+  A separate setup race exposed a queued 50 ms scroll for the old selection
+  overriding a newer sidebar selection; the callback now rejects stale lane/
+  pane targets. This was real viewport misselection, not missing PTYs.
+- Saved live snapshots can retain duplicate IDs. Startup previously discarded
+  such a workspace (new persistence regression red). Restore projection now
+  renames only colliding column IDs, reserves existing suffixes, preserves all
+  panes/geometry/drafts, and retains the original snapshot. Ambiguous same-lane
+  focus keeps the prior first-match interpretation. Focused checks: 82 workspace
+  tests, 17 persistence tests, and 6 divider semantic tests PASS.
+- Jason then reported flickering/extreme resize after moving pane three to a
+  new window. [#196](https://github.com/TamedTornado/TornadoTTY/issues/196):
+  14:26:46–47 CEST journal alternates 120/1177 and 1177/120 pixel pane heights
+  approximately every 16 ms. Candidate repair uses surface-relative event
+  coordinates rather than the moving handle's local drag offsets, and leaves
+  handle position projection solely to the model callback (previously applied
+  twice). A single-step synthetic drag did not reproduce oscillation; the
+  regression is being checked with incremental physical motion over allocations.
+- Validation failures retained: the multi-window restore-layout journey stopped
+  before divider testing on cross-window input routing; closing pane three in
+  the extended journey aborted both pre-divider-fix and candidate builds with
+  GTK invalid weak refs and heap corruption. The latter is separately tracked
+  in [#197](https://github.com/TamedTornado/TornadoTTY/issues/197), with raw
+  `/tmp/gh196-close-crash.log`. No workaround is presented as a lifecycle fix.
+- Native Wayland pointer coverage is BLOCKED: Cage driver transport is
+  keyboard-only; labwc's outer output lacks `_NET_WM_PID` and fails the existing
+  strict owner check. Independently reproduced without launching the product;
+  [#198](https://github.com/TamedTornado/TornadoTTY/issues/198). No ownership
+  check was relaxed. Exact post-move-to-new-window drag and live desktop QA
+  remain pending. No installed binaries or live workspace changed.
+- Final #196 focused result: ten physical 2-pixel movements separated by 30 ms
+  reproduce the old defect: the top PTY shrinks from 273 to 105 pixels despite
+  20 pixels of downward pointer travel (`/tmp/gh196-slow-drag-red.log`). With
+  the repair, the same journey PASSes small positive resize, stationary-pointer
+  stability, all three full-width sidebar selections, stacked header-return
+  pixels, last-row clipping checks and normal exit (`/tmp/gh196-slow-drag-green.log`).
+  This establishes the moving-divider defect independently of window transfer;
+  the exact post-transfer path remains a stated acceptance gap, not passed QA.
+- Integrated `build-local` PASS, stage `build/gh196-divider`, source based on
+  `9af9ec52` plus uncommitted fixes and pre-existing dirty work, unchanged pinned
+  Ghostty `b62d1c57fe7d265ab030fd25c96742e1b11442b8`; publish-age audit PASS
+  (91 packages, zero exceptions). Linux Clippy remains FAIL on six pre-existing
+  workload-library errors, before the binary checks. No full qualification run.
+- The screenshot capture subprocess now has a five-second timeout: ImageMagick
+  otherwise entered interactive capture after the test window disappeared in
+  #197. Only identified isolated-test capture processes were stopped; live
+  TornadoTTY was untouched. Source fixes and regression coverage are committed
+  with this entry; the running client remains unchanged and unpatched.

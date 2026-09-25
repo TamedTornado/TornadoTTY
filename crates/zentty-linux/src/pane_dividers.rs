@@ -4,7 +4,7 @@ use std::rc::Rc;
 use gtk::gdk;
 use gtk::prelude::*;
 pub(crate) use zentty_linux::pane_divider_model::PaneDivider;
-use zentty_linux::pane_divider_model::{DividerAxis, DividerKey, adjusted_vertical_margin};
+use zentty_linux::pane_divider_model::{DividerAxis, DividerKey};
 
 pub(crate) fn install_styles() {
     let provider = gtk::CssProvider::new();
@@ -53,23 +53,36 @@ pub(crate) fn new_handle(
     }
 
     let on_delta: Rc<dyn Fn(f64) -> f64> = Rc::new(on_delta);
-    let last_offset = Rc::new(Cell::new(0.0));
+    let last_offset = Rc::new(Cell::new(None));
     let drag = gtk::GestureDrag::new();
     let begin_offset = Rc::clone(&last_offset);
-    drag.connect_drag_begin(move |_, _, _| begin_offset.set(0.0));
+    let begin_divider = divider.clone();
+    drag.connect_drag_begin(move |gesture, _, _| {
+        begin_offset.set(
+            gesture
+                .current_event()
+                .and_then(|event| event.position())
+                .map(|(x, y)| begin_divider.pointer_offset(x, y)),
+        );
+    });
     let update_offset = Rc::clone(&last_offset);
     let update_callback = Rc::clone(&on_delta);
-    let drag_handle = handle.clone();
     let drag_divider = divider.clone();
-    drag.connect_drag_update(move |_, x, y| {
+    drag.connect_drag_update(move |gesture, _, _| {
+        // Gesture offsets are local to this handle, which moves as we resize.
+        // Surface coordinates do not turn allocation changes into new motion.
+        let Some((x, y)) = gesture.current_event().and_then(|event| event.position()) else {
+            return;
+        };
         let offset = drag_divider.pointer_offset(x, y);
-        let delta = offset - update_offset.replace(offset);
+        let Some(previous) = update_offset.replace(Some(offset)) else {
+            return;
+        };
+        let delta = offset - previous;
         if let Some(request) = drag_divider.resize_request(delta) {
-            let applied = request.apply(|payload| update_callback(payload.delta));
-            if axis == DividerAxis::Vertical && applied.abs() > f64::EPSILON {
-                drag_handle
-                    .set_margin_top(adjusted_vertical_margin(drag_handle.margin_top(), applied));
-            }
+            // The model callback projects the boundary onto the handle. Do
+            // not apply its movement a second time in the interaction layer.
+            request.apply(|payload| update_callback(payload.delta));
         }
     });
     handle.add_controller(drag);
@@ -91,7 +104,6 @@ pub(crate) fn new_handle(
     handle.add_controller(click);
 
     let key_callback = Rc::clone(&on_delta);
-    let key_handle = handle.clone();
     let key_divider = divider.clone();
     let keys = gtk::EventControllerKey::new();
     keys.connect_key_pressed(move |_, key, _, _| {
@@ -103,13 +115,7 @@ pub(crate) fn new_handle(
             _ => None,
         };
         if let Some(request) = key.and_then(|key| key_divider.keyboard_request(key)) {
-            let applied = request.apply(|payload| key_callback(payload.delta));
-            if axis == DividerAxis::Vertical && applied.abs() > f64::EPSILON {
-                // Keyboard movement must keep the visible handle attached to
-                // the resized boundary just like pointer movement.
-                key_handle
-                    .set_margin_top(adjusted_vertical_margin(key_handle.margin_top(), applied));
-            }
+            request.apply(|payload| key_callback(payload.delta));
             gtk::glib::Propagation::Stop
         } else {
             gtk::glib::Propagation::Proceed
