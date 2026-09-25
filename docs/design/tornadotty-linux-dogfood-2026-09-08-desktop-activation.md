@@ -1066,3 +1066,39 @@ pending the coordinated bug-batch release. GH-174 remains open for that adoption
 - Running GUI PID 1540262 retained inode 75497515, size 225202760 before/after.
   It still runs f61bf209, so the #200 repair becomes active only on next launch.
   No push or release performed; live user confirmation remains pending.
+
+### September 25: selection marker advanced without revealing the pane (#201)
+
+- Jason reports desktop notification activation opens Regulate but leaves the
+  previously selected terminal visible; direct sidebar clicks likewise move the
+  green marker without changing the displayed pane until another interaction.
+  Live f61bf209 PID 1540262 at 15:50:18 CEST logged the correct notification
+  target and focus callback (pane-17), in a three-full-width-column lane.
+  Selection/focus receipts alone did not prove viewport visibility.
+- The common explicit-focus path relied on GTK to scroll its focused widget.
+  It now schedules an explicit post-layout column reveal for both sidebar and
+  notification selection, coalescing to one cancellable request per window and
+  retaining lane/pane stale-request checks. Inactive windows receive logical
+  widget focus without presenting/activating the native window. Shutdown cancels
+  the outstanding source. No engine change.
+- Existing private-notification journey now uses distinct terminal backgrounds,
+  activates pane two from another worklane, checks pixels before further input,
+  and verifies physical input reaches pane two. Old gh200 product FAILed the
+  pixel assertion despite logging the correct selected pane; repaired product
+  PASSes on isolated X11 and native Wayland. Receipts:
+  `/tmp/gh201-notification-{old,fixed,wayland}.log`.
+- Existing sidebar/reflow/divider journey now distinguishes each pane's last-row
+  pixels and checks its PTY input. Repaired X11 product PASSes
+  (`/tmp/gh201-sidebar-green.log`). Old product also PASSes this stronger journey
+  (`/tmp/gh201-sidebar-distinct-baseline.log`): Jason's intermittent direct-click
+  case was not reproduced in isolation; common-path repair is not live QA proof.
+  Physical Wayland sidebar coverage remains blocked by #198; notification and
+  keyboard Wayland coverage above does not bypass pointer ownership checks.
+- Fixture setup initially lacked the explicit previous-pane binding, used a
+  nonexistent daemon method, and painted only initially allocated terminal cells.
+  Corrected setup uses the existing ActivateLatest method, OSC 11 background and
+  semantic ready titles. These were fixture failures, not product regressions.
+- Focus Rust tests: 8 PASS. Integrated product build, shell syntax and diff checks
+  PASS; dependency age audit 91 packages, zero exceptions. No full qualification,
+  mutation claim, live restart or saved-workspace manipulation. Live confirmation
+  remains pending; issue #201 stays open.

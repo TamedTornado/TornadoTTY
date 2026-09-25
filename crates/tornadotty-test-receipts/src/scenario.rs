@@ -571,18 +571,23 @@ fn check_reflow_return(
     send_input_key(driver, session, backend, "ctrl+alt+2")?;
     send_input_key(driver, session, backend, "ctrl+alt+1")?;
     send_input_key(driver, session, backend, "ctrl+1")?;
-    for (pane, y) in [("pane-1", 170), ("pane-2", 230), ("pane-3", 290)] {
+    for (pane, y, color) in [
+        ("pane-1", 170, "#ff0000"),
+        ("pane-2", 230, "#00ff00"),
+        ("pane-3", 290, "#0000ff"),
+    ] {
         click_layout_sidebar(driver, session, backend, y)?;
         let phase = format!("full-width-{pane}");
         capture_layout(driver, session, backend, root, &format!("{phase}-settled"))?;
         let geometry = layout_geometry(driver, session, backend, root, pane, &phase)?;
-        visible_last_row(
+        visible_colored_row(
             driver,
             session,
             backend,
             root,
             &phase,
             geometry[0] / geometry[2],
+            color,
         )?;
     }
     println!(
@@ -754,12 +759,32 @@ fn visible_last_row(
     phase: &str,
     cell_height: u32,
 ) -> Result<(), String> {
+    visible_colored_row(
+        driver,
+        session,
+        backend,
+        root,
+        phase,
+        cell_height,
+        "#ff00ff",
+    )
+}
+
+fn visible_colored_row(
+    driver: &Path,
+    session: &Path,
+    backend: Backend,
+    root: &Path,
+    phase: &str,
+    cell_height: u32,
+    color: &str,
+) -> Result<(), String> {
     let screenshot = capture_layout(driver, session, backend, root, phase)?;
     let output = Command::new("convert")
         .arg(&screenshot)
         .args([
-            "-fill", "black", "+opaque", "#ff00ff", "-fill", "white", "-opaque", "#ff00ff",
-            "-format", "%@", "info:",
+            "-fill", "black", "+opaque", color, "-fill", "white", "-opaque", color, "-format",
+            "%@", "info:",
         ])
         .output()
         .map_err(|error| format!("could not inspect last row: {error}"))?;

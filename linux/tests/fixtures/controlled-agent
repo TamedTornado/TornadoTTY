@@ -157,6 +157,23 @@ case "${profile}" in
             >>"${ZENTTY_CONTROLLED_AGENT_START_RECEIPT}"
         exit 42
         ;;
+    attention-pane-reveal)
+        require_helper
+        receipt="${ZENTTY_CONTROLLED_ATTENTION_RECEIPT:?}"
+        color='#ff00ff'
+        [[ "${ZENTTY_PANE_ID}" != pane-2 ]] || color='#00ff00'
+        # Default background also colors cells allocated by later resizing;
+        # painting only the initial grid leaves alternating unpainted rows.
+        printf '\033]11;%s\007\033[0m\033[2J\033[H\033[?25l' "${color}"
+        printf '\033]2;reveal-ready-%s\007' "${ZENTTY_PANE_ID}"
+        if [[ "${ZENTTY_PANE_ID}" == pane-2 ]]; then
+            while [[ ! -f "${receipt}.notify" ]]; do sleep 0.02; done
+            "${helper}" codex-notify \
+                '{"type":"question","session_id":"attention-reveal-e2e","message":"Controlled pane reveal"}'
+        fi
+        IFS= read -r response
+        printf 'pane=%s response=%s\n' "${ZENTTY_PANE_ID}" "${response}" >"${receipt}"
+        ;;
     attention-inbox)
         require_helper
         receipt="${ZENTTY_CONTROLLED_ATTENTION_RECEIPT:-}"

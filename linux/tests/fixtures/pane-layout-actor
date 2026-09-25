@@ -17,6 +17,11 @@ while IFS= read -r phase; do
     # A full last-row band makes clipped terminal rows visible in screenshots.
     color='255;0;255'
     [[ "${phase}" != initial ]] || color='0;255;128'
+    case "${phase}" in
+        full-width-pane-1) color='255;0;0' ;;
+        full-width-pane-2) color='0;255;0' ;;
+        full-width-pane-3) color='0;0;255' ;;
+    esac
     printf '\033[2J\033[%s;1H\033[48;2;%sm%*s\033[0m\033[H\033[?25l' "${rows}" "${color}" "${columns}" ''
     printf '%s %s %s %s\n' "${height}" "${width}" "${rows}" "${columns}" \
         >"${TORNADOTTY_LAYOUT_ROOT}/${ZENTTY_PANE_ID}-${phase}.tmp"

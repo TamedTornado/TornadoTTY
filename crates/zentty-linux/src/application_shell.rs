@@ -207,6 +207,7 @@ pub(crate) struct ApplicationShell {
     global_search_generation: u64,
     focus_follow_generation: u64,
     pending_initial_focus: Cell<Option<String>>,
+    pending_pane_reveal: RefCell<Option<glib::SourceId>>,
     remote_panes: RemotePaneContext,
     server_runtime: server_runtime::ServerRuntime,
     project_context_runtime: project_context_runtime::ProjectContextRuntime,
@@ -491,6 +492,7 @@ impl ApplicationShell {
             global_search_generation: 0,
             focus_follow_generation: 0,
             pending_initial_focus: Cell::new(None),
+            pending_pane_reveal: RefCell::new(None),
             remote_panes: RemotePaneContext::default(),
             catalog_discovery: catalog_discovery::Discovery::default(),
             server_runtime: server_runtime::ServerRuntime::pending(
@@ -1430,6 +1432,9 @@ impl ApplicationShell {
 
     pub(crate) fn detach_for_shutdown(&mut self) {
         self.shutting_down = true;
+        if let Some(source) = self.pending_pane_reveal.borrow_mut().take() {
+            source.remove();
+        }
         for upload in self.remote_panes.uploads.values() {
             upload.cancel();
         }
@@ -3413,6 +3418,9 @@ impl ApplicationShell {
     }
 
     fn scroll_panes_to_focused(&self) {
+        if let Some(source) = self.pending_pane_reveal.borrow_mut().take() {
+            source.remove();
+        }
         let worklane = self.state.active_worklane();
         let widths = self.resolved_column_widths();
         let focused_index = worklane
@@ -3430,11 +3438,12 @@ impl ApplicationShell {
         let weak = self.self_handle.borrow().clone();
         let requested_lane = self.state.active_worklane_id().to_owned();
         let requested_pane = self.state.focused_pane_id().map(str::to_owned);
-        glib::timeout_add_local_once(Duration::from_millis(50), move || {
+        let source = glib::timeout_add_local_once(Duration::from_millis(50), move || {
             let Some(shell) = weak.upgrade() else {
                 return;
             };
             let shell = shell.borrow();
+            shell.pending_pane_reveal.borrow_mut().take();
             // A sidebar selection may have already revealed another pane.
             // Do not move its viewport back to an obsolete layout request.
             if shell.state.active_worklane_id() != requested_lane
@@ -3450,6 +3459,7 @@ impl ApplicationShell {
                 adjustment.value()
             );
         });
+        *self.pending_pane_reveal.borrow_mut() = Some(source);
     }
 
     fn activate_pane_control(shell: &Rc<RefCell<Self>>, pane_id: &str, action: PaneControlAction) {
@@ -5110,7 +5120,19 @@ impl ApplicationShell {
         if let Some(pane_id) = self.pending_initial_focus.take() {
             eprintln!("tornadotty: initial-focus pane={pane_id} result=superseded");
         }
+        // Selecting a model/GTK focus widget does not guarantee that a cached
+        // lane has been allocated or scrolled to it. Every focus request owns
+        // a coalesced, stale-checked reveal after layout has had a chance to run.
+        self.scroll_panes_to_focused();
         if !self.window.is_active() {
+            // Set this window's logical focus without activating the native
+            // toplevel, so a later compositor activation restores the target,
+            // not the widget that was focused before the notification.
+            if let Some(pane_id) = self.state.focused_pane_id()
+                && let Some(surface) = self.pane_runtime.surface(pane_id)
+            {
+                gtk::prelude::GtkWindowExt::set_focus(&self.window, Some(surface.widget()));
+            }
             return;
         }
         self.focus_selected_surface_unchecked();
