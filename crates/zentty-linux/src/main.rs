@@ -56,6 +56,7 @@ mod theme_catalog;
 mod theme_preview;
 mod tmux_compat;
 mod tmux_store;
+mod ui_diagnostics;
 mod updates_privacy_settings;
 mod window_chrome;
 mod window_set;
@@ -214,6 +215,7 @@ fn run_lifecycle_cycle(
         let Some(application) = ticking_application.upgrade() else {
             return glib::ControlFlow::Break;
         };
+        let _diagnostic = ui_diagnostics::enter(ui_diagnostics::Phase::ApplicationTick);
         let tick_result = application.borrow_mut().tick();
         if let Err(error) = tick_result {
             crate::test_receipts::failure(
@@ -340,6 +342,22 @@ fn run() -> Result<(), String> {
     if desktop.forward_if_remote()? {
         eprintln!("tornadotty: desktop-activation result=forwarded");
         return Ok(());
+    }
+
+    let _ui_observer = match ui_diagnostics::Observer::install() {
+        Ok(observer) => {
+            eprintln!("tornadotty: ui-diagnostics enabled local-journal-only threshold-ms=500 max-per-stall=3 max-per-minute=12 payloads=none");
+            Some(observer)
+        }
+        Err(error) => {
+            eprintln!("tornadotty: ui-diagnostics unavailable detail={error}");
+            None
+        }
+    };
+    if let Some(display) = gtk::gdk::Display::default() {
+        gtk::gdk::prelude::DisplayExt::connect_closed(&display, |_, is_error| {
+            eprintln!("tornadotty: display-closed is-error={is_error}");
+        });
     }
 
     let state_directory = match &options.state_directory {

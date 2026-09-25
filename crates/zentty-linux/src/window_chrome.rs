@@ -235,6 +235,8 @@ impl WindowChrome {
     }
 
     pub(crate) fn configure_servers(&self, servers: &[RankedServer], active_worklane: &str) {
+        use crate::ui_diagnostics::{Phase, enter};
+        let _projection = enter(Phase::ServerProjection);
         let visible = servers
             .iter()
             .filter(|ranked| {
@@ -249,9 +251,15 @@ impl WindowChrome {
         };
 
         let label = format!("Open {}", primary.server.display);
-        self.server_primary.set_tooltip_text(Some(&label));
-        self.server_primary
-            .update_property(&[gtk::accessible::Property::Label(&label)]);
+        {
+            let _tooltip = enter(Phase::ServerTooltip);
+            self.server_primary.set_tooltip_text(Some(&label));
+        }
+        {
+            let _accessibility = enter(Phase::ServerAccessibility);
+            self.server_primary
+                .update_property(&[gtk::accessible::Property::Label(&label)]);
+        }
         self.server_primary.set_visible(true);
         self.server_primary.set_sensitive(true);
 
@@ -272,6 +280,7 @@ impl WindowChrome {
         }
         *self.rendered_servers.borrow_mut() = projection;
 
+        let build = enter(Phase::ServerMenuBuild);
         let popover = gtk::Popover::new();
         let list = gtk::Box::new(gtk::Orientation::Vertical, 2);
         list.set_margin_top(6);
@@ -298,7 +307,11 @@ impl WindowChrome {
             list.append(&button);
         }
         popover.set_child(Some(&list));
-        self.server_menu.set_popover(Some(&popover));
+        drop(build);
+        {
+            let _replace = enter(Phase::ServerPopoverReplace);
+            self.server_menu.set_popover(Some(&popover));
+        }
         self.server_menu.set_visible(true);
         self.server_menu.set_sensitive(true);
     }

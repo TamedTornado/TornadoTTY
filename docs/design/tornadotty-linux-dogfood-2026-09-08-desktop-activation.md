@@ -970,3 +970,40 @@ pending the coordinated bug-batch release. GH-174 remains open for that adoption
   after review and fresh PASS of 82 workspace, 17 persistence, and 6 divider
   semantic tests. They were not installed and cannot explain this old GUI exit.
   Live recovery and agent health are not certified by process existence alone.
+
+### 2026-09-25: capture live stall context before display failure (#199)
+
+- Jason requested actionable logs after the #190 recurrence. Added a fixed-state,
+  off-GUI progress observer with a 100 ms heartbeat; reports start at 500 ms,
+  then 2 s and 10 s. At most three samples per stall and twelve records per
+  minute including recovery. No GTK calls from the observer, no event queue,
+  and no log I/O under the shared state lock. Owned shutdown removes the timer,
+  signals the worker and joins it.
+- Symbolic scopes distinguish application ticks/layout, chrome, server ranking,
+  projection, tooltip, accessibility, menu construction and popover replacement.
+  Reports include correlation sequence and bounded kernel wait/syscall-number
+  metadata, never syscall arguments, URLs, paths or terminal/agent payloads.
+  Delivery uses nonblocking local journal datagrams so stderr backpressure
+  cannot stop the observer. Missing/full journal delivery can drop records;
+  initialization failure is explicit. This is diagnostics, not a crash repair.
+- Existing Ghostty/GDK fatal display logging is unchanged. Added GDK display-close
+  status, with the documented caveat that fatal GDK exit may bypass that signal.
+  No protocol payload tracing, ptrace, stack unwinding or network submission.
+- Focused observer tests PASS for reporting before blocked work returns, nested
+  attribution, scope identity, recovery, caps, healthy silence, shutdown, absent
+  kernel metadata and nonblocking delivery under journal backpressure.
+- Real GTK blocked-popover regression PASS on isolated X11 and native Wayland:
+  `ServerPopoverReplace` was reported at 500 ms while GTK's popover property
+  callback was still blocked (`wait=futex_do_wait syscall=202`). A private marker
+  used as a server label/URL was absent. Existing menu reuse/lifetime test PASS
+  with the observer installed. Receipts: `/tmp/gh199-tests-final.log`,
+  `/tmp/gh199-gtk-blocked-{x11,wayland}.log`, `/tmp/gh199-gtk-direct.log`.
+- Integrated build PASS. Broader divider product journey FAILed the same
+  full-width-pane-1 missing-marker assertion on both the logging candidate and
+  pre-logging build; retained as an unresolved #194/#195 validation gap, not
+  called a diagnostics PASS or retried until green. Receipts:
+  `/tmp/gh199-product-x11.log`, `/tmp/gh199-baseline-product.log`.
+- Jason authorized installation without restart. Installation will use matching
+  GUI/engine artifacts with atomic file replacement; the active GUI and its
+  saved state will not be touched. New diagnostics start only on the next
+  launch. Retrieval/limits are documented in `docs/configuration.md`.

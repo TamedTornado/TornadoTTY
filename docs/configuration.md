@@ -107,3 +107,40 @@ oversized, or inaccessible input is rejected visibly. A missing playback device
 is reported as unavailable and does not undo an otherwise successful import.
 Changing to a theme sound or selecting **Remove Custom** deletes obsolete
 Zentty-owned assets only after the new configuration has persisted.
+
+## Local GUI stall evidence
+
+The Linux client has a lightweight local progress observer independent of the
+optional crash-report submission setting. It samples the main-loop heartbeat
+and symbolic operation from a separate thread; it never calls GTK from that
+thread. If progress stops, it reports at approximately 500 ms, 2 seconds and
+10 seconds, capped at three stall samples and twelve total records per minute
+(including recovery). Healthy updates produce no observer records.
+
+The records distinguish layout/application ticks, server ranking, server
+projection, tooltip/accessibility updates, menu construction and popover
+replacement. They include a correlation sequence, elapsed times and available
+Linux kernel wait name/syscall **number only**. They contain no terminal text,
+agent messages, URLs, paths, syscall arguments or protocol payloads. State is
+fixed-size, with no event queue. Nonblocking local journal delivery can drop
+records if the journal is unavailable or full; startup reports installation
+failure explicitly. Journal retention follows the system's existing limits.
+
+Retrieve the bounded records with:
+
+```sh
+journalctl --user -t tornadotty-ui-diagnostics --since '30 minutes ago'
+# Substitute the failed GUI's PID, not a newly relaunched process:
+journalctl --user _PID=12345 --since '30 minutes ago'
+```
+
+A `stalled` record is evidence of nonprogress, not proof of a deadlock or its
+root cause. `recovered` refers to the same `stall-sequence`. Kernel metadata may
+be unavailable under system security policy. No stack unwinding, ptrace,
+`WAYLAND_DEBUG`, network submission or payload tracing is enabled.
+
+Existing Ghostty/GDK fatal Wayland diagnostics remain intact; a normal GDK
+`display-closed` signal is also logged. A fatal disconnect can exit before that
+signal is delivered, so the off-GUI records are intended to preserve context
+**before** failure. Installing a new executable does not instrument an already
+running process; the observer starts on the next launch of the new build.

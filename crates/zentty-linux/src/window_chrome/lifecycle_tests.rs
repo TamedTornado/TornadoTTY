@@ -26,8 +26,39 @@ fn servers() -> Vec<RankedServer> {
 
 #[test]
 #[ignore = "requires a controlled GTK display"]
+fn blocked_server_popover_reports_before_gtk_returns_without_payloads() {
+    gtk::init().expect("controlled GTK display");
+    let (sender, receiver) = std::sync::mpsc::sync_channel(4);
+    let _observer = crate::ui_diagnostics::Observer::for_test(move |message| {
+        let _ = sender.try_send(message);
+    });
+    let chrome = WindowChrome::new();
+    let reported = std::rc::Rc::new(std::cell::Cell::new(false));
+    let observed = std::rc::Rc::clone(&reported);
+    chrome.server_menu.connect_popover_notify(move |_| {
+        // GTK is inside set_popover here. Evidence must arrive from the
+        // observer before this deliberately blocked GUI callback can return.
+        let message = receiver
+            .recv_timeout(std::time::Duration::from_secs(3))
+            .unwrap();
+        assert!(message.contains("state=stalled"));
+        assert!(message.contains("phase=ServerPopoverReplace"));
+        assert!(!message.contains("PRIVATE_DIAGNOSTIC_MARKER"));
+        eprintln!("controlled-ui-report {message}");
+        observed.set(true);
+    });
+    let mut servers = servers();
+    servers[0].server.display = "PRIVATE_DIAGNOSTIC_MARKER".to_owned();
+    servers[0].server.url = "http://PRIVATE_DIAGNOSTIC_MARKER".to_owned();
+    chrome.configure_servers(&servers, "regulate");
+    assert!(reported.get());
+}
+
+#[test]
+#[ignore = "requires a controlled GTK display"]
 fn server_menu_reuses_unchanged_widgets_and_releases_replaced_widgets() {
     gtk::init().expect("controlled GTK display");
+    let _observer = crate::ui_diagnostics::Observer::install().expect("local journal diagnostics");
     let chrome = WindowChrome::new();
     let mut servers = servers();
     chrome.configure_servers(&servers, "regulate");

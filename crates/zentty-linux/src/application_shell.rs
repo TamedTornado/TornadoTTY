@@ -3915,6 +3915,7 @@ impl ApplicationShell {
     }
 
     pub(crate) fn render(&self) {
+        let _diagnostic = crate::ui_diagnostics::enter(crate::ui_diagnostics::Phase::Layout);
         let started = std::time::Instant::now();
         self.pane_drag_source_state
             .advance(self.pane_drag_payloads());
@@ -4678,6 +4679,7 @@ impl ApplicationShell {
     }
 
     fn render_chrome(&self, summaries: &[zentty_core::SidebarWorklaneSummary]) {
+        let _diagnostic = crate::ui_diagnostics::enter(crate::ui_diagnostics::Phase::Chrome);
         let started = std::time::Instant::now();
         self.chrome.render(
             summaries,
@@ -4797,6 +4799,7 @@ impl ApplicationShell {
     }
 
     fn ranked_servers(&self) -> Vec<zentty_core::RankedServer> {
+        let _diagnostic = crate::ui_diagnostics::enter(crate::ui_diagnostics::Phase::ServerRanking);
         let now_ms = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .ok()
