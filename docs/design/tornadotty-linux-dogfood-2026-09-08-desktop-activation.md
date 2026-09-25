@@ -950,3 +950,23 @@ pending the coordinated bug-batch release. GH-174 remains open for that adoption
   #197. Only identified isolated-test capture processes were stopped; live
   TornadoTTY was untouched. Source fixes and regression coverage are committed
   with this entry; the running client remains unchanged and unpatched.
+
+### 2026-09-25 14:45:56: live GUI exit after Wayland disconnect (#190)
+
+- Jason reported another terminal crash. Original installed GUI PID 269662
+  logged `slow-worklane-chrome` with servers-ms=15372, then Wayland display
+  failure errno=32, display-error=0, protocol-code=0, object-id=0, interface=none,
+  followed by GDK `Error flushing display: Broken pipe` at 14:45:56 CEST.
+- GNOME Shell PID 4525 logged `WL: error in client communication (pid 269662)`
+  at 14:45:56.760. A new GUI PID 1409371 was launched by GNOME at 14:45:59;
+  investigation did not launch it or change recovery state. Subsequent GNOME
+  stack-position assertions occurred after relaunch. This matches the observed
+  exit mechanism in #190, not the isolated heap-corruption failure in #197.
+- The 15.4-second stall belongs to the measured server-chrome path in #185;
+  causal connection to the disconnect remains unproven. No protocol object or
+  code identifies a root cause. `coredumpctl` is unavailable; no crash backtrace
+  was obtained. Bounded client journal receipt: `/tmp/tornadotty-latest-crash.log`.
+- Pane fixes were committed as `f82602fbe8d49270c44623e355235e34afd913c6`
+  after review and fresh PASS of 82 workspace, 17 persistence, and 6 divider
+  semantic tests. They were not installed and cannot explain this old GUI exit.
+  Live recovery and agent health are not certified by process existence alone.
