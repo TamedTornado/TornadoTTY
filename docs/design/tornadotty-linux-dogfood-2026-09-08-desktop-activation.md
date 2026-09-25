@@ -1007,3 +1007,21 @@ pending the coordinated bug-batch release. GH-174 remains open for that adoption
   GUI/engine artifacts with atomic file replacement; the active GUI and its
   saved state will not be touched. New diagnostics start only on the next
   launch. Retrieval/limits are documented in `docs/configuration.md`.
+- Deployment completed with Jason's explicit no-restart approval. Diagnostics
+  commit `f61bf209604cba645d484d39af71a168c1894d2e` was rebuilt using build-local
+  (ReleaseSafe, dirty due to preserved pre-existing work, Ghostty clean pinned
+  `b62d1c57fe7d265ab030fd25c96742e1b11442b8`). Publish-age audit PASS, 91 packages,
+  zero exceptions. Five observer tests PASS; the blocked GTK evidence tests
+  PASS on X11 and native Wayland, plus the existing menu lifetime test on X11.
+- Staged and byte-verified the GUI and matching embedding library, then renamed
+  each over its installed destination; no executing file was overwritten in
+  place. Installed GUI sha256
+  `173795f0ad00f944d96d19c9ed15b2d0d391245acb128f70ea3e831a0902bf24`;
+  engine sha256 `d8ea90942a00958ca121f14e12b903027a05159de571a504dd9c71277b751481`.
+  `tornadotty --version` reports f61bf209604c, release-safe (dirty). Existing CLI
+  checksum was verified unchanged; unrelated CLI/worktree edits were not deployed.
+- Live GUI PID 1409371 retained inode 75497503 and size 224766416 before/after;
+  no restart, launch, agent interruption or saved-state change was performed.
+  Thus the currently running GUI still has old code, and the new observer will
+  activate only on the next launch. Rollback GUI/library and build metadata are
+  retained at `/tmp/tornadotty-gh199-rollback-f61bf209`. No release or push performed.
