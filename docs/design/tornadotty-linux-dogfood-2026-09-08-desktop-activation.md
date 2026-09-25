@@ -1102,3 +1102,11 @@ pending the coordinated bug-batch release. GH-174 remains open for that adoption
   PASS; dependency age audit 91 packages, zero exceptions. No full qualification,
   mutation claim, live restart or saved-workspace manipulation. Live confirmation
   remains pending; issue #201 stays open.
+- Repair commit `c1a9c98f4971c4da05c46131398040945a1b4059` rebuilt successfully
+  and installed by atomic sibling rename without restart. Installed GUI sha256
+  `30b7a05491789ed9ff604f15917e28b240d13a04a50a6cfb013d904314dd12f1`;
+  version c1a9c98f4971, release-safe, dirty from preserved pre-existing work.
+  Matching engine verified byte-identical; engine, CLI and saved state untouched.
+  Rollback: `/tmp/tornadotty-gh201-rollback-c1a9c98f`. Live PID 1540262 retained
+  executable inode 75497515 / size 225202760 before and after; it still runs
+  f61bf209. Repair takes effect next launch. No push or release performed.
