@@ -353,6 +353,7 @@ impl AgentEventCoordinator {
         if sidebar_changed {
             shell.borrow().refresh_sidebar_metadata();
         }
+        ApplicationShell::ensure_codex_title_animation_tick(shell);
     }
 
     fn begin_lifecycle_sweep(&mut self, now: u64) -> bool {

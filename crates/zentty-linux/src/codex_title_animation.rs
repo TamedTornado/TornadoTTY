@@ -34,12 +34,40 @@ pub(crate) fn is_eligible(
 
 #[derive(Default)]
 pub(crate) struct CodexTitleAnimation {
+    // Latest source intent, including titles received before lifecycle permits
+    // animation. Bounded by live panes; never derived from persisted identity.
+    sources: BTreeMap<String, String>,
     titles: BTreeMap<String, String>,
     last_frame: Option<usize>,
 }
 
 impl CodexTitleAnimation {
+    pub(crate) fn refresh_eligibility(
+        &mut self,
+        mut eligible: impl FnMut(&str, &str) -> bool,
+    ) -> Vec<(String, bool)> {
+        let mut changes = Vec::new();
+        for (pane, title) in &self.sources {
+            let active = eligible(pane, title);
+            if active && !self.titles.contains_key(pane) {
+                self.titles.insert(pane.clone(), title.clone());
+                changes.push((pane.clone(), true));
+            } else if !active && self.titles.remove(pane).is_some() {
+                changes.push((pane.clone(), false));
+            }
+        }
+        if !changes.is_empty() {
+            self.last_frame = None;
+        }
+        changes
+    }
+
     pub(crate) fn reconcile(&mut self, pane_id: &str, title: &str, eligible: bool) -> bool {
+        if let Some(canonical) = zentty_core::codex_activity_title_frame(title, 0) {
+            self.sources.insert(pane_id.to_owned(), canonical);
+        } else {
+            self.sources.remove(pane_id);
+        }
         if eligible {
             // Codex advances the same Braille spinner in its terminal title.
             // Keep one canonical template so those source frames do not
@@ -57,11 +85,16 @@ impl CodexTitleAnimation {
             self.last_frame = None;
             true
         } else {
-            self.remove(pane_id)
+            self.deactivate(pane_id)
         }
     }
 
     pub(crate) fn remove(&mut self, pane_id: &str) -> bool {
+        self.sources.remove(pane_id);
+        self.deactivate(pane_id)
+    }
+
+    fn deactivate(&mut self, pane_id: &str) -> bool {
         let removed = self.titles.remove(pane_id).is_some();
         if self.titles.is_empty() {
             self.last_frame = None;
@@ -119,6 +152,70 @@ impl CodexTitleAnimation {
 mod tests {
     use super::{CodexTitleAnimation, TerminalTitleEventGate, is_eligible};
     use zentty_core::AgentPhase;
+
+    #[test]
+    fn working_title_before_running_event_rearms_without_another_title() {
+        let mut animation = CodexTitleAnimation::default();
+        let mut gate = TerminalTitleEventGate::default();
+        assert!(gate.accepts("Ready | project"));
+        animation.reconcile("pane", "Ready | project", false);
+        assert!(gate.accepts("Working ⠦ project"));
+        animation.reconcile("pane", "Working ⠦ project", false);
+        assert!(animation.is_empty(), "Idle must not animate");
+        assert!(!gate.accepts("Working ⠋ project"));
+        animation.refresh_eligibility(|_, title| {
+            is_eligible(
+                title,
+                Some("Codex"),
+                Some(AgentPhase::Running),
+                false,
+                false,
+            )
+        });
+        assert_eq!(
+            animation
+                .render_frame(1, false)
+                .unwrap()
+                .get("pane")
+                .map(String::as_str),
+            Some("Working ⠙ project")
+        );
+    }
+
+    #[test]
+    fn retained_intent_obeys_ownership_and_is_forgotten_on_title_change_or_removal() {
+        let mut animation = CodexTitleAnimation::default();
+        animation.reconcile("pane", "Working ⠋ project", true);
+        for (agent, phase, custom, remote) in [
+            ("Codex", AgentPhase::Idle, false, false),
+            ("Codex", AgentPhase::NeedsInput, false, false),
+            ("Codex", AgentPhase::Running, true, false),
+            ("Codex", AgentPhase::Running, false, true),
+            ("Claude Code", AgentPhase::Running, false, false),
+        ] {
+            animation.refresh_eligibility(|_, title| {
+                is_eligible(title, Some(agent), Some(phase), custom, remote)
+            });
+            assert!(animation.is_empty());
+            animation.refresh_eligibility(|_, title| {
+                is_eligible(
+                    title,
+                    Some("Codex"),
+                    Some(AgentPhase::Running),
+                    false,
+                    false,
+                )
+            });
+            assert!(!animation.is_empty());
+        }
+        animation.reconcile("pane", "Ready | project", false);
+        animation.refresh_eligibility(|_, _| true);
+        assert!(animation.is_empty(), "Ready clears retained working intent");
+        animation.reconcile("pane", "Working ⠋ project", false);
+        animation.remove("pane");
+        animation.refresh_eligibility(|_, _| true);
+        assert!(animation.is_empty(), "removed pane must not reappear");
+    }
 
     #[test]
     fn eligibility_requires_live_local_recognized_codex_title_ownership() {

@@ -147,6 +147,13 @@ while IFS= read -r value; do
             # Zentty's GTK frame-clock presentation, not terminal metadata.
             printf '\033]2;Working ⠋ Bro\a'
             ;;
+        codex-spinner-ready)
+            printf '\033]2;Ready | Bro\a'
+            IFS= read -r _ < "$ZENTTY_FLEET_TRANSITION_FIFO"
+            printf '\033]2;Working ⠋ Bro\a'
+            IFS= read -r _ < "$ZENTTY_FLEET_TRANSITION_FIFO"
+            printf '%s' '{"version":1,"event":"agent.running","agent":{"name":"Codex"},"session":{"id":"moved-live-pane"}}' | "$ZENTTY_CLI_BIN" ipc agent-event
+            ;;
         agent-arm-idle)
             (
                 IFS= read -r _ < "$ZENTTY_FLEET_TRANSITION_FIFO"
@@ -1477,8 +1484,22 @@ zentty_product_key "${backend}" Return
 zentty_product_wait_for_log_count "${log}" \
     'zentty-linux: fleet-refresh windows=2 agents=2 waiting=1 stopped=0 compacting=0 active=1 idle=0 progress=0' 4 \
     "new activity did not resolve stopped state" || fail "fleet stopped recovery missing"
-zentty_product_type "${backend}" "codex-spinner"
+zentty_product_type "${backend}" "codex-spinner-ready"
 zentty_product_key "${backend}" Return
+zentty_product_wait_for_log "${log}" 'zentty-linux: title-pane=pane-2 value=Ready | Bro' \
+    "Ready title did not establish the spinner rearm fixture" || fail "spinner Ready title missing"
+spinner_start_before="$(grep -Fc 'codex-title-animation pane=pane-2 state=active' "${log}" || true)"
+printf 'working\n' >"${fleet_transition_fifo}"
+zentty_product_wait_for_log "${log}" 'zentty-linux: title-pane=pane-2 value=Working ⠋ Bro' \
+    "Working title did not precede the running hook" || fail "spinner Working title missing"
+# Ready's canonical idle suppression must remain authoritative. No source
+# title is emitted after the following hook: presentation must rearm itself.
+[[ "$(grep -Fc 'codex-title-animation pane=pane-2 state=active' "${log}" || true)" == "${spinner_start_before}" ]] ||
+    fail "Working title bypassed Idle suppression instead of testing rearm"
+printf 'running\n' >"${fleet_transition_fifo}"
+zentty_product_wait_for_log_count "${log}" 'codex-title-animation pane=pane-2 state=active' \
+    "$((spinner_start_before + 1))" "running hook did not rearm the retained Working title" ||
+    fail "spinner did not recover after title-before-running ordering"
 zentty_product_type "${backend}" "agent-arm-idle"
 zentty_product_key "${backend}" Return
 zentty_product_wait_for_log "${log}" 'zentty-linux: title-pane=pane-2 value=Working ⠋ Bro' \

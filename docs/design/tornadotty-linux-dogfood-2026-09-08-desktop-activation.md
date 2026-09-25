@@ -686,3 +686,56 @@ split/resize checks do not cover this sequence. Automated reproduction and
 verification of this sequence on the repaired build are NOT RUN; post-restart
 desktop confirmation remains pending. These steps are recorded in GH-191 as
 well as this report, rather than relying on conversation context.
+
+### September 25: Roblox Working state without spinner (GH-192)
+
+Jason reports Codex working in Roblox with Working labels but no spinner.
+Read-only discovery identifies worklane-5/pane-1; status logs confirm Running.
+Same installed/running build 248373e4f35d. Journal sequence: animation active at
+09:23:05; Ready/Idle at 09:23:37.410 stops it; Working + Braille at 09:23:37.441
+arrives while lifecycle remains Idle and does not restart it; agent.running at
+09:23:43.712 restores Running, but no later animation-active transition appears.
+Pane subsequently moved to Roblox; no move was performed by this investigation.
+
+Code inspection explains the lost rearm: TerminalTitleEventGate deduplicates
+subsequent spinner frames; only accepted title callbacks reconcile/start the
+animation, whereas lifecycle events update status without rearming it. A title
+accepted while ineligible is therefore not retried when Running returns.
+Tracked with regression and existing real-product journey acceptance criteria:
+https://github.com/TamedTornado/TornadoTTY/issues/192 (related #123/#132).
+No automated reproduction or repair yet; no tracing, restart, settings changes,
+installation, commit or push. Preserve canonical lifecycle precedence and title
+frame deduplication when repairing presentation reconciliation.
+
+GH-192 repair: retain one canonical recognized source-title template per live
+pane separately from currently active animation. Reconcile eligibility at the
+existing bounded agent-input completion boundary, including when no semantic
+title changes; canonical lifecycle/ownership remains authoritative. Ready and
+other non-spinner source titles clear intent; pane removal forgets it. Stable
+identity, frame deduplication, reduced motion and GTK frame-clock rendering are
+unchanged. No engine change.
+
+Focused regression RED before the repair (no frame after Working-while-Idle ->
+Running); all 8 animation tests GREEN after it, including ownership exclusions
+and removal. Existing fleet journey extended with PTY titles and authenticated
+IPC separated by its existing FIFO. First fixture incorrectly used physical
+Enter between titles, which itself marks Running: rejected by the fixture's
+Idle guard, not counted as product reproduction. Corrected fixture RED against
+248373e4f35d specifically at missing rearm, GREEN against build/gh192-spinner on
+X11, including animation/stable chrome/idle teardown and no hierarchy rebuild.
+Native Wayland passes those spinner checks but the later cross-window activation
+credential assertion FAILS; separately tracked as GH-193, not waived. Existing
+X11 event-coalescing journey PASS (real socket/PTY/GTK, sibling input during
+traffic, bounded growth). Receipts: /tmp/gh192-{tests,build}.log,
+/tmp/gh192-before-x11-gated.log, /tmp/gh192-after-{x11,wayland}.log and
+/tmp/gh192-coalescing-x11.log.
+
+Integrated linux/scripts/build-local PASS, ReleaseSafe dirty 59dccb56e860,
+unchanged pinned Ghostty b62d1c57fe7d265ab030fd25c96742e1b11442b8; dependency-age
+audit PASS with zero exceptions. Bash syntax, edited animation-file formatting,
+and git diff --check PASS. Strict Clippy FAILS on pre-existing core lint errors;
+--no-deps attempt also FAILS on pre-existing Linux library workload documentation
+errors before checking the binary. ShellCheck FAILS on existing source-following
+and intentional single-quoted child-command diagnostics; no suppressions added.
+No full qualification, install, live restart, commit or push. Live confirmation
+pending; repair is local for Jason's requested bug-fix batch before a new release.

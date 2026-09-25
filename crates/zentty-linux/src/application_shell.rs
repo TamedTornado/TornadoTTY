@@ -3775,6 +3775,23 @@ impl ApplicationShell {
     }
 
     fn ensure_codex_title_animation_tick(shell: &Rc<RefCell<Self>>) {
+        // Re-evaluate retained source intent against canonical lifecycle and
+        // ownership. A running hook can follow its title, whose later spinner
+        // frames are deliberately filtered before the title callback.
+        {
+            let mut shell = shell.borrow_mut();
+            let mut animation = std::mem::take(&mut shell.codex_title_animation);
+            let changes = animation.refresh_eligibility(|pane, title| {
+                shell.codex_title_animation_is_eligible(pane, title)
+            });
+            shell.codex_title_animation = animation;
+            for (pane, active) in changes {
+                eprintln!(
+                    "zentty-linux: codex-title-animation pane={pane} state={}",
+                    if active { "active" } else { "stopped" }
+                );
+            }
+        }
         if shell.borrow().codex_title_animation.is_empty()
             || shell.borrow().codex_title_animation_tick.borrow().is_some()
         {
