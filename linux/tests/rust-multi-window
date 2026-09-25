@@ -70,6 +70,7 @@ done
 if [[ "${backend}" == x11 ]]; then
     command -v xprop >/dev/null || fail "xprop is required for X11 toplevel identity"
     if [[ "${ZENTTY_MULTI_WINDOW_LIFECYCLE_ONLY:-false}" == true ||
+        "${ZENTTY_MULTI_WINDOW_CHILD_EXIT_ONLY:-false}" == true ||
         "${ZENTTY_MULTI_WINDOW_WINDOW_STATE_ONLY:-false}" == true ||
         "${ZENTTY_MULTI_WINDOW_CLOSE_INSPECTION_ONLY:-false}" == true ]]; then
         command -v openbox >/dev/null || fail "openbox is required for native X11 lifecycle state"
@@ -132,6 +133,9 @@ agent_pid=
 printf '\033[?25l\033[2J\033[H'
 while IFS= read -r value; do
     case "$value" in
+        exit-shell)
+            exit 0
+            ;;
         visual-reset)
             printf '\033]2;Visual window\a\033[2J\033[H\033[?25l'
             ;;
@@ -867,6 +871,29 @@ if [[ "${ZENTTY_MULTI_WINDOW_CLOSE_INSPECTION_ONLY:-false}" == true ]]; then
     xdotool windowactivate --sync "${first_window}"
     type_and_expect_title 'confirmed-close-survivor' pane-1
     echo 'Rust close inspection passed: responsive-sibling-PTY stale-membership stale-exec confirmed-exact-worklane'
+    exit 0
+fi
+
+if [[ "${ZENTTY_MULTI_WINDOW_CHILD_EXIT_ONLY:-false}" == true ]]; then
+    start_product
+    create_second_window false
+    type_and_expect_title secondary-shell-ready pane-window-2
+    zentty_product_type "${backend}" exit-shell
+    zentty_product_key "${backend}" Return
+    zentty_product_wait_for_log "${log}" 'zentty-linux: child-exited-pane=pane-window-2' \
+        'secondary PTY did not exit naturally' || fail 'secondary child exit missing'
+    zentty_product_wait_for_log "${log}" 'zentty-linux: window-closed id=window-2 remaining=1' \
+        'natural shell exit did not close only its owning window' || fail 'sibling window was lost'
+    kill -0 "${product_pid}" || fail 'secondary shell exit killed the GUI process'
+    zentty_product_prepare_input "${backend}" "${log}" || fail 'could not retarget surviving window'
+    type_and_expect_title sibling-survived-shell-exit pane-1
+    zentty_product_type "${backend}" exit-shell
+    zentty_product_key "${backend}" Return
+    wait_for_exit
+    jq -e '.reason == "cleanExit" and [.workspace.windows[].id] == ["window-1"] and
+        .workspace.windows[0].worklanes[0].columns[0].panes[0].id == "pane-1"' \
+        "${state_dir}/restore-snapshot.json" >/dev/null || fail 'final shell exit lost surviving-window restore intent'
+    echo "Rust natural child exit passed: backend=${backend}, secondary-window-only, sibling-PTY-responsive, final-window-clean-exit"
     exit 0
 fi
 

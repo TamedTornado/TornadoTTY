@@ -1197,7 +1197,22 @@ impl PaneRuntimeCoordinator {
                 shell_ref.render();
                 shell_ref.focus_selected_surface();
             }
-            ClosePaneOutcome::CloseWindow => shell_ref.main_loop.quit(),
+            ClosePaneOutcome::CloseWindow => {
+                eprintln!(
+                    "zentty-linux: child-exit-disposition window={} pane={pane_id} action=close-owning-window",
+                    shell_ref.window_template.id
+                );
+                let close_window = shell_ref.close_window_handler.clone();
+                let main_loop = shell_ref.main_loop.clone();
+                drop(shell_ref);
+                // The loop is shared by every window. Only the application
+                // coordinator knows whether this was the final window.
+                if let Some(close_window) = close_window {
+                    close_window();
+                } else {
+                    main_loop.quit();
+                }
+            }
             ClosePaneOutcome::NotFound => {}
         }
     }

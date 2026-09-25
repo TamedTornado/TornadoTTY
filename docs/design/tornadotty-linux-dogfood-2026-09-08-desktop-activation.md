@@ -1025,3 +1025,33 @@ pending the coordinated bug-batch release. GH-174 remains open for that adoption
   Thus the currently running GUI still has old code, and the new observer will
   activate only on the next launch. Rollback GUI/library and build metadata are
   retained at `/tmp/tornadotty-gh199-rollback-f61bf209`. No release or push performed.
+
+### 2026-09-25: secondary shell exit quits all windows (#200)
+
+- Jason reported exiting restored Codex and then its fallback shell in a
+  secondary one-worklane/one-pane window terminated all terminals. Read-only
+  journal review identifies the 15:11:42 CEST shutdown in old GUI PID 1409371
+  (248373e4f35d): child-exited-pane=pane-18, application-shutdown, sibling PTY
+  teardown, lifecycle-windows=2 and cleanExit persistence containing both windows.
+  This is an unintended clean application shutdown, not the #190 Wayland failure
+  or #197 native heap-corruption signature. Raw receipt:
+  `/tmp/gh200-secondary-exit.log`.
+- New process PID 1540262 starts at 15:11:46 with f61bf209 and confirms the new
+  progress observer is enabled. Absence of stall records is consistent with this
+  being a quit path rather than a frozen GUI; it is not evidence of a crash fix.
+- Confirmed current-source cause: natural child exit maps ClosePaneOutcome::CloseWindow
+  directly to the process-wide main_loop.quit(). Manual pane closure already
+  delegates to its owning-window coordinator. Natural exit now uses that same
+  callback and logs its window/pane close disposition before delegation. Only
+  the coordinator decides whether closing this window should end the process.
+- Added a focused mode to the existing multi-window journey: secondary real PTY
+  exits naturally, its window closes, the same GUI PID and sibling PTY accept
+  further input, then the final PTY exits and a clean snapshot retains the
+  surviving window's restore intent. Baseline f61bf209 FAILed (sibling lost);
+  repaired product PASSes on isolated X11 and native Wayland. Receipts:
+  `/tmp/gh200-red.log`, `/tmp/gh200-green-{x11,wayland}.log`.
+- Pane-runtime tests: 13 PASS, 1 existing GTK accessibility test ignored in this
+  non-display run; includes confirmed restored-agent-to-shell policy. The GUI
+  regression uses controlled PTY children, not an actual Codex login/session.
+  `bash -n`, diff checks and integrated build PASS (91 age-audited packages,
+  zero exceptions). No full qualification run and no live workspace manipulation.
