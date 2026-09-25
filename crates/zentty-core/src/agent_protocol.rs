@@ -56,6 +56,12 @@ enum AgentEventKind {
 struct AgentDescriptor {
     name: Option<String>,
     pid: Option<i32>,
+    #[serde(
+        rename = "notificationCapability",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    notification_capability: Option<crate::NotificationCapability>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
@@ -206,6 +212,20 @@ impl fmt::Display for AgentProtocolError {
 impl std::error::Error for AgentProtocolError {}
 
 impl AgentEvent {
+    #[must_use]
+    pub fn with_notification_capability(
+        mut self,
+        capability: crate::NotificationCapability,
+    ) -> Self {
+        if let Some(agent) = self.agent.as_mut() {
+            agent.notification_capability = Some(capability);
+        }
+        self
+    }
+
+    pub(crate) fn notification_capability(&self) -> Option<crate::NotificationCapability> {
+        self.agent.as_ref()?.notification_capability
+    }
     pub const MAX_WIRE_BYTES: usize = 64 * 1024;
 
     /// Parses one versioned canonical agent event.

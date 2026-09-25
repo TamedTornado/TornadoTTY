@@ -349,6 +349,27 @@ zentty notify --title "Agent ready" --subtitle "Review the result"
 
 ## Agent Integrations
 
+### Codex terminal notification ownership
+
+Codex OSC notifications carry display text, not a notification type or session
+identifier. TornadoTTY interprets them as generic agent attention only for an
+unambiguous session whose hook helper verified the managed TUI launch contract
+against a live native Codex ancestor's actual arguments. The supported contract
+requests only `approval-requested` and `agent-turn-complete` over OSC 9; it does
+not infer an approval subtype from notification wording or change approval policy.
+
+Legacy/external launches, conflicting CLI notification overrides, unreadable or
+changed process evidence, restored sessions awaiting a fresh hook, and ambiguous
+multi-session panes use ordinary terminal notification delivery instead. They do
+not acquire `NeedsInput` merely by sending OSC. Existing visibility/delivery
+settings still apply. This verifies a supported producer's launch configuration,
+not arbitrary terminal output provenance: OSC cannot identify which descendant
+process wrote the bytes. The authenticated agent-event protocol remains a trusted
+local producer interface, not a security boundary against processes holding its
+pane capability. No capability is persisted as restore intent.
+
+### Hook installation
+
 Install or remove agent hook integrations managed by Zentty. The implemented
 target set is `amp-hooks`, `cursor-hooks`, `droid-hooks`, `kimi-hooks`,
 `grok-hooks`, `agy-hooks`, `hermes-hooks`, and `vibe-hooks`; unsupported names

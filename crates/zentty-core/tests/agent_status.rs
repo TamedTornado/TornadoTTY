@@ -5,11 +5,64 @@ use zentty_core::{
 };
 
 #[test]
+fn unknown_codex_notification_cannot_invent_human_attention() {
+    let mut store = AgentStatusStore::default();
+    store.apply(event_for("pane", br#"{"version":1,"event":"agent.running","agent":{"name":"Codex"},"session":{"id":"legacy"}}"#), 1);
+    assert!(!store.apply_terminal_notification("pane", None, Some("Work finished"), 2));
+    let status = store.status_for_pane("pane").unwrap();
+    assert_eq!(status.phase, AgentPhase::Running);
+    assert!(!status.requires_attention());
+}
+
+#[test]
+fn notification_capability_is_session_scoped_revocable_and_not_replayed() {
+    let mut store = AgentStatusStore::default();
+    let known = br#"{"version":1,"event":"session.start","agent":{"name":"Codex","pid":100,"notificationCapability":"codex-tui-attention-v1"},"session":{"id":"first"}}"#;
+    store.apply(event_for("pane", known), 1);
+    assert!(store.terminal_notifications_use_agent_policy("pane"));
+    store.apply(event_for("pane", br#"{"version":1,"event":"agent.running","agent":{"name":"Codex","pid":101},"session":{"id":"first"}}"#), 2);
+    assert!(
+        !store.terminal_notifications_use_agent_policy("pane"),
+        "replacement PID loses proof"
+    );
+    store.apply(event_for("pane", known), 3);
+    store.apply(event_for("pane", br#"{"version":1,"event":"agent.running","agent":{"name":"Codex","notificationCapability":"unknown"},"session":{"id":"first"}}"#), 4);
+    assert!(
+        !store.terminal_notifications_use_agent_policy("pane"),
+        "changed effective launch must revoke"
+    );
+    store.apply(event_for("pane", known), 5);
+    store.apply(
+        event_for(
+            "pane",
+            br#"{"version":1,"event":"session.end","session":{"id":"first"}}"#,
+        ),
+        6,
+    );
+    store.apply(event_for("pane", br#"{"version":1,"event":"agent.running","agent":{"name":"Codex","notificationCapability":"codex-tui-attention-v1"},"session":{"id":"first"}}"#), 7);
+    assert!(
+        store.status_for_pane("pane").is_none(),
+        "late ended-session event stays rejected"
+    );
+    store.apply(event_for("pane", br#"{"version":1,"event":"session.start","agent":{"name":"Codex"},"session":{"id":"second"}}"#), 8);
+    assert!(
+        !store.terminal_notifications_use_agent_policy("pane"),
+        "resume/new session needs its own proof"
+    );
+    assert!(!store.apply_terminal_notification("pane", None, Some("anything"), 9));
+    store.apply(event_for("pane", known), 10);
+    assert!(
+        !store.terminal_notifications_use_agent_policy("pane"),
+        "OSC has no session ID: simultaneous sessions are ambiguous"
+    );
+}
+
+#[test]
 fn codex_ready_titles_do_not_create_attention_before_the_semantic_notification() {
     let mut store = AgentStatusStore::default();
     let mut inbox = zentty_core::AttentionInbox::default();
     let target = zentty_core::AttentionTarget::new("window", "bro", "pane");
-    store.apply(event_for("pane", br#"{"version":1,"event":"agent.running","agent":{"name":"Codex"},"session":{"id":"session"}}"#), 1);
+    store.apply(event_for("pane", br#"{"version":1,"event":"agent.running","agent":{"name":"Codex","notificationCapability":"codex-tui-attention-v1"},"session":{"id":"session"}}"#), 1);
     for now in [10_000, 20_000, 30_000] {
         store.apply_terminal_title("pane", "Working · Bro", now);
         inbox.observe(target.clone(), store.status_for_pane("pane"), now);
@@ -560,7 +613,7 @@ fn codex_terminal_attention_notification_requires_an_existing_codex_session() {
     store.apply(
         event_for(
             "pane-codex",
-            br#"{"version":1,"event":"agent.running","agent":{"name":"Codex"},"session":{"id":"codex-review"}}"#,
+            br#"{"version":1,"event":"agent.running","agent":{"name":"Codex","notificationCapability":"codex-tui-attention-v1"},"session":{"id":"codex-review"}}"#,
         ),
         1_000,
     );
@@ -578,7 +631,7 @@ fn codex_terminal_attention_notification_requires_an_existing_codex_session() {
     interaction_only.apply(
         event_for(
             "pane-interaction",
-            br#"{"version":1,"event":"agent.needs-input","agent":{"name":"Codex"},"session":{"id":"codex-interaction"},"state":{"text":"Run cargo test?","interaction":{"kind":"question","text":"Run cargo test?"}}}"#,
+            br#"{"version":1,"event":"agent.needs-input","agent":{"name":"Codex","notificationCapability":"codex-tui-attention-v1"},"session":{"id":"codex-interaction"},"state":{"text":"Run cargo test?","interaction":{"kind":"question","text":"Run cargo test?"}}}"#,
         ),
         1_003,
     );

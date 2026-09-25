@@ -98,7 +98,14 @@ fn run() -> Result<(), String> {
         .read_to_end(&mut input)
         .map_err(|error| format!("could not read event: {error}"))?;
     let input = add_default_hook_event(input, default_event.map(String::as_str))?;
-    let events = adapt_agent_events(adapter, &input)?;
+    let mut events = adapt_agent_events(adapter, &input)?;
+    if adapter == Some("codex") {
+        let capability = zentty_agent_ipc::verified_codex_notification_capability();
+        events = events
+            .into_iter()
+            .map(|event| event.with_notification_capability(capability))
+            .collect();
+    }
     if adapter == Some("copilot") && events.is_empty() {
         return Ok(());
     }

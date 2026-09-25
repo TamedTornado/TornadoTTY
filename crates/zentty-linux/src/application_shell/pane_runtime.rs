@@ -821,7 +821,7 @@ impl PaneRuntimeCoordinator {
                 }
                 // Managed agents own attention policy (including duplicate and
                 // automatic-approval suppression). Raw OSC must not bypass it.
-                if shell.state.pane_agent_status(&notification_id).is_some() {
+                if shell.state.terminal_notifications_use_agent_policy(&notification_id) {
                     return;
                 }
                 if let Some(worklane_id) = shell.state.worklane_id_for_pane(&notification_id)

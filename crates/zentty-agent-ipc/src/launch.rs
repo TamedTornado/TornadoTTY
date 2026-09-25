@@ -127,6 +127,18 @@ pub fn launch_agent(tool: &str, arguments: &[String]) -> Result<(), LaunchError>
     }
     let mut command = Command::new(&plan.executable_path);
     command.args(&plan.arguments);
+    // Never pass a parent's declaration to a different or unverified launch.
+    command.env_remove(crate::notification_capability::LAUNCH_DIGEST_ENV);
+    if integrated
+        && tool == AgentLaunchTool::Codex
+        && zentty_core::codex_notification_capability(&plan.arguments)
+            == zentty_core::NotificationCapability::CodexTuiAttentionV1
+    {
+        command.env(
+            crate::notification_capability::LAUNCH_DIGEST_ENV,
+            zentty_core::notification_launch_digest(&plan.arguments),
+        );
+    }
     for name in plan.unset_environment {
         command.env_remove(name);
     }

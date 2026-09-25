@@ -23,6 +23,22 @@ fn main() {
 
 fn run() -> Result<(), String> {
     let arguments = std::env::args_os().collect::<Vec<_>>();
+    if let Some(actor) = std::env::var_os("ZENTTY_TEST_CODEX_ACTOR") {
+        // Native process envelope for the existing controlled-agent fixture.
+        // Keep its real argv alive while hooks run beneath it; a shell script
+        // alone cannot exercise /proc native-producer verification.
+        let mut command = std::process::Command::new("bash");
+        command.arg(actor).args(&arguments[1..]);
+        if std::env::var_os("ZENTTY_TEST_CODEX_LEGACY").is_some() {
+            command.env_remove("ZENTTY_CODEX_NOTIFICATION_ARGV_SHA256");
+        }
+        let status = command.status().map_err(|error| error.to_string())?;
+        return if status.success() {
+            Ok(())
+        } else {
+            Err(format!("controlled agent exited {status}"))
+        };
+    }
     match arguments.get(1).and_then(|argument| argument.to_str()) {
         Some("xdg") => xdg_contract(),
         Some("process") => process_contract(),

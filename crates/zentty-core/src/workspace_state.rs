@@ -3034,6 +3034,12 @@ impl WorkspaceState {
             .apply_terminal_notification(pane_id, title, body, now)
     }
 
+    #[must_use]
+    pub fn terminal_notifications_use_agent_policy(&self, pane_id: &str) -> bool {
+        self.agent_statuses
+            .terminal_notifications_use_agent_policy(pane_id)
+    }
+
     /// Returns a source-eligible title-inferred Codex question request. File
     /// discovery and parsing deliberately remain outside the workspace store
     /// so product callers can perform them away from the GTK thread.

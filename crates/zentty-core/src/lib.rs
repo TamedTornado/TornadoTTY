@@ -5,6 +5,7 @@ mod agent_consent;
 mod agent_fleet;
 mod agent_launch;
 mod agent_protocol;
+mod notification_capability;
 mod agent_sleep_inhibition;
 mod agent_status;
 mod app_config;
@@ -54,6 +55,9 @@ pub use agent_launch::{
 };
 pub use agent_protocol::{
     AgentArtifactKind, AgentArtifactLink, AgentEvent, AgentInteractionKind, AgentProtocolError,
+};
+pub use notification_capability::{
+    NotificationCapability, codex_notification_capability, notification_launch_digest,
 };
 pub use agent_sleep_inhibition::{AgentSleepInhibitionState, SleepInhibitionTransition};
 pub use agent_status::{

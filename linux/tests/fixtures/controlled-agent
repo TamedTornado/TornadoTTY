@@ -206,7 +206,7 @@ case "${profile}" in
         # The runner selects the user-review outcome by releasing the exact
         # semantic OSC 9 channel configured above. Ghostty, not this fixture or
         # TornadoTTY, parses the terminal protocol.
-        printf '\033]9;Run cargo test?\007'
+        printf '\033]9;%s\007' "${ZENTTY_CONTROLLED_CODEX_NOTIFICATION_TEXT:-Run cargo test?}"
         ;;
     codex-notify)
         require_helper

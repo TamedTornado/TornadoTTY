@@ -183,13 +183,15 @@ fn codex_goal_turn_boundary_waits_for_the_tuis_attention_decision() {
     let attention_target = AttentionTarget::new("window", "lane", "pane");
     let mut store = AgentStatusStore::default();
     let mut inbox = AttentionInbox::default();
-    let mut apply = |events, now| {
+    let mut apply = |events: Vec<zentty_core::AgentEvent>, now| {
         for event in events {
             store.apply(
                 AuthenticatedAgentEvent {
                     target: target.clone(),
                     pane_token: "token".to_owned(),
-                    event,
+                    event: event.with_notification_capability(
+                        zentty_core::NotificationCapability::CodexTuiAttentionV1,
+                    ),
                 },
                 now,
             );
@@ -272,7 +274,9 @@ fn codex_permission_request_notifies_only_after_a_semantic_terminal_notification
                 AuthenticatedAgentEvent {
                     target: target.clone(),
                     pane_token: "token".to_owned(),
-                    event,
+                    event: event.with_notification_capability(
+                        zentty_core::NotificationCapability::CodexTuiAttentionV1,
+                    ),
                 },
                 now,
             );

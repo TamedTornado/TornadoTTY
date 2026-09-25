@@ -627,12 +627,46 @@ EOF
 }
 
 run_codex_review_routing() {
+    local native_actor="${repo_root}/target/release-safe/platform_contract"
+    local notification_receipt
+    notification_receipt="$(mktemp)"
+    [[ -n "${DBUS_SESSION_BUS_ADDRESS:-}" ]] || fail "Codex routing requires a private dbus-run-session"
+    "${repo_root}/target/release-safe/notification_service" --receipt "${notification_receipt}" &
+    server_pid=$!
+    zentty_product_wait_for_log "${notification_receipt}" '"event":"ready"' \
+        "controlled notification daemon did not become ready" || fail "notification daemon missing"
+    [[ -x "${native_actor}" ]] || fail "build the existing platform_contract helper for native Codex launch verification"
+    rm -- "${fake_bin}/codex"
+    cp "${native_actor}" "${fake_bin}/codex"
+    export ZENTTY_TEST_CODEX_ACTOR="${actor}"
     run_adapter \
         codex \
         'codex' \
         codex-permission \
         'zentty-linux: sidebar-agent-status pane=pane-1 phase=NeedsInput interaction=GenericInput attention=true' \
         'interaction=Approval attention=true'
+    ZENTTY_CONTROLLED_CODEX_NOTIFICATION_TEXT='Work finished' run_adapter \
+        codex 'codex' codex-permission \
+        'phase=NeedsInput interaction=GenericInput attention=true' 'interaction=Approval attention=true'
+    # Old/unknown launch and conflicting user override must keep OSC as an
+    # ordinary notification, never synthesize agent NeedsInput. This is a
+    # synthetic producer using real launch/helper/socket/PTY/GTK boundaries.
+    ZENTTY_TEST_CODEX_LEGACY=1 run_adapter \
+        codex 'codex' codex-permission \
+        'desktop-terminal service-id=' 'phase=NeedsInput'
+    run_adapter \
+        codex 'codex -c tui.notifications=true' codex-permission \
+        'desktop-terminal service-id=' 'phase=NeedsInput'
+    [[ "$(jq -s '[.[] | select(.event == "notify" and .body == "Run cargo test?")] | length' "${notification_receipt}")" -eq 2 ]] ||
+        fail "unknown and override notifications did not each reach ordinary desktop delivery exactly once"
+    gdbus call --session --dest org.freedesktop.Notifications \
+        --object-path /org/freedesktop/Notifications \
+        --method be.zenjoy.Zentty.TestNotificationService.Quit >/dev/null
+    wait_for_server "controlled notification daemon"
+    rm -- "${notification_receipt}"
+    unset ZENTTY_TEST_CODEX_ACTOR
+    rm -- "${fake_bin}/codex"
+    ln -s "${actor}" "${fake_bin}/codex"
 }
 
 run_agent_status_lifecycle() {
@@ -1270,7 +1304,7 @@ fi
 
 if [[ "${scenario}" == codex-review-routing ]]; then
     run_codex_review_routing
-    echo "Rust Codex review routing passed: ${backend}, pre-policy-hook=non-attention, parsed-osc9-approval=attention, helper=real-process, transport=real-unix-socket, child=real-pty, gtk=real"
+    echo "Rust Codex review routing passed: ${backend}, pre-policy-hook=non-attention, verified-tui=attention, legacy-and-override=ordinary-delivery, helper=real-process, transport=real-unix-socket, child=real-pty, gtk=real"
     exit 0
 fi
 

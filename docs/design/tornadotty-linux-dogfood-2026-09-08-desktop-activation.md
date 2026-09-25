@@ -739,3 +739,65 @@ errors before checking the binary. ShellCheck FAILS on existing source-following
 and intentional single-quoted child-command diagnostics; no suppressions added.
 No full qualification, install, live restart, commit or push. Live confirmation
 pending; repair is local for Jason's requested bug-fix batch before a new release.
+
+### September 25: GH-174 notification launch capability repair
+
+Initial issue/recommendation described the older approval-only receiver. Current
+355f17d7 behavior intentionally accepts goal-aware Codex TUI completion AND human
+approval as GenericInput, not Approval. Preserve that later contract; the remaining
+defect was trusting every existing Codex session without launch evidence.
+Unknown-session regression RED: arbitrary Work finished OSC changed Running into
+NeedsInput. Added an additive optional notificationCapability on authenticated
+agent events, canonically owned by per-session bookkeeping (not persisted).
+
+Managed launcher clears inherited declarations and emits an argv digest only
+for explicit, unambiguous OSC9/always/approval-requested+agent-turn-complete CLI
+settings. Conflicting notification overrides or broad tui overrides fail closed.
+Values use the existing TOML parser, with Codex-compatible bare string handling.
+The hook helper checks a bounded native Codex ancestor's actual /proc argv against
+that declaration; mismatched, unreadable, deleted, nested-unverified, legacy and
+external launch evidence is Unknown. It never reads this on GTK, logs argv, or
+changes approval policy. Fresh hooks establish resume/restored session capability;
+PID replacement and session restart revoke old capability. Multiple candidate
+Codex sessions remain ambiguous because OSC has no session ID. Unknown channels
+use ordinary terminal delivery under existing visibility settings instead of
+inventing NeedsInput. Other agent notification policy is retained.
+
+This is supported-producer launch-contract verification, not cryptographic OSC
+sender attribution or proof of arbitrary custom executable behavior. Descendants
+share a PTY, and authenticated local producers already hold authority to publish
+agent state. Non-native wrappers that cannot supply matching native argv remain
+ordinary notifications. Limitations are documented in docs/cli.md. Source checks:
+official https://developers.openai.com/codex/config-reference and local Codex
+95c7265e849e config override/TUI configuration paths; no Codex repo edits.
+
+Evidence: 42 agent-status, 34 adapter, 2 policy tests PASS; IPC ancestry-proof,
+restored-capability and Codex launch tests each PASS. Existing review-routing
+journey extended using its controlled actor inside the existing native platform
+helper, real launcher/helper/socket/PTY/Ghostty/GTK and notification daemon. This
+is a SYNTHETIC producer, not actual model approval QA. Old stage gh192-spinner
+FAILS legacy ordinary-delivery control (instead projects NeedsInput); repaired
+X11 and native Wayland PASS verified approval/completion attention, pre-policy
+non-attention, legacy and override ordinary delivery exactly once, and teardown.
+Both first final runs passed behavior but FAILED daemon Quit with D-Bus NoReply;
+the fixture exited before its queued reply flushed. Flush before test-daemon exit
+repairs that race; final runs PASS without retry logic or weakened assertions.
+
+Targeted mutations through linux/tests/mutate-rust: final policy 20/20 caught
+(after three initial survivors exposed missing negative controls for packed flags
+and two-item lists with unsupported kinds). Final receiver run catches all seven
+relevant mutants; two unrelated seed_restored_starting field mutants leaked the
+function filter and survive, so the raw run exits 2, not an all-green mutation
+receipt. Initial broader receiver run also leaked an unrelated task-parser mutant.
+No suppression or unsafe worker copying. Receipts: /tmp/gh174-{core-final,
+proof-tests-final,restore-test,launch-tests,policy-mutation-final,
+receiver-mutation-final,x11-verified,wayland-verified}.log; failed runs retained.
+
+Integrated build-local ReleaseSafe stage build/gh174-capability PASS (dirty
+baseline d5ec0c51, unchanged pinned engine); dependency-age audit PASS, exceptions=0.
+Diff whitespace, Bash syntax and new-module formatting PASS. IPC library strict
+Clippy --no-deps PASS; core strict Clippy still FAILS on four pre-existing errors
+in attention_inbox/workload_policy/workspace_recipe. One new semicolon lint was
+fixed before the final lint run. No full qualification, installation, live client
+restart, commit or push. Actual installed Codex human/automatic-review QA remains
+pending the coordinated bug-batch release. GH-174 remains open for that adoption.

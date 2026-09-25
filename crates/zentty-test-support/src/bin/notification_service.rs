@@ -222,6 +222,11 @@ fn register_service(
                 }
                 "Quit" => {
                     invocation.return_value(None);
+                    // The fixture exits immediately below; deliver the queued
+                    // method reply before disconnecting its session bus.
+                    connection
+                        .flush_sync(gio::Cancellable::NONE)
+                        .expect("flush notification fixture shutdown reply");
                     loop_for_test.quit();
                 }
                 _ => invocation.return_dbus_error(

@@ -187,6 +187,7 @@ impl SessionKey {
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 struct SessionBookkeeping {
+    notification_capability: crate::NotificationCapability,
     tasks: HashMap<String, bool>,
     task_progress_authority: TaskProgressAuthority,
     lifecycle: SessionLifecycle,
@@ -435,14 +436,11 @@ impl AgentStatusStore {
         notification_text: &str,
         now: u64,
     ) -> Option<bool> {
-        let session_id = self.panes.get(pane_id).and_then(|sessions| {
-            sessions
-                .values()
-                .filter(|status| status.agent_name.eq_ignore_ascii_case("codex"))
-                .max_by_key(|status| (status_priority(status), status.updated_at))
-                .map(|status| status.session_id.clone())
-        })?;
-        if notification_text.is_empty() {
+        let session_id = self
+            .status_for_pane(pane_id)
+            .filter(|status| status.agent_name.eq_ignore_ascii_case("codex"))
+            .map(|status| status.session_id.clone())?;
+        if notification_text.is_empty() || !self.terminal_notifications_use_agent_policy(pane_id) {
             return Some(false);
         }
         let status = self
@@ -471,6 +469,29 @@ impl AgentStatusStore {
         lifecycle.idle_visible_until = None;
         lifecycle.unresolved_stop_visible_until = None;
         Some(true)
+    }
+
+    /// Whether a notification belongs to a verified agent attention channel.
+    /// Unknown Codex launches retain ordinary terminal delivery without
+    /// inventing lifecycle or approval state. Other adapters retain their policy.
+    #[must_use]
+    pub fn terminal_notifications_use_agent_policy(&self, pane_id: &str) -> bool {
+        self.status_for_pane(pane_id).is_some_and(|status| {
+            !status.agent_name.eq_ignore_ascii_case("codex")
+                || (self.panes.get(pane_id).is_some_and(|sessions| {
+                    sessions
+                        .values()
+                        .filter(|session| session.agent_name.eq_ignore_ascii_case("codex"))
+                        .count()
+                        == 1
+                }) && self
+                    .session_bookkeeping
+                    .get(&SessionKey::new(pane_id, &status.session_id))
+                    .is_some_and(|state| {
+                        state.notification_capability
+                            == crate::NotificationCapability::CodexTuiAttentionV1
+                    }))
+        })
     }
 
     /// Reconciles parsed terminal notifications with an existing managed agent.
@@ -807,6 +828,12 @@ impl AgentStatusStore {
             .cloned()
             .unwrap_or_default();
         let lifecycle = self.session_bookkeeping.entry(session_key).or_default();
+        if event.kind() == "session.start" || status_before.tracked_pid != status.tracked_pid {
+            lifecycle.notification_capability = crate::NotificationCapability::Unknown;
+        }
+        if let Some(capability) = event.notification_capability() {
+            lifecycle.notification_capability = capability;
+        }
         match event.kind() {
             "session.start" => {
                 status.phase = AgentPhase::Starting;

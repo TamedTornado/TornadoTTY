@@ -5,6 +5,7 @@ mod discovery;
 mod ingress;
 mod integrations;
 mod launch;
+mod notification_capability;
 mod presentation;
 mod replies;
 mod server;
@@ -21,6 +22,7 @@ pub use ingress::{
 };
 pub use integrations::{install_integration, uninstall_integration};
 pub use launch::{LaunchError, launch_agent, resolve_real_binary};
+pub use notification_capability::verified_codex_notification_capability;
 pub use presentation::render_application_result;
 pub use server::{
     ServerCommand, ServerIpcError, ServerIpcReply, ServerIpcReplyError, ServerIpcRequest,
