@@ -1055,3 +1055,14 @@ pending the coordinated bug-batch release. GH-174 remains open for that adoption
   regression uses controlled PTY children, not an actual Codex login/session.
   `bash -n`, diff checks and integrated build PASS (91 age-audited packages,
   zero exceptions). No full qualification run and no live workspace manipulation.
+- Fix committed as `7532ff2febf329356b8024d42ba641761a688859`, rebuilt and
+  installed by same-filesystem rename without restarting the current session.
+  Installed GUI sha256
+  `33f5de4dcfb3d63f34a0aa48d22ca72970a3c436c92253aff680e8e2f6368356`;
+  version reports 7532ff2febf3, release-safe (dirty from preserved pre-existing
+  work). The matching Ghostty library was verified byte-identical to installed
+  and not replaced; CLI and saved state were untouched. Rollback executable and
+  metadata: `/tmp/tornadotty-gh200-rollback-7532ff2f`.
+- Running GUI PID 1540262 retained inode 75497515, size 225202760 before/after.
+  It still runs f61bf209, so the #200 repair becomes active only on next launch.
+  No push or release performed; live user confirmation remains pending.
