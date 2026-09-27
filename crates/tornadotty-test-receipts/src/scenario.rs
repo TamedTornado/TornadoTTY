@@ -1,5 +1,6 @@
 //! Named real-product scenarios owned by the single journey driver.
 
+mod layout_restore;
 mod notification_settings;
 
 use std::fs::{self, File, OpenOptions};
@@ -309,6 +310,29 @@ fn divider_layout(product: &Path, backend: Backend) -> Result<(), String> {
     Ok(())
 }
 
+fn write_layout_config(config_home: &Path, restore_widths: bool) -> Result<(), String> {
+    let config_dir = config_home.join("zentty");
+    fs::create_dir_all(&config_dir)
+        .map_err(|error| format!("could not create isolated config directory: {error}"))?;
+    let mut config = concat!(
+        "[confirmations]\n",
+        "confirm_before_closing_pane = false\n",
+        "confirm_before_closing_window = false\n",
+        "confirm_before_quitting = false\n",
+        "[pane_layout]\n",
+        "right_split_behavior = \"alwaysSplit\"\n",
+        "[[shortcuts.bindings]]\ncommand_id = \"pane.arrange.height.full\"\nshortcut = \"command+option+1\"\n",
+        "[[shortcuts.bindings]]\ncommand_id = \"pane.arrange.height.two_per_column\"\nshortcut = \"command+option+2\"\n",
+        "[[shortcuts.bindings]]\ncommand_id = \"pane.arrange.height.three_per_column\"\nshortcut = \"command+option+3\"\n",
+        "[[shortcuts.bindings]]\ncommand_id = \"pane.focus.right\"\nshortcut = \"command+option+right\"\n"
+    ).to_owned();
+    if restore_widths {
+        config.push_str("[sidebar]\nwidth = 262\n[restore]\nrestore_workspace_on_launch = true\n");
+    }
+    fs::write(config_dir.join("config.toml"), config)
+        .map_err(|error| format!("could not write isolated layout config: {error}"))
+}
+
 fn run_divider_layout(
     product: &Path,
     backend: Backend,
@@ -321,6 +345,10 @@ fn run_divider_layout(
     create_owner_directory(&session)?;
     let receipt = state.join("product-events.ndjson");
     let actor = root.join("pane-layout-actor");
+    let restore_widths = std::env::var("TORNADOTTY_LAYOUT_RESTORE_ONLY").as_deref() == Ok("true");
+    if restore_widths {
+        layout_restore::prepare(&state)?;
+    }
     fs::write(
         &actor,
         include_str!("../../../linux/tests/fixtures/pane-layout-actor"),
@@ -334,24 +362,7 @@ fn run_divider_layout(
     let config_home = std::env::var_os("XDG_CONFIG_HOME")
         .ok_or_else(|| "divider-layout requires isolated XDG_CONFIG_HOME".to_owned())?;
     let config_home = PathBuf::from(config_home);
-    let config_dir = config_home.join("zentty");
-    fs::create_dir_all(&config_dir)
-        .map_err(|error| format!("could not create isolated config directory: {error}"))?;
-    fs::write(
-        config_dir.join("config.toml"),
-        concat!(
-            "[confirmations]\n",
-            "confirm_before_closing_pane = false\n",
-            "confirm_before_closing_window = false\n",
-            "confirm_before_quitting = false\n",
-            "[pane_layout]\n",
-            "right_split_behavior = \"alwaysSplit\"\n",
-            "[[shortcuts.bindings]]\ncommand_id = \"pane.arrange.height.full\"\nshortcut = \"command+option+1\"\n",
-            "[[shortcuts.bindings]]\ncommand_id = \"pane.arrange.height.two_per_column\"\nshortcut = \"command+option+2\"\n",
-            "[[shortcuts.bindings]]\ncommand_id = \"pane.arrange.height.three_per_column\"\nshortcut = \"command+option+3\"\n"
-        ),
-    )
-    .map_err(|error| format!("could not write isolated layout config: {error}"))?;
+    write_layout_config(&config_home, restore_widths)?;
     let ghostty_dir = config_home.join("ghostty");
     fs::create_dir_all(&ghostty_dir)
         .map_err(|error| format!("could not create isolated terminal config: {error}"))?;
@@ -388,13 +399,22 @@ fn run_divider_layout(
             "--state-directory",
         ])
         .arg(&state)
-        .arg("--no-session-restore")
+        .args(if restore_widths {
+            vec![]
+        } else {
+            vec!["--no-session-restore"]
+        })
         .stdout(Stdio::null())
         .stderr(Stdio::inherit())
         .spawn()
         .map_err(|error| format!("could not start product supervisor: {error}"))?;
 
-    let scenario_result = observe_divider_layout(&driver, &session, &receipt, backend, root)
+    let observation = if restore_widths {
+        layout_restore::observe(&driver, &session, &receipt, backend, root)
+    } else {
+        observe_divider_layout(&driver, &session, &receipt, backend, root)
+    };
+    let scenario_result = observation
         .and_then(|()| send_input_key(&driver, &session, backend, "ctrl+q"))
         .and_then(|()| {
             driver_success(

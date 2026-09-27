@@ -1110,3 +1110,74 @@ pending the coordinated bug-batch release. GH-174 remains open for that adoption
   Rollback: `/tmp/tornadotty-gh201-rollback-c1a9c98f`. Live PID 1540262 retained
   executable inode 75497515 / size 225202760 before and after; it still runs
   f61bf209. Repair takes effect next launch. No push or release performed.
+
+### 2026-09-27: backlog and accumulated-log review
+
+- Reviewed open fork issues/comments and retained journals through approximately
+  08:00 CEST. September 25 15:11:46 startup identifies PID 1540262 as f61bf209
+  and enables the 500 ms observer. Later journal entries retain that PID;
+  newer on-disk installs do not establish that their repairs ran in this session.
+- #185 has fresh but not root-causal evidence: 216 slow server-chrome records
+  after startup, all on September 26, measure 50–259 ms in the combined server
+  stage. Maximum at 18:30:56; other chrome/context/attention timings there are
+  zero. Changing scanner endpoints accompany the inspected 16:38–16:39 interval.
+  This supports investigating repeated server presentation work, not assigning
+  cost specifically to ranking or popover replacement. Filtered local receipt:
+  `/tmp/tornadotty-backlog-events.log`.
+- No `tornadotty-ui-diagnostics` records returned from either user or accessible
+  combined journal since that startup. Measured calls are below its threshold;
+  absence is not proof of no stalls or reliable delivery. No new Broken-pipe
+  signature found in this interval. #190 still lacks a disconnect cause; the
+  earlier 15.4-second stall remains temporal association only.
+- #197's retained `/tmp/gh196-close-crash.log` confirms invalid refcount/weak-ref
+  diagnostics followed by heap corruption. Its existing isolated close/reflow
+  sequence is ready for lifetime investigation, but the offending unref is not
+  established. #188 still lacks the vanished pane's terminal-mode evidence;
+  #191's sustained-output/scrollback recurrence lacks original-incident proof.
+- #192, #194/#195, #196, #200, and #201's notification path already have causal
+  regressions/repairs; #186 and specific #143 triggers have prior repairs too.
+  Their documented validation gaps remain, rather than all being blocked on
+  more logs. No tests, code repair, install, restart, live input, issue mutation,
+  or closure performed in this review.
+
+### 2026-09-27: restart shrinks inactive full-width columns (#202)
+
+- Jason restarted and reported Regulate's full-width panes exposing neighboring
+  columns. New GUI PID 1262083 logs c1a9c98f at 08:03:43 CEST: the #201 fix is
+  now running, unlike the earlier session. Old columns were 810 pixels; startup
+  records previous=892/current=810/factor=0.908072, then three 736-pixel columns
+  in an 810-pixel viewport. Tracked in
+  [#202](https://github.com/TamedTornado/TornadoTTY/issues/202).
+- Confirmed cause: the sidebar-settling guard applied only when the active lane
+  had multiple columns, although proportional scaling mutates all lanes. A
+  single-column startup lane admitted the provisional baseline and shrank the
+  inactive restored columns. The shared reconciliation now waits for settled
+  sidebar allocation regardless of the active lane's column count.
+- Focused regression RED with the exact 892-to-810 transition; allocation tests
+  PASS (16), including preservation of inactive widths and later intentional
+  resizing. The existing layout driver gained a restore-only mode with synthetic
+  private state, three inactive full-width columns, and real PTY pixel queries.
+  Old c1a9c98f FAILs: 670 text-area pixels instead of 750 in a 754-pixel viewport.
+  Repaired product PASS on X11 and native Wayland for all three panes, physical
+  input and normal exit. Existing full X11 layout/reflow/divider journey PASS.
+  Receipts: `/tmp/gh202-red.log`, `/tmp/gh202-final-red.log`,
+  `/tmp/gh202-x11-final.log`, `/tmp/gh202-wayland-synchronized.log`,
+  `/tmp/gh202-divider-x11.log`, `/tmp/gh202-tests-final.log`.
+- Fixture failures preserved: missing focus/allocation synchronization, sampling
+  the initial single pane as an unreliable width reference, and assuming an
+  unbound navigation shortcut. Final fixture waits for native Wayland initial
+  allocation/focus and explicitly binds navigation. Initial single-pane PTY
+  width was 830 on both baseline and candidate despite the settled 754 viewport;
+  this separate sizing observation needs follow-up, not a #202 success claim.
+  Final restored-column checks use the known fixture viewport and cell rounding.
+- Integrated `build-local` PASS at `build/gh202-restore` (dirty bea8003e base,
+  unchanged Ghostty b62d1c57f); age audit 91 packages/zero exceptions. Formatting
+  and diff checks PASS. Driver Clippy FAIL remains on the unchanged 103-line
+  `observe_divider_layout`; new lint findings were corrected without suppressions.
+  No full qualification, install, restart, or live input. Already
+  shrunken saved widths are not guessed back to full width; user arrangement
+  intent must be reapplied once. Issue remains open for deployment/live QA.
+- At Jason's request, the repair, focused regression coverage and these review
+  notes are committed together after diff review; unrelated pre-existing changes
+  are excluded. No additional test run is implied by committing. Not pushed or
+  installed; the built artifact above still identifies its pre-commit base.

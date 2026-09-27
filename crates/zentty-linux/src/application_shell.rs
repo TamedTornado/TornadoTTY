@@ -1350,32 +1350,16 @@ impl ApplicationShell {
     pub(crate) fn reconcile_pane_widths(&mut self) {
         let expected_sidebar_width =
             SidebarWidthPreference::clamped(self.preferred_sidebar_width.get(), self.body.width());
-        if self.state.active_columns().len() > 1
-            && !pane_width_allocation_is_settled(
-                self.sidebar_visibility.mode(),
-                self.sidebar_scroll.width(),
-                expected_sidebar_width,
-            )
-        {
-            return;
-        }
         let viewport_width = self.pane_viewport_width();
-        if viewport_width <= 1 {
+        if !reconcile_model_pane_widths(
+            &mut self.state,
+            &self.last_pane_viewport_width,
+            viewport_width,
+            self.sidebar_visibility.mode(),
+            self.sidebar_scroll.width(),
+            expected_sidebar_width,
+        ) {
             return;
-        }
-        let previous_width = self.last_pane_viewport_width.replace(viewport_width);
-        if previous_width == viewport_width {
-            return;
-        }
-        let factor = if previous_width > 1 {
-            f64::from(viewport_width) / f64::from(previous_width)
-        } else {
-            1.0
-        };
-        if self.state.scale_multi_column_widths(factor) {
-            eprintln!(
-                "zentty-linux: pane-readable-width previous={previous_width} current={viewport_width} factor={factor:.6} result=scaled"
-            );
         }
         // A single column fills the viewport too, even though it has no
         // multi-column model widths to scale. Retained widgets must receive
@@ -5752,6 +5736,43 @@ fn pane_layout_can_overflow_horizontally(column_count: usize) -> bool {
     column_count > 1
 }
 
+fn reconcile_model_pane_widths(
+    state: &mut WorkspaceState,
+    last_width: &Cell<i32>,
+    viewport_width: i32,
+    sidebar_mode: SidebarVisibilityMode,
+    allocated_sidebar_width: i32,
+    expected_sidebar_width: i32,
+) -> bool {
+    // This baseline scales every worklane, including inactive restored lanes.
+    // A single-column active lane must not admit a provisional allocation.
+    if !pane_width_allocation_is_settled(
+        sidebar_mode,
+        allocated_sidebar_width,
+        expected_sidebar_width,
+    ) {
+        return false;
+    }
+    if viewport_width <= 1 {
+        return false;
+    }
+    let previous_width = last_width.replace(viewport_width);
+    if previous_width == viewport_width {
+        return false;
+    }
+    let factor = if previous_width > 1 {
+        f64::from(viewport_width) / f64::from(previous_width)
+    } else {
+        1.0
+    };
+    if state.scale_multi_column_widths(factor) {
+        eprintln!(
+            "zentty-linux: pane-readable-width previous={previous_width} current={viewport_width} factor={factor:.6} result=scaled"
+        );
+    }
+    true
+}
+
 fn pane_width_allocation_is_settled(
     sidebar_mode: SidebarVisibilityMode,
     allocated_sidebar_width: i32,
@@ -5950,7 +5971,8 @@ mod allocation_tests {
         default_window_recipe, focus_follow_should_apply, is_close_window_shortcut,
         model_heights_to_pixels, pane_content_width, pane_layout_can_overflow_horizontally,
         pane_rectangle_intersects_viewport, pane_width_allocation_is_settled,
-        settings_refresh_section, snapshot_window_frame, validated_window_size,
+        reconcile_model_pane_widths, settings_refresh_section, snapshot_window_frame,
+        validated_window_size,
     };
     use crate::sidebar_visibility::Mode as SidebarVisibilityMode;
     use gtk::gdk;
@@ -6003,6 +6025,56 @@ mod allocation_tests {
             180,
             280,
         ));
+    }
+
+    #[test]
+    fn inactive_full_width_columns_survive_single_column_startup() {
+        let mut state = zentty_core::WorkspaceState::new("regulate", "pane-1");
+        assert!(state.split_focused_pane_right("pane-2"));
+        assert!(state.split_focused_pane_right("pane-3"));
+        assert!(state.arrange_columns(1, 810.0));
+        assert!(state.create_worklane("bro", "pane-4"));
+        let previous = std::cell::Cell::new(0);
+        // The startup lane is single-column, but the width baseline also
+        // governs inactive restored lanes. Ignore the provisional allocation.
+        reconcile_model_pane_widths(
+            &mut state,
+            &previous,
+            892,
+            SidebarVisibilityMode::PinnedOpen,
+            180,
+            262,
+        );
+        reconcile_model_pane_widths(
+            &mut state,
+            &previous,
+            810,
+            SidebarVisibilityMode::PinnedOpen,
+            262,
+            262,
+        );
+        assert!(
+            state.worklanes()[0]
+                .columns
+                .iter()
+                .all(|column| column.width == 810.0)
+        );
+        // A subsequent intentional resize must still scale inactive columns.
+        assert!(reconcile_model_pane_widths(
+            &mut state,
+            &previous,
+            900,
+            SidebarVisibilityMode::PinnedOpen,
+            262,
+            262,
+        ));
+        assert!(
+            state.worklanes()[0]
+                .columns
+                .iter()
+                .all(|column| column.width == 900.0)
+        );
+        assert_eq!(state.active_columns().len(), 1);
     }
 
     #[test]
