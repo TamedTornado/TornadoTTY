@@ -1229,3 +1229,16 @@ pending the coordinated bug-batch release. GH-174 remains open for that adoption
   exercised. No full qualification, live-client input, install or restart.
   Scoped implementation, tests and documentation are committed with this entry;
   issue remains open for remaining coverage and deployment/live confirmation.
+- Installed at Jason's request without restart: rebuilt ca9f824e41c9
+  (ReleaseSafe, dirty due to preserved existing work) using `build-local`;
+  age audit PASS, 91 packages/zero exceptions, and focused real X11 Ctrl-click/
+  restored-toolbar/no-input-leak smoke PASS (`/tmp/gh203-install-smoke.log`).
+  GUI staged, byte-verified and atomically renamed over the installed executable.
+  Installed SHA256 `f0e0563cb07ac3e43839c4b597fb271062b70a6834fd3bffe6d08e6f521adde0`;
+  `tornadotty --version` reports ca9f824e41c9. Matching Ghostty/layer-shell
+  libraries and CLI remain byte-identical and were not replaced. Live GUI
+  PID 1262083 retains inode 75497518 / size 225316408; no restart, signal,
+  live input or saved-state modification. Rollback GUI and metadata retained
+  at `/tmp/tornadotty-gh203-rollback-ca9f824e`. #202's width repair is included
+  in this installed build too. Both changes activate on the next user restart;
+  live confirmation remains pending. No push or release.
