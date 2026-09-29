@@ -1242,3 +1242,30 @@ pending the coordinated bug-batch release. GH-174 remains open for that adoption
   at `/tmp/tornadotty-gh203-rollback-ca9f824e`. #202's width repair is included
   in this installed build too. Both changes activate on the next user restart;
   live confirmation remains pending. No push or release.
+
+### 2026-09-29: Bro Claude background hooks retain the dead GUI endpoint (#204)
+
+- Jason reported non-blocking Stop hook connection refusals in Bro. Old GUI
+  PID 1262083 exits with Wayland errno=32/Broken pipe at 18:08:24 CEST; new GUI
+  PID 1248789 starts ca9f824e at 18:08:28 with a listening instance socket.
+  Bro frontend PID 1318247 starts at 18:14 with that new socket in its environment.
+- The surviving older Claude process was not an ordinary orphaned terminal:
+  `~/.claude/daemon.lock` identifies it as persistent daemon PID 3874870,
+  started 10:24:53, with detached stdio and the old GUI endpoint inherited.
+  That socket file remains but has no listener. Exact Bro hook-error records
+  have `sessionKind=bg`: 77 attachments from 18:14:08 through 18:59:21 report
+  refusal across prompt, tool and Stop hooks. Stop summaries explicitly set
+  `preventedContinuation=false`. The two Stop hooks are Peon and TornadoTTY,
+  not demonstrated duplication of our hook. No settings socket override found.
+- Current launch policy emits a bare CLI hook, and `run_agent_event` uses
+  inherited endpoint/credential/pane environment. Persistent daemon ownership
+  outlives the GUI identity. [#204](https://github.com/TamedTornado/TornadoTTY/issues/204)
+  tracks isolated reproduction and authenticated per-session binding, without
+  arbitrary instance fallback or suppressing errors. The fresh frontend alone
+  is insufficient recovery. A live daemon restart requires coordination because
+  it may own background work; none was performed. Earlier restore failures are
+  separate observations, not proven caused by these hook refusals.
+- Investigation only: whitelisted process identity/environment, listeners and
+  error-only transcript metadata. No signals, live input, config/credential
+  changes, or new tests. No private transcript content or credentials retained
+  in this report. Fix and live remediation remain pending.
