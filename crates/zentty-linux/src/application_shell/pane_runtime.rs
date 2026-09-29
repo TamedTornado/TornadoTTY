@@ -139,6 +139,7 @@ pub(super) struct PaneRuntimeCoordinator {
     command: Option<String>,
     surfaces: BTreeMap<String, GhosttySurface>,
     frames: BTreeMap<String, PaneFrame>,
+    controls_bypassed: Cell<bool>,
     focus_controllers: BTreeMap<String, gtk::EventControllerFocus>,
     deferred_panes: BTreeSet<String>,
     live_children: Cell<usize>,
@@ -166,6 +167,7 @@ impl PaneRuntimeCoordinator {
             command,
             surfaces: BTreeMap::new(),
             frames: BTreeMap::new(),
+            controls_bypassed: Cell::new(false),
             focus_controllers: BTreeMap::new(),
             deferred_panes: BTreeSet::new(),
             live_children: Cell::new(0),
@@ -194,6 +196,15 @@ impl PaneRuntimeCoordinator {
 
     pub(super) fn frame(&self, pane_id: &str) -> Option<&PaneFrame> {
         self.frames.get(pane_id)
+    }
+
+    pub(super) fn set_controls_bypassed(&self, bypassed: bool) {
+        if self.controls_bypassed.replace(bypassed) != bypassed {
+            eprintln!("zentty-linux: pane-controls-bypass active={bypassed}");
+            for frame in self.frames.values() {
+                frame.set_controls_bypassed(bypassed);
+            }
+        }
     }
 
     pub(super) fn contains(&self, pane_id: &str) -> bool {
@@ -230,6 +241,7 @@ impl PaneRuntimeCoordinator {
         }
         self.focus_controllers
             .insert(pane_id.to_owned(), focus_controller);
+        frame.set_controls_bypassed(self.controls_bypassed.get());
         self.frames.insert(pane_id.to_owned(), frame);
         self.surfaces.insert(pane_id.to_owned(), surface);
         self.deferred_panes.remove(pane_id);
@@ -381,6 +393,7 @@ impl PaneRuntimeCoordinator {
             .pane_runtime
             .focus_controllers
             .insert(pane_id.to_owned(), focus_controller);
+        frame.set_controls_bypassed(shell.pane_runtime.controls_bypassed.get());
         shell.pane_runtime.frames.insert(pane_id.to_owned(), frame);
         shell
             .pane_runtime

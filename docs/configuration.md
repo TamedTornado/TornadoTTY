@@ -108,6 +108,17 @@ is reported as unavailable and does not undo an otherwise successful import.
 Changing to a theme sound or selecting **Remove Custom** deletes obsolete
 Zentty-owned assets only after the new configuration has persisted.
 
+## Pane toolbar click-through
+
+Hold **Ctrl** (either left or right) to temporarily hide the split/move/close
+toolbar at the top right of terminal panes. While held, clicks reach the
+terminal underneath instead of the toolbar. Release Ctrl to restore the
+toolbar's normal hover/focus visibility, without moving the pointer.
+
+The modifier is not consumed: terminal applications still receive normal
+Ctrl-modified input, and existing keyboard shortcuts keep their behavior.
+This is temporary window-local presentation state, not a saved layout setting.
+
 ## Local GUI stall evidence
 
 The Linux client has a lightweight local progress observer independent of the

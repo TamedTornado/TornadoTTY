@@ -6,6 +6,7 @@ use gtk::prelude::*;
 use zentty_core::{PaneRightInsertionBehavior, WorklaneColor};
 
 use crate::source_ui;
+mod stationary_target;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum PaneControlAction {
@@ -62,12 +63,21 @@ pub(crate) struct PaneFrame {
     terminal: gtk::Widget,
     pane_id: String,
     label: gtk::Label,
+    controls: gtk::Box,
+    controls_state: Rc<ControlVisibility>,
     right_button: gtk::Button,
     move_to_window_button: gtk::Button,
     right_action: Rc<Cell<PaneControlAction>>,
     drag_zone: gtk::Label,
     drag_source: RefCell<Option<gtk::DragSource>>,
     restore_failure: RefCell<Option<gtk::Box>>,
+}
+
+#[derive(Default)]
+struct ControlVisibility {
+    revealed: Cell<bool>,
+    bypassed: Cell<bool>,
+    retarget_after_bypass: Cell<bool>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -132,6 +142,9 @@ impl PaneFrame {
         controls.set_margin_end(8);
         controls.set_opacity(0.0);
         controls.set_can_target(false);
+        controls.set_tooltip_text(Some(
+            "Hold Ctrl to hide pane controls and click the terminal underneath",
+        ));
 
         let drag_zone = gtk::Label::new(Some("•••"));
         drag_zone.set_widget_name(&format!("pane-drag-zone-{pane_id}"));
@@ -179,7 +192,8 @@ impl PaneFrame {
         }
         root.add_overlay(&controls);
 
-        let revealed = Rc::new(Cell::new(false));
+        let revealed = Rc::new(ControlVisibility::default());
+        stationary_target::install(&root, &controls, &revealed);
         let motion = gtk::EventControllerMotion::new();
         let focus = gtk::EventControllerFocus::new();
         let enter_controls = controls.clone();
@@ -241,6 +255,8 @@ impl PaneFrame {
             terminal: terminal.clone(),
             pane_id: pane_id.to_owned(),
             label,
+            controls,
+            controls_state: revealed,
             right_button,
             move_to_window_button,
             right_action,
@@ -252,6 +268,13 @@ impl PaneFrame {
 
     pub(crate) fn widget(&self) -> &gtk::Overlay {
         &self.root
+    }
+
+    pub(crate) fn set_controls_bypassed(&self, bypassed: bool) {
+        if self.controls_state.bypassed.replace(bypassed) && !bypassed {
+            self.controls_state.retarget_after_bypass.set(true);
+        }
+        apply_controls_visibility(&self.controls, &self.controls_state);
     }
 
     pub(crate) fn set_presentation(&self, presentation: &PanePresentation) {
@@ -414,22 +437,37 @@ fn pane_control_button(action: PaneControlAction, pane_id: &str) -> gtk::Button 
 fn configure_pane_control_button(button: &gtk::Button, action: PaneControlAction, pane_id: &str) {
     button.add_css_class("zentty-pane-control");
     button.set_icon_name(action.icon());
-    button.set_tooltip_text(Some(action.label()));
+    button.set_tooltip_text(Some(&format!(
+        "{} · Hold Ctrl to click underneath",
+        action.label()
+    )));
     button.set_accessible_role(gtk::AccessibleRole::Button);
     button.update_property(&[gtk::accessible::Property::Label(action.label())]);
     button.set_widget_name(&format!("pane-control-{}-{pane_id}", action.id()));
 }
 
-fn set_revealed(controls: &gtk::Box, revealed: &Cell<bool>, pane_id: &str, value: bool) {
-    if revealed.replace(value) == value {
+fn set_revealed(controls: &gtk::Box, state: &ControlVisibility, pane_id: &str, value: bool) {
+    if state.revealed.replace(value) == value {
         return;
     }
-    controls.set_opacity(if value { 1.0 } else { 0.0 });
-    controls.set_can_target(value);
+    apply_controls_visibility(controls, state);
     eprintln!(
         "zentty-linux: pane-controls pane={pane_id} state={}",
-        if value { "shown" } else { "hidden" }
+        if value && !state.bypassed.get() {
+            "shown"
+        } else {
+            "hidden"
+        }
     );
+}
+
+fn apply_controls_visibility(controls: &gtk::Box, state: &ControlVisibility) {
+    let visible = state.revealed.get() && !state.bypassed.get();
+    // Retain allocation so release works at the stationary pointer. Both
+    // picking and keyboard activation are disabled, not just the pixels.
+    controls.set_opacity(if visible { 1.0 } else { 0.0 });
+    controls.set_can_target(visible);
+    controls.set_sensitive(!state.bypassed.get());
 }
 
 pub(crate) fn install_styles() {
@@ -537,6 +575,62 @@ mod tests {
 
     const PANE_SOURCE: &str = include_str!("../../../Zentty/UI/PaneStrip/PaneContainerView.swift");
     const CONFIG_SOURCE: &str = include_str!("../../../Zentty/Config/AppConfig.swift");
+
+    #[test]
+    #[ignore = "requires a controlled GTK display"]
+    fn bypass_hides_toolbar_and_removes_its_children_from_picking() {
+        use gtk::prelude::*;
+        gtk::init().expect("controlled display");
+        let terminal = gtk::DrawingArea::new();
+        let frame = super::PaneFrame::new("test", terminal.upcast_ref(), |_| {}, |_| {});
+        let window = gtk::Window::new();
+        window.set_default_size(600, 400);
+        window.set_child(Some(frame.widget()));
+        super::set_revealed(&frame.controls, &frame.controls_state, "test", true);
+        window.present();
+        for _ in 0..30 {
+            while gtk::glib::MainContext::default().pending() {
+                gtk::glib::MainContext::default().iteration(false);
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        let bounds = frame
+            .right_button
+            .compute_bounds(frame.widget())
+            .expect("button bounds");
+        let x = f64::from(bounds.x() + bounds.width() / 2.0);
+        let y = f64::from(bounds.y() + bounds.height() / 2.0);
+        let pick = || {
+            frame
+                .widget()
+                .pick(x, y, gtk::PickFlags::DEFAULT)
+                .expect("picked widget")
+        };
+        assert!(pick().is_ancestor(&frame.controls) || pick() == frame.controls);
+        frame.set_controls_bypassed(true);
+        assert_eq!(frame.controls.opacity(), 0.0);
+        assert!(!frame.controls.can_target());
+        assert_eq!(pick(), terminal.clone().upcast::<gtk::Widget>());
+        super::set_revealed(&frame.controls, &frame.controls_state, "test", false);
+        super::set_revealed(&frame.controls, &frame.controls_state, "test", true);
+        assert_eq!(
+            frame.controls.opacity(),
+            0.0,
+            "hover cannot undo held bypass"
+        );
+        assert!(!frame.controls.is_sensitive());
+        frame.set_controls_bypassed(false);
+        assert_eq!(frame.controls.opacity(), 1.0);
+        assert!(frame.controls.is_sensitive());
+        assert!(pick().is_ancestor(&frame.controls) || pick() == frame.controls);
+        // Releasing the modifier must not invent hover visibility after leave.
+        super::set_revealed(&frame.controls, &frame.controls_state, "test", false);
+        frame.set_controls_bypassed(true);
+        frame.set_controls_bypassed(false);
+        assert_eq!(frame.controls.opacity(), 0.0);
+        assert!(!frame.controls.can_target());
+        window.close();
+    }
 
     #[test]
     fn pane_local_controls_use_current_source_commands_without_conflation() {

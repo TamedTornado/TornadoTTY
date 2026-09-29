@@ -54,6 +54,7 @@ mod mounted_layouts;
 pub(crate) mod open_with_runtime;
 mod pane_action_recovery;
 mod pane_context;
+mod pane_control_bypass;
 #[cfg(test)]
 mod pane_geometry_tests;
 mod pane_runtime;
@@ -336,6 +337,7 @@ fn finish_shell_setup(
 ) -> Result<(), String> {
     initialize_shell_coordinators(shell);
     ApplicationShell::install_user_activation_tracking(shell);
+    pane_control_bypass::install(shell);
     install_sidebar_width_tracking(shell);
     let action_router = ActionRouter::install(shell)?;
     shell.borrow_mut().action_router = Some(action_router);

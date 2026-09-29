@@ -1,6 +1,7 @@
 //! Named real-product scenarios owned by the single journey driver.
 
 mod layout_restore;
+mod pane_control_bypass;
 mod notification_settings;
 
 use std::fs::{self, File, OpenOptions};
@@ -409,7 +410,9 @@ fn run_divider_layout(
         .spawn()
         .map_err(|error| format!("could not start product supervisor: {error}"))?;
 
-    let observation = if restore_widths {
+    let observation = if std::env::var("TORNADOTTY_LAYOUT_CONTROL_BYPASS").as_deref() == Ok("true") {
+        pane_control_bypass::observe(&driver, &session, &receipt, backend, root)
+    } else if restore_widths {
         layout_restore::observe(&driver, &session, &receipt, backend, root)
     } else {
         observe_divider_layout(&driver, &session, &receipt, backend, root)

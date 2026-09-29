@@ -1181,3 +1181,51 @@ pending the coordinated bug-batch release. GH-174 remains open for that adoption
   notes are committed together after diff review; unrelated pre-existing changes
   are excluded. No additional test run is implied by committing. Not pushed or
   installed; the built artifact above still identifies its pre-commit base.
+
+### 2026-09-29: hold Ctrl to click beneath pane controls (#203)
+
+- Jason requested temporary removal of the upper-right pane toolbar because it
+  covers terminal click targets. [#203](https://github.com/TamedTornado/TornadoTTY/issues/203)
+  uses either Ctrl key; Shift changes terminal selection/mouse reporting and
+  Alt may belong to desktop window gestures. Ctrl input is not consumed or
+  stripped from the PTY. Tooltips and configuration documentation explain it.
+- Window-owned capture observes modifiers, both Ctrl key transitions, pointer
+  entry/motion and activation changes, with weak shell references and no polling.
+  Existing pane-runtime ownership projects bypass to current, new, replacement
+  and transferred frames. Controls retain allocation but become transparent,
+  untargetable and insensitive; release restores their normal hover/focus state.
+- Real regression exposed GTK 4.14's cached pointer target: merely showing or
+  reenabling controls after bypass leaves the first stationary click targeting
+  the terminal. Allocation retention alone did not fix it. The narrow pane-root
+  handler claims only a restored toolbar button press, validates the same button
+  on release, then invokes its normal action. Motion retires that fallback;
+  cancellation clears pressed styling. No terminal reparenting, native-window
+  restart, synthetic pointer event, or engine change. Toolkit source reference:
+  [GTK pointing-event dispatch](https://github.com/GNOME/gtk/blob/4.14.5/gtk/gtkmain.c).
+- Focused evidence: three non-display pane-control tests PASS; the real GTK
+  regression PASS on isolated X11 and native Wayland for invisibility, terminal
+  picking, hover during bypass, restored button picking and hidden-after-leave.
+  Existing layout driver gained a Ctrl/mouse-reporting PTY mode. Old build
+  FAILs by activating New Pane Below rather than delivering Ctrl-click; repaired
+  left and right Ctrl runs PASS click delivery and restored split without moving
+  the pointer. Final `/tmp/gh203-final-no-leak.log` also verifies the restored
+  button click does not leak into terminal input. Existing full X11
+  layout/reflow/divider journey also PASSes.
+- Receipts: `/tmp/gh203-settled-red.log`, `/tmp/gh203-final-{left,right}.log`,
+  `/tmp/gh203-gtk-{x11,wayland}-complete.log`, `/tmp/gh203-last-unit.log`, and
+  `/tmp/gh203-layout-x11.log`. Product pointer runs use the existing Cairo shell
+  renderer setup with real Ghostty/PTY. Initial default-renderer captures were
+  all black and unusable; unsynchronized resize/hover produced an invalid early
+  baseline pass. Fixture now waits for allocated geometry and shown controls,
+  focuses its private window, and targets the button center. Those initial
+  failures are not counted as product proof. The double-click-delay hypothesis
+  was rejected by GTK source inspection, with no delay workaround retained.
+- Integrated `build-local` PASS at `build/gh203-controls`, dirty ad5caf8e base,
+  unchanged Ghostty b62d1c57f; age audit 91 packages/zero exceptions. Driver
+  Clippy retains the existing 103/100-line `observe_divider_layout` error; new
+  lint findings were repaired, not suppressed. Native Wayland physical pointer
+  coverage remains BLOCKED by #198; GTK picking is not a substitute. Focus-loss
+  and held-modifier pane-transfer paths are implemented but not independently
+  exercised. No full qualification, live-client input, install or restart.
+  Scoped implementation, tests and documentation are committed with this entry;
+  issue remains open for remaining coverage and deployment/live confirmation.
