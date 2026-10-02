@@ -1269,3 +1269,15 @@ pending the coordinated bug-batch release. GH-174 remains open for that adoption
   error-only transcript metadata. No signals, live input, config/credential
   changes, or new tests. No private transcript content or credentials retained
   in this report. Fix and live remediation remain pending.
+- October 2 recurrence: no #204 repair has landed. Current GUI PID 2099739
+  started September 30 17:14:09 CEST and has a listening socket. Replacement
+  Claude daemon PID 2575576 (2.1.287), started October 1 20:26:54, nevertheless
+  inherits the previous GUI PID 1248789's endpoint. Restart alone is therefore
+  insufficient without a fresh authenticated launch context. Bro's background
+  session records 83 exact hook-error attachments from 12:00:23 to 12:37:08 CEST
+  on October 2. Read-only `claude agents --json` reports state=working for that
+  session (its separate status field says idle); another Bro background session
+  is blocked. No assumption that either can safely be stopped. `respawn --help`
+  promises a binary-version restart, not refreshed daemon ownership. Updated
+  #204; no live changes or tests. Coordinated recovery and permanent repair
+  remain pending rather than suppressing failed status updates.
