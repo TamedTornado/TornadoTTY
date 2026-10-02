@@ -1281,3 +1281,18 @@ pending the coordinated bug-batch release. GH-174 remains open for that adoption
   promises a binary-version restart, not refreshed daemon ownership. Updated
   #204; no live changes or tests. Coordinated recovery and permanent repair
   remain pending rather than suppressing failed status updates.
+- October 2 coordinated recovery: Jason stopped work, exited Claude, and
+  authorized repair. Supported `claude stop da9c65f7` stopped the remaining Bro
+  background session; the stale daemon then exited automatically and removed
+  its lock. No signal was needed. Active-agent discovery now contains only the
+  unrelated consulting interactive session; its process and the GUI remained
+  intact. Bro's saved conversation remains present.
+- Explicitly selected current window-1/worklane-1/pane-19 through authenticated
+  discovery (credential not displayed), verified the endpoint belongs to GUI
+  2099739, and submitted a SessionEnd hook payload for the genuinely stopped Bro
+  session through installed `ipc agent-event --adapter=claude`: PASS, server
+  acknowledgement received. This is a manual hook-path check, not a new Claude
+  background-session lifecycle test. No work was resumed, no daemon started,
+  and no binary/configuration changed. Bro can relaunch from the current pane;
+  actual resumed-session confirmation and permanent per-session binding remain
+  pending under #204. Operational recovery is not a permanent fix.
