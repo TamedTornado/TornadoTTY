@@ -89,33 +89,43 @@ separate migration decision and must not regress current macOS restoration.
 
 ## Cargo workspace and dependency direction
 
-#13 creates one root Cargo workspace and exactly these initial responsibility
-boundaries. A crate split may change only through a superseding ADR and an
-updated machine contract.
+#13 creates one root Cargo workspace with the responsibility boundaries below.
+The application-API and [#148](https://github.com/TamedTornado/TornadoTTY/issues/148)
+typed-receipt decisions amend the original crate list. Release review #206
+reconciles those already implemented boundaries and the pinned engine revision;
+it introduces no crate or new dependency. Further crate splits require an
+explicit architecture decision and an updated machine contract.
 
 | Crate | Responsibility | Allowed workspace dependencies | Forbidden |
 | --- | --- | --- | --- |
+| `zentty-api` | Versioned transport-neutral application operations and bounded requests/replies | None | GTK, GObject, Ghostty FFI, socket transport, CLI presentation, product UI state |
+| `tornadotty-test-receipts` | Bounded typed product-receipt encoder/parser; separate non-shipped external journey driver | None | GTK, Ghostty FFI, product UI state, agent credentials, unbounded terminal payloads |
 | `zentty-core` | Workspace/worklane/pane state, typed commands, invariants, schema/migrations, agent-state projection, platform-service traits and pure request/result types | None | GTK, GLib/GObject, Ghostty FFI, Linux-only APIs, process/global environment reads |
-| `zentty-agent-ipc` | Private Unix-socket transport, capability authentication, hook adapters, helper CLI | `zentty-core`, `zentty-tmux-compat` | GTK, Ghostty FFI, product UI state |
+| `zentty-agent-ipc` | Private Unix-socket transport, capability authentication, hook adapters, helper CLI | `zentty-api`, `zentty-core`, `zentty-tmux-compat` | GTK, Ghostty FFI, product UI state |
 | `zentty-tmux-compat` | Pure tmux command/format/key parsing and bounded compatibility state | None | GTK, Ghostty FFI, socket transport, product UI state, PTY ownership |
 | `zentty-ghostty-sys` | Audited raw declarations matching Ghostty's pinned exported downstream header, opaque native types, constants, and native link metadata | None | Product types, gtk4-rs wrappers, policy, convenience behavior |
 | `zentty-ghostty` | Safe `GhosttyRuntime`/`GhosttySurface` API, GObject transfer, callbacks, thread-affinity, error mapping | `zentty-ghostty-sys` | Workspace state, commands, agent/worklane concepts |
-| `zentty-linux` | Shipped binary, GTK application/windows/views, composition root, Linux platform-service implementations and lifecycle orchestration | `zentty-core`, `zentty-agent-ipc`, `zentty-tmux-compat`, `zentty-ghostty` | Direct `zentty-ghostty-sys`, test-support, product behavior selected only by test environment variables |
-| `zentty-test-support` | Non-shipped controlled child programs, isolated XDG layouts, receipts, and external product drivers | `zentty-core`, `zentty-ghostty` | Direct raw FFI, production feature branches, being linked by shipped crates |
+| `zentty-linux` | Shipped binary, GTK application/windows/views, composition root, Linux platform-service implementations and lifecycle orchestration | `zentty-api`, `zentty-core`, `zentty-agent-ipc`, `zentty-tmux-compat`, `zentty-ghostty`, `tornadotty-test-receipts` | Direct `zentty-ghostty-sys`, test-support, product behavior selected only by test environment variables |
+| `zentty-test-support` | Non-shipped controlled child programs, isolated XDG layouts, receipts, and external product drivers | `zentty-core`, `zentty-agent-ipc`, `zentty-ghostty`, `zentty-linux` | Direct raw FFI, production feature branches, being linked by shipped crates |
 
 The only allowed workspace edges are:
 
 ```text
 zentty-linux ------------> zentty-core
       |                         (no workspace dependencies)
+      +------------------> zentty-api
+      +------------------> tornadotty-test-receipts
       +------------------> zentty-agent-ipc --> zentty-tmux-compat
       |                         |
       |                         +-----------> zentty-core
+      |                         +-----------> zentty-api
       +------------------> zentty-tmux-compat
       +------------------> zentty-ghostty --> zentty-ghostty-sys
 
 zentty-test-support -----> zentty-core
+      +------------------> zentty-agent-ipc
       +------------------> zentty-ghostty
+      +------------------> zentty-linux
 ```
 
 The window composition-root responsibilities and their ordered extraction are

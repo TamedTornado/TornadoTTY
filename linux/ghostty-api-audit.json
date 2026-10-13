@@ -17,9 +17,9 @@
     "official_repository": "https://github.com/ghostty-org/ghostty.git",
     "fork_repository": "https://github.com/TamedTornado/ghostty.git",
     "official_base": "6dcf68fc0b12e8caebbfc43770d66edac124b4f8",
-    "candidate_branch": "zentty/gcc16-host-helpers",
-    "head": "bab8c088f45e47a00ce3bfe2c142d6cb51ecd200",
-    "downstream_commit_count": 35
+    "candidate_branch": "zentty/gh171-session-bus",
+    "head": "b62d1c57fe7d265ab030fd25c96742e1b11442b8",
+    "downstream_commit_count": 40
   },
   "patch_series": [
     {
@@ -70,6 +70,27 @@
       "last": "bab8c088f45e47a00ce3bfe2c142d6cb51ecd200",
       "purpose": "Use Zig's LLVM linker for the two native GTK build helpers so GCC 16 .sframe startup objects link correctly.",
       "upstream_disposition": "two-line generic build fix suitable for independent upstream review"
+    },
+    {
+      "id": "opener-stderr-progress",
+      "first": "02821fa5813557c2dd9957a0378faf4fb9266e2f",
+      "last": "02821fa5813557c2dd9957a0378faf4fb9266e2f",
+      "purpose": "Consume bounded opener stderr records through EOF and reap children (TornadoTTY #183).",
+      "upstream_disposition": "generic fix retained downstream; separate operator approval required for upstream interaction"
+    },
+    {
+      "id": "embedded-desktop-integration",
+      "first": "34c80b9d58ad4906311af4c9722801afb9a23e10",
+      "last": "0f3d611e9d0402738dfd93dbe163c9c99d8ea1f2",
+      "purpose": "Let the registered host deliver notifications, honor logical remapped text, and acquire the session bus independently for workload scopes.",
+      "upstream_disposition": "reviewed downstream integration fixes; no upstream submission authorized"
+    },
+    {
+      "id": "wayland-failure-diagnostics",
+      "first": "b62d1c57fe7d265ab030fd25c96742e1b11442b8",
+      "last": "b62d1c57fe7d265ab030fd25c96742e1b11442b8",
+      "purpose": "Capture one bounded native Wayland error record before GDK exits, without terminal or protocol payloads (TornadoTTY #190).",
+      "upstream_disposition": "diagnostic retained downstream; does not claim display-loss containment"
     }
   ],
   "changed_files": [
@@ -85,6 +106,9 @@
     {"status":"M","path":"src/apprt/gtk/class/application.zig","owner":"ghostty-runtime","purpose":"Carry the alternate host's explicit application runtime.","tests":["linux/tests/runtime-init-order","linux/tests/rust-closed-pane-restore"]},
     {"status":"M","path":"src/apprt/gtk/class/global_shortcuts.zig","owner":"ghostty-runtime","purpose":"Avoid default-application assumptions for alternate GTK hosts.","tests":["linux/tests/rust-closed-pane-restore"]},
     {"status":"M","path":"src/apprt/gtk/class/surface.zig","owner":"ghostty-runtime","purpose":"Explicit application ownership, child environment, progress/notification signals, safe IME focus lifecycle, and host menu projection.","tests":["linux/tests/rust-agent-ipc","linux/tests/controlled-ibus-x11","linux/tests/controlled-fcitx","linux/tests/rust-pane-search"]},
+    {"status":"M","path":"src/apprt/gtk/key.zig","owner":"ghostty-runtime","purpose":"Preserve logical remapped text instead of synthesizing physical modifier keys.","tests":["linux/tests/ghostty-regression","linux/tests/rust-keyboard-layouts"]},
+    {"status":"M","path":"src/apprt/gtk/post_fork.zig","owner":"ghostty-runtime","purpose":"Acquire the session bus independently of private embedding application registration for systemd scopes.","tests":["linux/tests/ghostty-regression"]},
+    {"status":"M","path":"src/apprt/gtk/winproto/wayland.zig","owner":"ghostty-runtime","purpose":"Bounded one-shot native display-failure diagnostics before GDK fatal exit; not crash containment.","tests":["linux/tests/ghostty-regression"]},
     {"status":"M","path":"src/build/SharedDeps.zig","owner":"ghostty-build","purpose":"Link GTK runtime dependencies and map bundled source paths reproducibly.","tests":["zig build gtk-embed-lib","linux/tests/debian-package-clean-checkout"]},
     {"status":"M","path":"src/build/GhosttyResources.zig","owner":"ghostty-build","purpose":"Use the LLVM linker for the native build-data helper on GCC 16 hosts.","tests":["linux/scripts/build-arch-package"]},
     {"status":"A","path":"src/gtk_embed_lib.version-script","owner":"ghostty-abi","purpose":"Allowlist the exact fourteen product-used symbols under one ELF version node.","tests":["linux/tests/abi-surface","linux/tests/abi-version-node"]},
@@ -92,6 +116,8 @@
     {"status":"A","path":"src/gtk_embed_options.zig","owner":"ghostty-abi","purpose":"Size-versioned copied surface option validation.","tests":["zig build gtk-embed-lib-test","linux/tests/api-contract.c"]},
     {"status":"A","path":"src/gtk_embed_spike.valgrind.supp","owner":"ghostty-test","purpose":"Reviewed external-library suppressions for Ghostty's alternate-host test only.","tests":["linux/tests/suppression-governance"]},
     {"status":"A","path":"src/gtk_embed_spike.zig","owner":"ghostty-test","purpose":"Engine-owned alternate-host lifecycle, PTY, input, clipboard, signal, resize, and scale exercise.","tests":["zig build gtk-embed-spike","linux/tests/ghostty-regression"]},
+    {"status":"M","path":"src/os/open.zig","owner":"ghostty-core","purpose":"Drain opener stderr without looping on an unread delimiter and reap completed children.","tests":["linux/tests/ghostty-regression"]},
+    {"status":"A","path":"src/os/open_stderr.zig","owner":"ghostty-core","purpose":"Bounded stderr record reader with EOF, blank-line, long-record and real child-pipe regressions.","tests":["linux/tests/ghostty-regression"]},
     {"status":"M","path":"src/termio/Exec.zig","owner":"ghostty-core","purpose":"Keep copied shell command text alive for the child process.","tests":["zig build test","linux/tests/ghostty-regression"]}
   ],
   "abi": {

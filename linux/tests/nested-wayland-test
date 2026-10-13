@@ -165,6 +165,11 @@ set -euo pipefail
 [[ "${LIBGL_ALWAYS_SOFTWARE:-}" == 1 ]] || exit 56
 [[ "${LP_NUM_THREADS:-}" == 2 ]] || exit 55
 [[ -z "${ZENTTY_NESTED_WAYLAND_RUN_ROOT:-}" ]] || exit 57
+for variable in ZENTTY_INSTANCE_ID ZENTTY_INSTANCE_SOCKET ZENTTY_PANE_ID \
+    ZENTTY_PANE_TOKEN ZENTTY_PANE_CREDENTIAL ZENTTY_WINDOW_ID ZENTTY_WORKLANE_ID \
+    ZENTTY_CLI_BIN ZENTTY_AGENT_EVENT_COMMAND ZENTTY_AGENT_TOOL; do
+    [[ -z "${!variable:-}" ]] || exit 79
+done
 run_root="${XDG_RUNTIME_DIR%/runtime}"
 [[ "${HOME:-}" == "${run_root}/home" ]] || exit 58
 [[ "${XDG_CONFIG_HOME:-}" == "${run_root}/config" ]] || exit 59
@@ -209,6 +214,11 @@ EOF
 chmod +x "${fake_bin}/weston" "${fake_bin}/wayland-info" "${fake_bin}/session-probe"
 export PATH="${fake_bin}:${PATH}"
 export ZENTTY_FAKE_WAYLAND_CAPTURE="${capture_dir}"
+for variable in ZENTTY_INSTANCE_ID ZENTTY_INSTANCE_SOCKET ZENTTY_PANE_ID \
+    ZENTTY_PANE_TOKEN ZENTTY_PANE_CREDENTIAL ZENTTY_WINDOW_ID ZENTTY_WORKLANE_ID \
+    ZENTTY_CLI_BIN ZENTTY_AGENT_EVENT_COMMAND ZENTTY_AGENT_TOOL; do
+    export "${variable}=/poison/parent-pane"
+done
 export DISPLAY=:0
 export WAYLAND_DISPLAY=wayland-0
 export MIR_SOCKET=/poison/mir.sock

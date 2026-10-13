@@ -185,7 +185,7 @@
         "window", "chrome", "body", "sidebar_reservation", "sidebar_hover_rail",
         "sidebar", "sidebar_scroll", "pane_scroll", "pane_box", "background_agent_host",
         "state", "config", "main_loop", "next_worklane_number", "next_pane_number", "shutting_down",
-        "about_window", "pending_close_evidence"
+        "about_window", "pending_close_evidence", "catalog_discovery"
       ]
     },
     {
@@ -202,7 +202,7 @@
     },
     {
       "owner": "pane_runtime_coordinator",
-      "fields": ["pane_runtime", "pending_initial_focus"]
+      "fields": ["pane_runtime", "pending_initial_focus", "pending_pane_reveal"]
     },
     {
       "owner": "server_runtime_coordinator",
@@ -210,7 +210,7 @@
     },
     {
       "owner": "task_runner_coordinator",
-      "fields": ["task_runner_actions"]
+      "fields": ["task_runner_catalog"]
     },
     {
       "owner": "project_context_coordinator",
@@ -238,7 +238,7 @@
     },
     {
       "owner": "persistence_coordinator",
-      "fields": ["restored_pane_commands", "window_template"]
+      "fields": ["restored_pane_commands", "failed_restore_commands", "window_template"]
     },
     {
       "owner": "existing_ui_projection",
@@ -246,7 +246,8 @@
         "preferred_sidebar_width", "adjusting_sidebar_width", "sidebar_motion", "sidebar_reveal_generation",
         "sidebar_visibility", "sidebar_visibility_generation", "peek_phase", "peek_generation",
         "peek_tab_down", "peek_refresh_pending", "peek_view", "command_palette", "restore_notice", "global_search_view", "focus_follow_generation", "last_pane_viewport_height", "last_pane_viewport_width",
-        "pane_drag_source_state", "rendered_columns", "last_vertical_divider", "self_handle"
+        "pane_drag_source_state", "rendered_columns", "last_vertical_divider", "self_handle",
+        "mounted_layouts", "codex_title_animation", "codex_title_animation_tick"
       ]
     },
     {
@@ -259,7 +260,7 @@
       "owner": "attention_coordinator",
       "methods": [
         "request_application_action", "request_latest_attention", "take_window_activation", "activate_attention_target",
-        "refresh_attention_inbox", "reconcile_attention"
+        "refresh_attention_inbox", "reconcile_attention", "contains_attention_target", "attention_target_is_visibly_displayed"
       ]
     },
     {
@@ -294,7 +295,7 @@
         "install_pane_traversal_shortcuts", "install_user_activation_tracking", "install_pane_traversal_key_release",
         "record_terminal_gesture", "install_search_shortcuts", "install_fleet_focus_restoration",
         "perform_focused_binding_action",
-        "activate_pane_control", "report_action_error",
+        "activate_pane_control",
         "refresh_pane_layout_action_availability"
       ]
     },
@@ -312,13 +313,13 @@
         "add_focused_pane_right", "add_focused_pane_left", "split_focused_pane_below",
         "split_focused_pane", "close_focused_pane", "request_close_pane", "close_worklane", "close_pane",
         "restore_closed_pane", "perform_close_worklane", "remove_live_surface", "focus_selected_surface", "handle_pane_pointer_presence", "focus_follow_should_apply",
-        "focus_selected_surface_unchecked", "preserve_initial_terminal_focus", "duplicate_focused_pane"
+        "focus_selected_surface_unchecked", "preserve_initial_terminal_focus", "duplicate_focused_pane", "notify_when_pane_visible"
       ]
     },
     {
       "owner": "agent_event_coordinator",
       "methods": [
-        "mount_background_restored_agents", "agent_restore_drafts", "apply_agent_inputs",
+        "mount_background_restored_panes", "agent_restore_drafts", "apply_agent_event", "finish_agent_inputs",
         "schedule_codex_transcript_enrichment", "sync_agent_targets"
       ]
     },
@@ -328,7 +329,7 @@
     },
     {
       "owner": "existing_tmux_coordinator",
-      "methods": ["forget_tmux_worklanes"]
+      "methods": ["forget_tmux_worklanes", "apply_tmux_input"]
     },
     {
       "owner": "task_runner_coordinator",
@@ -354,7 +355,8 @@
         "handle_peek_tab_released", "open_peek_after_tab_hold", "open_peek", "commit_peek",
         "cancel_peek", "cancel_peek_for_window_event", "refocus_after_peek_key_release", "spatially_navigate_peek", "preview_peek_selection",
         "refresh_peek_view", "schedule_live_peek_refresh", "mount_live_peek_surfaces", "install_pane_scroll_switching", "command_palette_items",
-        "command_palette_server_items", "command_palette_action_items", "install_peek_scroll_navigation", "scroll_panes_to_end",
+        "command_palette_server_items", "command_palette_settings_items", "install_peek_scroll_navigation", "scroll_panes_to_end",
+        "codex_title_animation_is_eligible", "reconcile_codex_title_animation", "ensure_codex_title_animation_tick",
         "scroll_panes_to_focused", "pane_viewport_width", "pane_viewport_height",
         "apply_pane_height_requests", "resolved_column_widths", "focused_column_render_width",
         "build_column_overlay", "new_pane_divider_handle", "new_column_divider_handle",
@@ -372,7 +374,7 @@
     }
   ],
   "owned_module_functions": {
-    "pane_dividers": ["axis", "name", "label", "install_styles", "new_handle", "adjusted_margin"],
+    "pane_dividers": ["install_styles", "new_handle"],
     "action_router": [
       "accepts", "enabled", "install", "uninstall", "refresh_availability",
       "populate", "install_application_actions", "install_edit_actions", "install_worklane_edit_actions",
@@ -382,7 +384,8 @@
       "install_restore_closed_pane_action", "install_clipboard_actions", "install_search_actions", "install_server_actions", "install_task_runner_action", "install_project_context_actions",
       "install_open_with_actions", "install_bookmark_actions", "install_bookmark_pair_actions",
       "install_bookmark_file_actions", "report_bookmark_result", "install_pane_layout_actions",
-      "add_simple_action", "validate_registered_group"
+      "add_simple_action", "validate_registered_group", "ordinary", "ordinary_palette_items", "ordinary_palette_items_for_group",
+      "populate_native_window_actions", "set_enabled", "set_selection_copy_enabled", "validate_palette_items", "validate_palette_items_for_group"
     ],
     "pane_runtime_coordinator": [
       "new", "runtime", "command", "live_children", "surface", "frame", "contains",
@@ -396,13 +399,16 @@
       "connect_surface_notification_callback",
       "make_surface_focus_controller", "surface_focus_event_should_apply",
       "schedule_pending_prefill", "write_prefill_receipt", "create_pane_frame",
-      "handle_child_exit"
+      "handle_child_exit", "cancel_failed_creation", "child_exit_context", "confirm_restored_agent",
+      "connect_surface_interaction_callbacks", "connect_surface_ready_callback", "connect_surface_title_callback",
+      "present_restore_failure", "return_completed_restore_to_shell", "set_controls_bypassed"
     ],
     "agent_event_coordinator": [
       "event_route_decision", "start", "environment_for_pane", "control_credential_for_pane", "opencode_theme_source_path", "opencode_overlay_config_directory", "unregister_pane",
       "set_agent_teams_enabled", "set_agent_integrations", "available_integration_wrappers",
-      "sync_targets", "schedule_for_pane", "shutdown", "apply_inputs",
-      "begin_lifecycle_sweep", "lifecycle_sweep_due", "linux_process_is_alive"
+      "sync_targets", "schedule_for_pane", "shutdown", "apply_event", "apply_tmux", "finish_inputs",
+      "begin_lifecycle_sweep", "lifecycle_sweep_due", "coalesced_event_log_due", "confirm_restored_agent",
+      "log_pane_context_owner", "record", "refresh_project_context"
     ],
     "global_search_coordinator": [
       "install_global_search_callbacks", "global_search_targets", "toggle_global_find", "close_global_find",
@@ -420,25 +426,25 @@
     ],
     "clipboard_coordinator": ["copy_focused_selection"],
     "server_runtime_coordinator": [
-      "discover", "discover_browser_targets", "install", "refresh_servers", "handle_ipc", "register_ipc_server", "clear_ipc_servers",
+      "pending", "discover_browser_targets", "install", "refresh_servers", "handle_ipc", "register_ipc_server", "clear_ipc_servers",
       "open_ipc_server", "server_state_json", "ipc_failure", "now_ms", "refresh_registry_projection", "clear_passive_servers",
       "set_port_ignored", "request_probe", "probe", "apply_servers", "open_server", "open_selected_server", "open_server_in_browser", "select_browser", "launch_url", "launch_browser_plan",
       "stop_server", "pane_probe_source", "stop_owned_server", "signal_process", "normalized_catalog_name", "browser_catalog_names_deduplicate_case_and_desktop_spacing"
     ],
-    "task_runner_coordinator": ["run_task", "launch_in_new_pane"],
+    "task_runner_coordinator": ["run_task", "launch_in_new_pane", "activate_validated", "discover", "focused_source", "source_is_current"],
     "project_context_coordinator": [
       "adaptive_refresh_interval", "apply_context_result", "apply_icon_invalidations", "apply_icon_result", "apply_results", "cancel_watch", "canonical_directories_match", "collect_probe_sources", "focused_context", "forget_pane", "install",
       "launch_validated_url", "mark_pane_for_process_refresh", "mark_pane_for_refresh", "open_focused_branch",
       "open_focused_pull_request", "preserve_review_on_refresh_failure", "probe",
-      "observation_is_current", "process_working_directory", "refresh_focused", "request_probe", "safe_http_url", "sync_watches", "watch_targets"
+      "observation_is_current", "observation_matches", "process_working_directory", "refresh_focused", "request_probe", "safe_http_url", "sync_watches", "watch_targets"
     ],
     "open_with_coordinator": [
-      "discover", "open_primary", "open_local_path_primary", "open_target", "focused_context_is_available",
-      "focused_local_directory", "discover_available_targets", "resolve_executable",
+      "pending", "open_primary", "open_local_path_primary", "open_target", "focused_context_is_available",
+      "focused_context", "local_directory", "discover_available_targets", "resolve_executable",
       "canonical_executable", "launch"
     ],
     "bookmark_coordinator": [
-      "activate", "capture_active_template", "choose_export", "choose_import", "command_is_available",
+      "activate", "apply_restore", "initialize", "choose_export", "choose_import", "command_is_available",
       "convert", "converted_name", "default_bookmark_path", "default_bookmark_path_from", "defer_sidebar_refresh",
       "delete", "duplicate", "edit", "focused_fallback_directory", "live_capture_context", "load_default",
       "mutate_and_refresh", "now_iso8601", "quote_proc_argument", "read_proc_command", "reload", "rename",
@@ -460,14 +466,13 @@
     "settings_navigation": ["back", "can_back", "can_forward", "current", "forward", "matches", "new", "parse", "record"],
     "general_settings": ["aggressiveness_for_selected", "aggressiveness_row", "bool_value", "build", "section_heading", "selected_for_aggressiveness", "set_bool", "settings_group", "update_bool"],
     "theme_catalog": ["parse", "hex", "mixed_hex", "is_dark", "rgb", "repeated_hex", "matches", "discover_themes", "load_directory", "is_eligible_theme_file", "parse_theme", "is_ignored_theme_line", "default_theme_directories"],
-    "notification_service": ["drain_activations", "is_available", "new", "notification_proxy", "open_settings", "preview_sound", "send", "send_attention", "send_pane", "send_with_proxy", "settings_launcher"],
-    "notifications_settings": ["build", "connect_sound_selection", "notification_row", "rebuild_sound_choices", "row_labels", "section_heading", "set_named_child_sensitive", "set_named_sibling_sensitive", "set_row_margins", "sound_row"],
+    "notification_service": ["drain_activations", "is_available", "new", "notification_proxy", "open_settings", "preview_sound", "send", "send_attention", "send_pane", "send_with_proxy", "settings_launcher", "activation_token", "apply_desktop_signal", "contains", "desktop_attention_decision", "enqueue_desktop_signal", "len", "notification_parameters", "remove", "send_terminal", "store_activation_token", "take", "track"],
+    "notifications_settings": ["build", "connect_sound_selection", "notification_row", "rebuild_sound_choices", "row_labels", "section_heading", "set_named_child_sensitive", "set_named_sibling_sensitive", "set_row_margins", "sound_row", "visible_pane_row"],
     "custom_sound_store": ["acquire_lock", "acquire_lock_with_timeout", "copy_source_no_follow", "create_private_directory", "destination_is_missing", "display_name", "drop", "ensure_private_sounds_directory", "finish", "installed_read_limit", "internal_name", "is_custom_name", "lock_wait_remains", "path_for_name", "prepare", "prepare_in_transaction", "probe_duration", "prune", "prune_locked", "rollback", "run_bounded_process", "sounds_directory", "sounds_directory_from", "source_copy_limit", "validate_copied_size", "validate_duration", "validate_installed_size", "validate_source_file", "validate_wav"],
     "persistence_coordinator": [
-      "clean_exit_decision", "complete_launch", "default_state_directory", "drain_errors",
-      "drain_live_snapshot_errors", "drop", "flush_live_snapshot_if_due",
-      "observe_live_snapshot", "persist", "persist_synchronously", "save_clean_exit",
-      "project_restored_workspace", "snapshot_request", "spawn", "start", "synchronize",
+      "clean_exit_decision", "complete_launch", "default_state_directory", "drain_background_errors",
+      "flush_live_snapshot_if_due", "observe_live_snapshot", "save_clean_exit",
+      "project_restored_workspace", "snapshot_request", "snapshot_topology_receipt", "start",
       "validate_window_snapshots", "window_contains_pane"
     ],
     "tmux_runtime_coordinator": [

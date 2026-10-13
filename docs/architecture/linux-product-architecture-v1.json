@@ -11,8 +11,27 @@
     "legacy_sources_removed": true,
     "legacy_matrix_cells_removed": true
   },
-  "ghostty_revision": "bab8c088f45e47a00ce3bfe2c142d6cb51ecd200",
+  "ghostty_revision": "b62d1c57fe7d265ab030fd25c96742e1b11442b8",
   "workspace_crates": [
+    {
+      "name": "tornadotty-test-receipts",
+      "kind": "bounded-observability-library-and-test-driver",
+      "shipped": true,
+      "responsibilities": [
+        "bounded-versioned-product-receipt-types",
+        "private-receipt-writer-and-parser",
+        "non-shipped-external-journey-driver"
+      ],
+      "workspace_dependencies": [],
+      "forbidden_dependency_classes": [
+        "gtk",
+        "ghostty-ffi",
+        "product-ui-state",
+        "agent-credentials",
+        "unbounded-terminal-payloads"
+      ],
+      "unsafe_policy": "forbid"
+    },
     {
       "name": "zentty-api",
       "kind": "transport-neutral-contract-library",
@@ -147,6 +166,7 @@
         "lifecycle-orchestration"
       ],
       "workspace_dependencies": [
+        "tornadotty-test-receipts",
         "zentty-api",
         "zentty-core",
         "zentty-agent-ipc",
@@ -170,6 +190,7 @@
         "product-process-drivers"
       ],
       "workspace_dependencies": [
+        "zentty-agent-ipc",
         "zentty-core",
         "zentty-ghostty",
         "zentty-linux"
@@ -186,11 +207,13 @@
     "zentty-agent-ipc->zentty-core",
     "zentty-agent-ipc->zentty-tmux-compat",
     "zentty-ghostty->zentty-ghostty-sys",
+    "zentty-linux->tornadotty-test-receipts",
     "zentty-linux->zentty-agent-ipc",
     "zentty-linux->zentty-api",
     "zentty-linux->zentty-core",
     "zentty-linux->zentty-ghostty",
     "zentty-linux->zentty-tmux-compat",
+    "zentty-test-support->zentty-agent-ipc",
     "zentty-test-support->zentty-core",
     "zentty-test-support->zentty-ghostty",
     "zentty-test-support->zentty-linux"
@@ -796,7 +819,7 @@
       "optimize": "ReleaseSafe",
       "async_backend": "default",
       "terminals": "multi",
-      "command": "ZENTTY_LINUX_BINARY=build/linux-profiles/release-safe/bin/zentty-linux GDK_BACKEND=x11 linux/tests/rust-workspace-pane-settings",
+      "command": "dbus-run-session -- env ZENTTY_LINUX_BINARY=build/linux-profiles/release-safe/bin/zentty-linux GDK_BACKEND=x11 linux/tests/rust-workspace-pane-settings",
       "authoritative": false
     },
     {
@@ -808,7 +831,7 @@
       "optimize": "ReleaseSafe",
       "async_backend": "default",
       "terminals": "multi",
-      "command": "ZENTTY_LINUX_BINARY=build/linux-profiles/release-safe/bin/zentty-linux GDK_BACKEND=wayland linux/tests/rust-workspace-pane-settings",
+      "command": "dbus-run-session -- env ZENTTY_LINUX_BINARY=build/linux-profiles/release-safe/bin/zentty-linux GDK_BACKEND=wayland linux/tests/rust-workspace-pane-settings",
       "authoritative": false
     },
     {

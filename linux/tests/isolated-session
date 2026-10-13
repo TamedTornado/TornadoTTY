@@ -206,7 +206,12 @@ trap 'signal_exit 129' HUP
 trap 'signal_exit 130' INT
 trap 'signal_exit 143' TERM
 
+# Never let a qualification child route CLI/hooks to its enclosing live pane.
+# Actors that need credentials establish their own after this boundary.
 unset \
+    ZENTTY_INSTANCE_ID ZENTTY_INSTANCE_SOCKET ZENTTY_PANE_ID ZENTTY_PANE_TOKEN \
+    ZENTTY_PANE_CREDENTIAL ZENTTY_WINDOW_ID ZENTTY_WORKLANE_ID \
+    ZENTTY_CLI_BIN ZENTTY_AGENT_EVENT_COMMAND ZENTTY_AGENT_TOOL \
     DISPLAY WAYLAND_DISPLAY WAYLAND_SOCKET MIR_SOCKET \
     XAUTHORITY XAUTHLOCALHOSTNAME GDK_BACKEND XDG_SESSION_TYPE \
     LIBGL_ALWAYS_SOFTWARE \

@@ -45,6 +45,22 @@ run_expect_failure missing-real-edge \
     "Cargo workspace dependency graph differs from architecture contract" \
     "ZENTTY_ARCHITECTURE_CONTRACT=${missing_real_edge}"
 
+missing_receipt_edge="${temp_dir}/missing-receipt-edge.json"
+jq '
+    (.workspace_crates[] | select(.name == "zentty-linux") |
+        .workspace_dependencies) -= ["tornadotty-test-receipts"] |
+    .allowed_workspace_edges -= ["zentty-linux->tornadotty-test-receipts"]
+' "${source_contract}" >"${missing_receipt_edge}"
+run_expect_failure missing-receipt-edge \
+    "Cargo workspace dependency graph differs from architecture contract" \
+    "ZENTTY_ARCHITECTURE_CONTRACT=${missing_receipt_edge}"
+
+unsafe_receipts="${temp_dir}/unsafe-receipts.json"
+jq '(.workspace_crates[] | select(.name == "tornadotty-test-receipts") | .unsafe_policy) = "allow"' \
+    "${source_contract}" >"${unsafe_receipts}"
+run_expect_failure unsafe-receipts "architecture contract invariants failed" \
+    "ZENTTY_ARCHITECTURE_CONTRACT=${unsafe_receipts}"
+
 unsafe_core="${temp_dir}/unsafe-core.json"
 jq '(.workspace_crates[] | select(.name == "zentty-core") | .unsafe_policy) = "allow"' \
     "${source_contract}" >"${unsafe_core}"

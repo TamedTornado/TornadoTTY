@@ -437,7 +437,7 @@ fn main() -> ExitCode {
     match run() {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
-            eprintln!("zentty-linux: {error}");
+            eprintln!("{}: {error}", zentty_core::COMPACT_PRODUCT_NAME);
             ExitCode::FAILURE
         }
     }

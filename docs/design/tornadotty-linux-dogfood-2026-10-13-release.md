@@ -84,3 +84,58 @@
   the explicit old Ghostty checkout rather than changing it; after a clean-tree
   check, it was explicitly advanced to the unchanged release pin
   `b62d1c57fe7d265ab030fd25c96742e1b11442b8` and preparation PASSed.
+
+## Native candidate and interrupted qualification
+
+- Native Omarchy candidate construction and package audit PASS at `c8691074`:
+  `0.1.2+gitc86910746ead-1`, SHA-256
+  `802389c61657ce8466a57bd66edd077452b62fd3c768582017fc765c91cca571`.
+  Real pacman install/upgrade from the verified public 0.1.1 package, installed
+  help, and uninstall PASS in a disposable user namespace. The host pacman
+  database fingerprint was unchanged. This is a candidate receipt, not the
+  final tagged 0.1.2 artifact or a host installation.
+- The first authoritative local run started at 19:23 CEST. The pinned Ghostty
+  regression PASS took 1,038,770 ms (about 17 minutes). Debug and ReleaseSafe
+  integrated builds, hardening, and ABI checks PASSed. The run was deliberately
+  interrupted after discovering inherited parent-pane routing variables in the
+  supposedly private test environments; see [#207](https://github.com/TamedTornado/TornadoTTY/issues/207).
+  Preserved per-cell receipts contain 80 PASS, 16 FAIL, 2 XFAIL, one
+  missing/invalid Valgrind report, and one dependency-blocked cell. This is an
+  **incomplete, failed run**, not qualification of all 231 declared cells.
+  Receipts, including paired raw/suppressed logs, remain under
+  `build/release-v0.1.2-evidence/first-run/`.
+- The architecture and engine API audit inventories had not followed existing
+  changes: the typed-receipt crate (#148), bounded ingress ownership, extracted
+  helpers, the five already pinned Ghostty fixes, and two private-bus command
+  mirrors. Reconciled those concrete owners/edges/callsites; no new architecture
+  or qualification-status changes. Architecture positive/negative checks and
+  the 25-file/14-export engine audit plus negative tests PASS.
+- The public invalid-option path still printed `zentty-linux` while its public
+  contract expected TornadoTTY. Reproduced in the staged binary, corrected the
+  top-level diagnostic using the existing branding constant, rebuilt with
+  `build-local`, and the real no-desktop CLI journey PASSed. Strict all-target
+  Clippy remains PASS.
+- The stopped run also exposed X11 class lookup, stale visual baselines, missing
+  private-bus setup, IME, installed-CLI, and Valgrind failures. These remain
+  unresolved unless a later focused receipt explicitly supersedes them. In
+  particular, Debug X11 multi-pane Valgrind returned 99 with unsuppressed
+  llvmpipe worker undefined-value contexts; no suppression was broadened.
+
+## Parent-pane isolation repair (#207)
+
+- Each of the existing no-display, X11, and Wayland wrappers now discards the
+  enclosing instance/socket, pane token/credential and identity, window/worklane
+  identity, CLI path, and hook command/tool before child setup. A test actor may
+  establish its own explicit context after that boundary; private HOME/XDG alone
+  is not treated as protection against an inherited explicit socket.
+- Added poisoned-parent assertions to all three existing wrapper regressions.
+  All FAILed before repair (64/79/79) and all PASS after repair, including their
+  existing process-group cleanup tests. The previously failing real X11
+  keyboard-repeat/PTY journey now PASSes with unchanged behavior assertions.
+  Receipts: `/tmp/tornadotty-v012-*-isolation.log` and
+  `/tmp/tornadotty-v012-*-test-{red,green}.log`.
+- ShellCheck warning/error severity PASS. Its informational SC2317 diagnostics
+  on pre-existing indirectly invoked cleanup traps remain; no blanket allowance
+  was added. The identified release-runner process group and owned private
+  sessions were stopped and confirmed absent. No client restart or installation
+  was performed. No release/tag has been published.

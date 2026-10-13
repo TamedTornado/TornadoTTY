@@ -100,7 +100,7 @@ jq '(.owned_module_functions.pane_runtime_coordinator) |= map(select(. != "remov
 expect_failure missing-pane-runtime-function "pane runtime function inventory differs" \
     "ZENTTY_APPLICATION_SHELL_OWNERSHIP_CONTRACT=${temp_dir}/missing-pane-runtime-function.json"
 
-jq '(.owned_module_functions.agent_event_coordinator) |= map(select(. != "apply_inputs"))' \
+jq '(.owned_module_functions.agent_event_coordinator) |= map(select(. != "apply_event"))' \
     "${contract}" >"${temp_dir}/missing-agent-event-function.json"
 expect_failure missing-agent-event-function "agent event coordinator function inventory differs" \
     "ZENTTY_APPLICATION_SHELL_OWNERSHIP_CONTRACT=${temp_dir}/missing-agent-event-function.json"
@@ -155,12 +155,12 @@ sed '/runtime: GhosttyRuntime,/a\    shadow_runtime: GhosttyRuntime,' \
 expect_failure shadow-application-runtime "Ghostty runtime authority" \
     "ZENTTY_APPLICATION_COORDINATOR_SOURCE=${temp_dir}/shadow-application-runtime.rs"
 
-sed '/receiver: mpsc::Receiver<AuthenticatedAgentEvent>,/a\    shadow_receiver: mpsc::Receiver<AuthenticatedAgentEvent>,' \
+sed '/receiver: IngressReceiver<AuthenticatedAgentEvent>,/a\    shadow_receiver: IngressReceiver<AuthenticatedAgentEvent>,' \
     "${agent_runtime_file}" >"${temp_dir}/shadow-agent-transport.rs"
 expect_failure shadow-agent-transport "authenticated agent transport authority" \
     "ZENTTY_AGENT_RUNTIME_SOURCE=${temp_dir}/shadow-agent-transport.rs"
 
-sed '/product_receiver: mpsc::Receiver<AuthenticatedProductRequest>,/a\    shadow_product_receiver: mpsc::Receiver<AuthenticatedProductRequest>,' \
+sed '/product_receiver: IngressReceiver<AuthenticatedProductRequest>,/a\    shadow_product_receiver: IngressReceiver<AuthenticatedProductRequest>,' \
     "${agent_runtime_file}" >"${temp_dir}/shadow-product-transport.rs"
 expect_failure shadow-product-transport "authenticated CLI product transport authority" \
     "ZENTTY_AGENT_RUNTIME_SOURCE=${temp_dir}/shadow-product-transport.rs"
