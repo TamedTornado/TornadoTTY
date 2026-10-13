@@ -76,6 +76,30 @@ if kill -0 "${daemon_pid}" 2>/dev/null; then
     fail "wrapper leaked its owned fcitx daemon"
 fi
 
+# The display wrapper owns process cleanup and document-portal FUSE mounts.
+# The IM wrapper must not escape that group or introduce another runtime root.
+cat >"${fake_bin}/xdpyinfo" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+chmod 0755 "${fake_bin}/xdpyinfo"
+mkdir -p "${run_root}/runtime"
+expected_group="$(ps -o pgid= -p "$$" | tr -d ' ')"
+# shellcheck disable=SC2016
+PATH="${fake_bin}:${PATH}" \
+ZENTTY_FAKE_FCITX_PID_FILE="${daemon_pid_file}" \
+ZENTTY_NESTED_X11_SESSION_ID="${session_id}" \
+ZENTTY_FCITX_EXPECTED_RUNTIME="${run_root}/runtime" \
+ZENTTY_FCITX_EXPECTED_GROUP="${expected_group}" \
+XDG_RUNTIME_DIR="${run_root}/runtime" GDK_BACKEND=x11 \
+    "${wrapper}" bash -ceu '
+        [[ "${XDG_RUNTIME_DIR}" == "${ZENTTY_FCITX_EXPECTED_RUNTIME}" ]]
+        [[ "$(ps -o pgid= -p "$$" | tr -d " ")" == "${ZENTTY_FCITX_EXPECTED_GROUP}" ]]
+        echo controlled-fcitx-outer-ownership: PASS
+    ' >"${output}" 2>&1 || fail "private display runtime/group ownership was not preserved"
+grep -Fxq 'controlled-fcitx-outer-ownership: PASS' "${output}" ||
+    fail "outer ownership regression did not execute"
+
 set +e
 env -u ZENTTY_NESTED_X11_SESSION_ID -u ZENTTY_NESTED_WAYLAND_INPUT_SESSION_ID \
     GDK_BACKEND=x11 "${wrapper}" true >"${output}" 2>&1

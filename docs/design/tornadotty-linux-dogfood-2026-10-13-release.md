@@ -167,3 +167,35 @@
   unresolved. Jason has been asked whether to hold this release for repairs or
   explicitly publish an unsigned prerelease with those failures disclosed;
   nothing is published while that risk decision is pending.
+
+## Requested bug repairs: IME focus lifetime (#209)
+
+- Jason chose to fix the bugs rather than publish with the failures. Release
+  remains held; the earlier risk question is no longer pending.
+- The pinned Fcitx GTK adapter can emit commits from reset/focus-out paths.
+  Ghostty guarded synchronous reset only; it still accepted a commit once the
+  owning surface had lost focus. The minimal engine repair rejects commits from
+  an unfocused surface. No sleeps, retries, byte-assertion changes, or new engine
+  API. The final patch is [Ghostty `d21021ad6`](https://github.com/TamedTornado/ghostty/commit/d21021ad6a9956f04bb53d91ece1c1ac4abc6bfa),
+  pinned here with reconciled architecture/API audit identities.
+- Both Fcitx and IBus exact-byte composition, focus transfer, and active-preedit
+  destruction journeys PASS on X11 and Wayland with the final engine behavior.
+  A concurrent Fcitx run first completed its product assertions but FAILed during
+  cleanup: the extra IM wrapper session owned a document-portal FUSE mount that
+  its plain directory removal could not clean. The existing display wrapper is
+  now kept as the runtime-directory and process-group owner; Fcitx still gets a
+  separate bus and private configuration. Added a failing ownership regression,
+  then PASSed it and both real Fcitx journeys after repair. The failed cleanup
+  receipt is retained, not called a successful full invocation.
+- Final receipts: `/tmp/tornadotty-gh209-final-owned-{x11,wayland}.log`,
+  `/tmp/tornadotty-gh209-final-ibus-{x11,wayland}.log`, and
+  `/tmp/tornadotty-gh209-wrapper-{red,green}.log`. Zig format, script ShellCheck
+  warning/error severity, architecture, and exact pinned API audit checks PASS.
+- #210 is not fixed by these changes. The first origin-tracked paired diagnostic
+  did not reproduce the llvmpipe worker contexts; its suppressed phase exceeded
+  the unchanged 300-second qualification cap, so no passing report was published.
+  A separate diagnostic-only poisoned-heap run with matching Ubuntu Mesa symbols
+  completed with zero post-suppression errors. That does not invalidate the
+  original finding or establish a repair. Original, raw, suppressed, and
+  diagnostic receipts remain preserved; all four suppression-file hashes remain
+  unchanged. Debug symbols/tools were extracted under `/tmp`, not installed.

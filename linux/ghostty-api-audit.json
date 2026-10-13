@@ -17,9 +17,9 @@
     "official_repository": "https://github.com/ghostty-org/ghostty.git",
     "fork_repository": "https://github.com/TamedTornado/ghostty.git",
     "official_base": "6dcf68fc0b12e8caebbfc43770d66edac124b4f8",
-    "candidate_branch": "zentty/gh171-session-bus",
-    "head": "b62d1c57fe7d265ab030fd25c96742e1b11442b8",
-    "downstream_commit_count": 40
+    "candidate_branch": "zentty/gh209-ime-focus",
+    "head": "d21021ad6a9956f04bb53d91ece1c1ac4abc6bfa",
+    "downstream_commit_count": 41
   },
   "patch_series": [
     {
@@ -91,6 +91,13 @@
       "last": "b62d1c57fe7d265ab030fd25c96742e1b11442b8",
       "purpose": "Capture one bounded native Wayland error record before GDK exits, without terminal or protocol payloads (TornadoTTY #190).",
       "upstream_disposition": "diagnostic retained downstream; does not claim display-loss containment"
+    },
+    {
+      "id": "unfocused-ime-commit",
+      "first": "d21021ad6a9956f04bb53d91ece1c1ac4abc6bfa",
+      "last": "d21021ad6a9956f04bb53d91ece1c1ac4abc6bfa",
+      "purpose": "Reject stale input-method commits after the owning surface loses focus (TornadoTTY #209); exact-byte Fcitx and IBus focus journeys cover X11 and Wayland.",
+      "upstream_disposition": "generic GTK fix retained downstream; upstream interaction requires separate operator approval"
     }
   ],
   "changed_files": [

@@ -108,7 +108,7 @@ fi
 }
 for dependency in \
     awk busctl cat dbus-run-session fcitx5 fcitx5-remote grep kill mkdir \
-    mktemp readlink rm sed setsid sha256sum sleep; do
+    mktemp readlink rm sed sha256sum sleep; do
     command -v "${dependency}" >/dev/null 2>&1 || {
         echo "controlled-fcitx: SKIP missing runtime dependency: ${dependency}" >&2
         exit 77
@@ -156,7 +156,7 @@ trap 'exit 130' INT
 trap 'exit 143' TERM
 mkdir -p \
     "${run_root}/home" "${run_root}/config" "${run_root}/cache" \
-    "${run_root}/data" "${run_root}/state" "${run_root}/runtime" \
+    "${run_root}/data" "${run_root}/state" \
     "${run_root}/tmp"
 chmod 700 "${run_root}" "${run_root}"/*
 
@@ -169,7 +169,9 @@ export XDG_CONFIG_HOME="${run_root}/config"
 export XDG_CACHE_HOME="${run_root}/cache"
 export XDG_DATA_HOME="${run_root}/data"
 export XDG_STATE_HOME="${run_root}/state"
-export XDG_RUNTIME_DIR="${run_root}/runtime"
+# The validated display wrapper owns this private runtime and its document
+# portal mounts. Replacing it would create a FUSE mount our cleanup cannot own.
+: "${XDG_RUNTIME_DIR:?controlled display runtime is required}"
 export TMPDIR="${run_root}/tmp"
 export GSETTINGS_BACKEND=memory
 export GIO_USE_VFS=local
@@ -186,7 +188,9 @@ export XDG_SESSION_DESKTOP=zentty-test
 export DESKTOP_SESSION=zentty-test
 
 set +e
-setsid dbus-run-session -- \
+# Keep activated portal children in the display wrapper's owned process group.
+# The session bus is private without detaching into an untracked session.
+dbus-run-session -- \
     env ZENTTY_CONTROLLED_FCITX_RUN_ROOT="${run_root}" \
     ZENTTY_CONTROLLED_FCITX_PENDING_SESSION_ID="${session_id}" \
     "${BASH_SOURCE[0]}" --private-bus-inner "$@"
