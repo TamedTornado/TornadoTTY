@@ -139,3 +139,31 @@
   was added. The identified release-runner process group and owned private
   sessions were stopped and confirmed absent. No client restart or installation
   was performed. No release/tag has been published.
+
+## Focused native identity and private-bus repairs
+
+- [#208](https://github.com/TamedTornado/TornadoTTY/issues/208): the private X11
+  scaling regression exposed zero matching windows. Its native `xprop` diagnosis
+  confirmed the host instance name but Ghostty's display-wide class. The existing
+  host-identity adapter now sets the X11 display class before host windows are
+  created, via a private type-checked GTK FFI helper. Wayland remains a no-op;
+  no new dependency, engine export, or engine revision is introduced. Existing
+  X11 scaling (96/192 DPI, two real PTYs), representative multi-pane external
+  resize, and Wayland GTK/Ghostty/PTY smoke all PASS after repair. The original
+  exact class selector is preserved, not replaced with a looser lookup.
+- The full agent IPC journey had gained a controlled notification daemon but
+  not its private-bus prerequisite. It now follows the existing session-restore
+  fixture pattern and re-execs under `dbus-run-session` after validating the
+  private display boundary, before starting any product or daemon. The existing
+  real Codex review-routing journey PASSes without an externally supplied bus.
+- Focused strict all-target Clippy for the affected crates, workspace rustfmt,
+  diff checks, and ShellCheck warning/error severity PASS. Receipts:
+  `/tmp/tornadotty-v012-x11-class-{scaling,resize,wayland,clippy-green}.log`
+  and `/tmp/tornadotty-v012-codex-private-bus.log`.
+- Fcitx remains FAIL after those repairs: initial exact preedit/Backspace and
+  pane-1 plain input pass, but pane 2 receives `a日` rather than `日` after focus
+  returns. This is a reproducible failure, not classified away as environment
+  noise. The unsuppressed Debug X11 multi-pane Valgrind finding also remains
+  unresolved. Jason has been asked whether to hold this release for repairs or
+  explicitly publish an unsigned prerelease with those failures disclosed;
+  nothing is published while that risk decision is pending.

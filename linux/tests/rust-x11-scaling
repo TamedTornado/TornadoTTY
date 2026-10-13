@@ -14,6 +14,13 @@ source "${repo_root}/linux/tests/lib/product-bundle"
 
 fail() {
     local message="$*"
+    # Only inspect windows in this journey's private X server. Keep native
+    # identity visible when registration changes defeat the window lookup.
+    if command -v xprop >/dev/null; then
+        while IFS= read -r window; do
+            xprop -id "${window}" WM_CLASS _NET_WM_PID 2>/dev/null || true
+        done < <(xdotool search --onlyvisible --pid "${product_pid}" 2>/dev/null || true)
+    fi
     for candidate in "${run_root}"/*.product.log "${run_root}"/*.settings.log; do
         [[ ! -f "${candidate}" ]] || { echo "--- ${candidate}" >&2; cat "${candidate}" >&2; }
     done

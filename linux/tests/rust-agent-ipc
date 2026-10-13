@@ -112,6 +112,14 @@ case "${backend}" in
         ;;
     *) fail "GDK_BACKEND must be x11 or wayland" ;;
 esac
+# Full integration includes a controlled notification service. The display
+# wrappers intentionally discard the enclosing desktop bus, so create the
+# journey's own bus before any product/daemon is started.
+if [[ "${scenario}" == full || "${scenario}" == codex-review-routing ]] &&
+    [[ -z "${DBUS_SESSION_BUS_ADDRESS:-}" ]]; then
+    command -v dbus-run-session >/dev/null || fail "dbus-run-session is required"
+    exec dbus-run-session -- "$0" "$@"
+fi
 case "${ZENTTY_REQUIRE_REAL_GEMINI:-false}" in
     true)
         [[ -n "${ZENTTY_REAL_GEMINI_BIN:-}" ]] ||

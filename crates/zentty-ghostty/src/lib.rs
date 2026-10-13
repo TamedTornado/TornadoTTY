@@ -1,5 +1,7 @@
 #![deny(unsafe_op_in_unsafe_fn)]
 
+mod x11_identity;
+
 use gtk::glib;
 use gtk::prelude::*;
 use std::cell::RefCell;
@@ -256,6 +258,7 @@ impl GhosttyRuntime {
         application.set_application_id(Some(application_id));
         glib::set_prgname(Some(program_name));
         glib::set_application_name(application_name);
+        x11_identity::set_program_class(application_id);
         Ok(())
     }
 
