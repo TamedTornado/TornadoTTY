@@ -19,7 +19,7 @@ fn servers() -> Vec<RankedServer> {
             },
             tier: ServerRelevanceTier::Primary,
             score: 1,
-            reasons: Default::default(),
+            reasons: std::collections::BTreeSet::default(),
         })
         .collect()
 }

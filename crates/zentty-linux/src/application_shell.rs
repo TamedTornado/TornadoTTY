@@ -62,10 +62,10 @@ mod project_context_runtime;
 mod remote_paste;
 pub(crate) mod server_runtime;
 mod shell_signal;
-#[cfg(test)]
-mod sidebar_geometry_tests;
 pub(crate) mod shortcut_registry;
 pub(crate) mod shortcut_runtime;
+#[cfg(test)]
+mod sidebar_geometry_tests;
 mod signal_arguments;
 mod ssh_identity;
 mod task_runner_runtime;
@@ -867,8 +867,8 @@ impl ApplicationShell {
             bounds.y(),
             bounds.width(),
             bounds.height(),
-            self.pane_scroll.width() as f32,
-            self.pane_scroll.height() as f32,
+            f64::from(self.pane_scroll.width()),
+            f64::from(self.pane_scroll.height()),
         )
     }
 
@@ -3423,7 +3423,7 @@ impl ApplicationShell {
         let adjustment = self.pane_scroll.hadjustment();
         let weak = self.self_handle.borrow().clone();
         let requested_lane = self.state.active_worklane_id().to_owned();
-        let requested_pane = self.state.focused_pane_id().map(str::to_owned);
+        let focused_target = self.state.focused_pane_id().map(str::to_owned);
         let source = glib::timeout_add_local_once(Duration::from_millis(50), move || {
             let Some(shell) = weak.upgrade() else {
                 return;
@@ -3433,7 +3433,7 @@ impl ApplicationShell {
             // A sidebar selection may have already revealed another pane.
             // Do not move its viewport back to an obsolete layout request.
             if shell.state.active_worklane_id() != requested_lane
-                || shell.state.focused_pane_id() != requested_pane.as_deref()
+                || shell.state.focused_pane_id() != focused_target.as_deref()
             {
                 return;
             }
@@ -3863,9 +3863,7 @@ impl ApplicationShell {
             let summaries = shell.sidebar_summaries();
             let sidebar_rendered =
                 sidebar::update_codex_activity_titles(&shell.sidebar, &summaries, &titles);
-            let chrome_rendered = shell
-                .chrome
-                .render_codex_activity_titles(&summaries, &titles);
+            let chrome_rendered = WindowChrome::render_codex_activity_titles(&summaries, &titles);
             if std::env::var_os("ZENTTY_LOG_ANIMATION_FRAMES").is_some() {
                 eprintln!(
                     "zentty-linux: codex-title-animation-render sidebar={sidebar_rendered} focused-chrome={chrome_rendered}"
@@ -3977,10 +3975,9 @@ impl ApplicationShell {
         drop(mounted);
         // Drag payload generation can change without a topology change.
         for pane in self.state.active_pane_ids() {
-            if let (Some(frame), Some(payload)) = (
-                self.pane_runtime.frame(&pane),
-                self.pane_drag_payload(&pane),
-            ) {
+            if let (Some(frame), Some(payload)) =
+                (self.pane_runtime.frame(pane), self.pane_drag_payload(pane))
+            {
                 frame.install_drag_source(&payload);
             }
         }
@@ -3994,9 +3991,13 @@ impl ApplicationShell {
         if total >= Duration::from_millis(50) {
             eprintln!(
                 "tornadotty: slow-worklane-render lane={} sidebar-ms={} presentation-ms={} layout-ms={} total-ms={}",
-                self.state.active_worklane_id(), sidebar_elapsed.as_millis(),
-                presentation_elapsed.saturating_sub(sidebar_elapsed).as_millis(),
-                total.saturating_sub(presentation_elapsed).as_millis(), total.as_millis()
+                self.state.active_worklane_id(),
+                sidebar_elapsed.as_millis(),
+                presentation_elapsed
+                    .saturating_sub(sidebar_elapsed)
+                    .as_millis(),
+                total.saturating_sub(presentation_elapsed).as_millis(),
+                total.as_millis()
             );
         }
     }
@@ -4698,10 +4699,12 @@ impl ApplicationShell {
         if total >= Duration::from_millis(50) {
             eprintln!(
                 "tornadotty: slow-worklane-chrome lane={} chrome-ms={} servers-ms={} context-ms={} attention-ms={} total-ms={}",
-                self.state.active_worklane_id(), chrome_elapsed.as_millis(),
+                self.state.active_worklane_id(),
+                chrome_elapsed.as_millis(),
                 servers_elapsed.saturating_sub(chrome_elapsed).as_millis(),
                 context_elapsed.saturating_sub(servers_elapsed).as_millis(),
-                total.saturating_sub(context_elapsed).as_millis(), total.as_millis()
+                total.saturating_sub(context_elapsed).as_millis(),
+                total.as_millis()
             );
         }
     }
@@ -5721,15 +5724,15 @@ fn pane_rectangle_intersects_viewport(
     y: f32,
     width: f32,
     height: f32,
-    viewport_width: f32,
-    viewport_height: f32,
+    viewport_width: f64,
+    viewport_height: f64,
 ) -> bool {
     width > 0.0
         && height > 0.0
         && viewport_width > 0.0
         && viewport_height > 0.0
-        && x < viewport_width
-        && y < viewport_height
+        && f64::from(x) < viewport_width
+        && f64::from(y) < viewport_height
         && x + width > 0.0
         && y + height > 0.0
 }
@@ -6059,7 +6062,7 @@ mod allocation_tests {
             state.worklanes()[0]
                 .columns
                 .iter()
-                .all(|column| column.width == 810.0)
+                .all(|column| column.width.total_cmp(&810.0).is_eq())
         );
         // A subsequent intentional resize must still scale inactive columns.
         assert!(reconcile_model_pane_widths(
@@ -6074,7 +6077,7 @@ mod allocation_tests {
             state.worklanes()[0]
                 .columns
                 .iter()
-                .all(|column| column.width == 900.0)
+                .all(|column| column.width.total_cmp(&900.0).is_eq())
         );
         assert_eq!(state.active_columns().len(), 1);
     }

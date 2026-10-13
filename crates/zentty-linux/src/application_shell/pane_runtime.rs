@@ -600,6 +600,18 @@ impl PaneRuntimeCoordinator {
         pane_id: &str,
         surface: &GhosttySurface,
     ) {
+        Self::connect_surface_ready_callback(shell, pane_id, surface);
+        Self::connect_surface_title_callback(shell, pane_id, surface);
+        Self::connect_surface_progress_callback(shell, pane_id, surface);
+        Self::connect_surface_notification_callback(shell, pane_id, surface);
+        Self::connect_surface_interaction_callbacks(shell, pane_id, surface);
+    }
+
+    fn connect_surface_ready_callback(
+        shell: &Rc<RefCell<ApplicationShell>>,
+        pane_id: &str,
+        surface: &GhosttySurface,
+    ) {
         let ready_id = pane_id.to_owned();
         let weak = Rc::downgrade(shell);
         surface.on_initialized(move || {
@@ -640,6 +652,13 @@ impl PaneRuntimeCoordinator {
                 }
             });
         });
+    }
+
+    fn connect_surface_title_callback(
+        shell: &Rc<RefCell<ApplicationShell>>,
+        pane_id: &str,
+        surface: &GhosttySurface,
+    ) {
         let title_id = pane_id.to_owned();
         let weak = Rc::downgrade(shell);
         let title_gate = Rc::new(RefCell::new(
@@ -689,8 +708,13 @@ impl PaneRuntimeCoordinator {
                 }
             });
         });
-        Self::connect_surface_progress_callback(shell, pane_id, surface);
-        Self::connect_surface_notification_callback(shell, pane_id, surface);
+    }
+
+    fn connect_surface_interaction_callbacks(
+        shell: &Rc<RefCell<ApplicationShell>>,
+        pane_id: &str,
+        surface: &GhosttySurface,
+    ) {
         let context_menu = super::terminal_context_menu::install(surface).map_err(|error| {
             eprintln!(
                 "zentty-linux: terminal-context-menu pane={pane_id} error=model-install-failed detail={error}"
@@ -834,7 +858,10 @@ impl PaneRuntimeCoordinator {
                 }
                 // Managed agents own attention policy (including duplicate and
                 // automatic-approval suppression). Raw OSC must not bypass it.
-                if shell.state.terminal_notifications_use_agent_policy(&notification_id) {
+                if shell
+                    .state
+                    .terminal_notifications_use_agent_policy(&notification_id)
+                {
                     return;
                 }
                 if let Some(worklane_id) = shell.state.worklane_id_for_pane(&notification_id)

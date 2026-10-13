@@ -33,13 +33,13 @@ fn populated_sidebar_does_not_cover_terminal_at_minimum_width() {
         &widgets.sidebar,
         &widgets.window,
         &summaries,
-        Default::default(),
+        zentty_core::ClipboardConfig::default(),
         &[],
         &[],
         None,
         "window",
         None,
-        Default::default(),
+        zentty_core::SidebarSelectionEmphasis::default(),
         None,
     );
     let _search = GlobalSearchView::attach(&widgets.sidebar);

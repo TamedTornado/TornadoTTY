@@ -1,5 +1,10 @@
 //! Invoked by the user manager, not a GTK callback. The inherited descriptor
 //! refers to a kernel process identity, so PID reuse cannot extend its lease.
+/// Wait until the GUI process referenced by standard input exits.
+///
+/// # Errors
+/// Returns an error if standard input is not a readable pidfd, descriptor
+/// inspection fails, or the kernel wait fails for a reason other than interruption.
 pub fn wait_for_gui_exit() -> Result<(), String> {
     let info = std::fs::read_to_string("/proc/self/fdinfo/0")
         .map_err(|error| format!("cannot inspect owner pidfd: {error}"))?;

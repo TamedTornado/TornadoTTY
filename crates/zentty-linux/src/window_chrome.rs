@@ -512,7 +512,6 @@ impl WindowChrome {
     }
 
     pub(crate) fn render_codex_activity_titles(
-        &self,
         _summaries: &[SidebarWorklaneSummary],
         _titles: &BTreeMap<String, String>,
     ) -> bool {

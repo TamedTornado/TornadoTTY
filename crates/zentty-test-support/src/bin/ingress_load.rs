@@ -12,24 +12,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let root = PathBuf::from(std::env::var("ZENTTY_LOAD_DIRECTORY")?);
     let helper = std::env::var("ZENTTY_CLI_BIN")?;
     if std::env::var("ZENTTY_PANE_ID")? != "pane-1" {
-        fs::write(root.join("quiet-ready"), b"ready")?;
-        for line in std::io::stdin().lock().lines() {
-            let line = line?;
-            let result = Command::new(&helper)
-                .args(["list", "panes", "--json"])
-                .output()?;
-            if !result.status.success() {
-                return Err("quiet pane IPC failed".into());
-            }
-            writeln!(
-                OpenOptions::new()
-                    .create(true)
-                    .append(true)
-                    .open(root.join("probes"))?,
-                "{line}"
-            )?;
-        }
-        return Ok(());
+        return serve_quiet_pane(&root, &helper);
     }
     if !Command::new(&helper)
         .args(["split", "right", "--equal"])
@@ -69,7 +52,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     match AgentIpcClient::send_event(&socket, &token, &event, None) {
                         Ok(()) => accepted += 1,
                         Err(AgentIpcError::Remote { code, .. }) if code == "ingress_full" => {
-                            rejected += 1
+                            rejected += 1;
                         }
                         Err(error) => return Err(error.to_string()),
                     }
@@ -129,6 +112,27 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         ),
     )?;
     wait_for(&root.join("finish"))?;
+    Ok(())
+}
+
+fn serve_quiet_pane(root: &Path, helper: &str) -> Result<(), Box<dyn std::error::Error>> {
+    fs::write(root.join("quiet-ready"), b"ready")?;
+    for line in std::io::stdin().lock().lines() {
+        let line = line?;
+        let result = Command::new(helper)
+            .args(["list", "panes", "--json"])
+            .output()?;
+        if !result.status.success() {
+            return Err("quiet pane IPC failed".into());
+        }
+        writeln!(
+            OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(root.join("probes"))?,
+            "{line}"
+        )?;
+    }
     Ok(())
 }
 

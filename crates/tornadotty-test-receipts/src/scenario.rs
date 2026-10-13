@@ -1,8 +1,8 @@
 //! Named real-product scenarios owned by the single journey driver.
 
 mod layout_restore;
-mod pane_control_bypass;
 mod notification_settings;
+mod pane_control_bypass;
 
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Write};
@@ -410,7 +410,8 @@ fn run_divider_layout(
         .spawn()
         .map_err(|error| format!("could not start product supervisor: {error}"))?;
 
-    let observation = if std::env::var("TORNADOTTY_LAYOUT_CONTROL_BYPASS").as_deref() == Ok("true") {
+    let observation = if std::env::var("TORNADOTTY_LAYOUT_CONTROL_BYPASS").as_deref() == Ok("true")
+    {
         pane_control_bypass::observe(&driver, &session, &receipt, backend, root)
     } else if restore_widths {
         layout_restore::observe(&driver, &session, &receipt, backend, root)
@@ -446,12 +447,11 @@ fn run_divider_layout(
     scenario_result
 }
 
-fn observe_divider_layout(
+fn prepare_divider_observation(
     driver: &Path,
     session: &Path,
     receipt: &Path,
     backend: Backend,
-    root: &Path,
 ) -> Result<(), String> {
     driver_success(
         driver,
@@ -476,7 +476,17 @@ fn observe_divider_layout(
             &["10000", "1", "window-geometry", "window-1", "1024", "768"],
         )?;
     }
-    focus_input_target(driver, session, backend)?;
+    focus_input_target(driver, session, backend)
+}
+
+fn observe_divider_layout(
+    driver: &Path,
+    session: &Path,
+    receipt: &Path,
+    backend: Backend,
+    root: &Path,
+) -> Result<(), String> {
+    prepare_divider_observation(driver, session, receipt, backend)?;
     let initial = layout_geometry(driver, session, backend, root, "pane-1", "initial")?;
     send_input_key(driver, session, backend, "ctrl+shift+d")?;
     driver_success(

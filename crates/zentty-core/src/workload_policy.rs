@@ -39,6 +39,11 @@ pub struct WorkloadBudgets {
 }
 
 impl WorkloadPolicy {
+    /// Validate percentage ordering, aggregate containment, and scheduler weights.
+    ///
+    /// # Errors
+    /// Returns an error for invalid percentages, pane budgets exceeding the
+    /// aggregate, or CPU/I/O weights outside systemd's supported range.
     pub fn validated(self) -> Result<Self, String> {
         for (name, high, max) in [
             (
@@ -72,6 +77,9 @@ impl WorkloadPolicy {
     /// Pass physical RAM capped by any tighter ancestor cgroup memory limit.
     /// Do not use currently free memory: identical settings must not fluctuate
     /// with the workload running at the moment a new pane opens.
+    ///
+    /// # Errors
+    /// Returns an error if the policy is invalid or capacity is less than 100 bytes.
     pub fn budgets(self, available_bytes: u64) -> Result<WorkloadBudgets, String> {
         self.validated()?;
         if available_bytes < 100 {

@@ -500,10 +500,8 @@ pub(crate) fn project_worklane_order(sidebar: &gtk::Box, order: &[String]) -> bo
     let mut previous = find_named_widget(sidebar.upcast_ref(), global_search_view::ROW_NAME)
         .unwrap_or_else(|| header.upcast());
     for id in order {
-        let Some(card) = find_named_widget(
-            sidebar.upcast_ref(),
-            &widget_name("worklane-card", id),
-        ) else {
+        let Some(card) = find_named_widget(sidebar.upcast_ref(), &widget_name("worklane-card", id))
+        else {
             return false;
         };
         sidebar.reorder_child_after(&card, Some(&previous));

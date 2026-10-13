@@ -1,7 +1,6 @@
 #![forbid(unsafe_code)]
 
 mod about_catalog;
-mod worker_budget;
 mod about_view;
 mod activity_title;
 mod agent_fleet;
@@ -60,13 +59,14 @@ mod ui_diagnostics;
 mod updates_privacy_settings;
 mod window_chrome;
 mod window_set;
+mod worker_budget;
 mod worklane_peek;
 mod workspace_pane_settings;
 
 use application::ApplicationCoordinator;
 use config_store::ConfigStore;
 use gtk::glib;
-use persistence_coordinator::{PersistenceCoordinator, WindowSnapshot, default_state_directory};
+use persistence_coordinator::{LaunchProjection, PersistenceCoordinator, default_state_directory};
 use std::cell::{Cell, RefCell};
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -186,8 +186,7 @@ fn run_lifecycle_cycle(
     runtime: &GhosttyRuntime,
     desktop: &desktop_activation::DesktopActivation,
     options: &Options,
-    restored_windows: Vec<WindowSnapshot>,
-    active_window_id: Option<&str>,
+    launch: LaunchProjection,
     persistence: &Rc<RefCell<PersistenceCoordinator>>,
     default_working_directory: &str,
     config: &config_store::ConfigSnapshot,
@@ -198,8 +197,8 @@ fn run_lifecycle_cycle(
         desktop.application(),
         options.command.clone(),
         &main_loop,
-        restored_windows,
-        active_window_id,
+        launch.windows,
+        launch.active_window_id.as_deref(),
         config,
     )?;
     desktop.bind(&application);
@@ -236,9 +235,7 @@ fn run_lifecycle_cycle(
         teardown_active,
     );
 
-    if let Err(error) = persistence.borrow_mut().complete_launch() {
-        eprintln!("zentty-linux: Failed to consume restore snapshot after launch: {error}");
-    }
+    persistence.borrow_mut().complete_launch();
     main_loop.run();
 
     tick_source.remove();
@@ -313,18 +310,7 @@ fn run() -> Result<(), String> {
     );
     diagnostics_runtime::install_local_panic_capture(config.config.error_reporting.enabled);
     diagnostics_runtime::maybe_inject_controlled_crash(config.config.error_reporting.enabled);
-    if appearance_needs_startup_projection(&config.config.appearance) {
-        let spec = config.config.appearance.theme_spec();
-        ConfigStore::install_default_fallback_theme_if_referenced(&spec)?;
-        let ghostty_config = ConfigStore::update_default_ghostty_theme(&spec)?;
-        if let Some(opacity) = config.config.appearance.background_opacity {
-            ConfigStore::update_default_ghostty_value("background-opacity", &opacity.to_string())?;
-        }
-        eprintln!(
-            "zentty-linux: appearance-startup-projection path={}",
-            ghostty_config.display()
-        );
-    }
+    project_startup_appearance(&config.config.appearance)?;
 
     // Ghostty must initialize before GTK; the host then owns registration.
     let runtime = GhosttyRuntime::new(options.async_backend).map_err(|error| error.to_string())?;
@@ -346,7 +332,9 @@ fn run() -> Result<(), String> {
 
     let _ui_observer = match ui_diagnostics::Observer::install() {
         Ok(observer) => {
-            eprintln!("tornadotty: ui-diagnostics enabled local-journal-only threshold-ms=500 max-per-stall=3 max-per-minute=12 payloads=none");
+            eprintln!(
+                "tornadotty: ui-diagnostics enabled local-journal-only threshold-ms=500 max-per-stall=3 max-per-minute=12 payloads=none"
+            );
             Some(observer)
         }
         Err(error) => {
@@ -377,13 +365,11 @@ fn run() -> Result<(), String> {
         .map_err(|error| format!("could not determine the launch working directory: {error}"))?;
     let default_working_directory = default_working_directory.to_string_lossy();
 
-    let active_window_id = launch.active_window_id.clone();
     let result = run_lifecycle_cycle(
         &runtime,
         &desktop,
         &options,
-        launch.windows,
-        active_window_id.as_deref(),
+        launch,
         &persistence,
         &default_working_directory,
         &config,
@@ -396,6 +382,22 @@ fn run() -> Result<(), String> {
         reference_timestamp(),
     )?;
     test_receipts::finish()?;
+    Ok(())
+}
+
+fn project_startup_appearance(appearance: &zentty_core::AppearanceConfig) -> Result<(), String> {
+    if appearance_needs_startup_projection(appearance) {
+        let spec = appearance.theme_spec();
+        ConfigStore::install_default_fallback_theme_if_referenced(&spec)?;
+        let ghostty_config = ConfigStore::update_default_ghostty_theme(&spec)?;
+        if let Some(opacity) = appearance.background_opacity {
+            ConfigStore::update_default_ghostty_value("background-opacity", &opacity.to_string())?;
+        }
+        eprintln!(
+            "zentty-linux: appearance-startup-projection path={}",
+            ghostty_config.display()
+        );
+    }
     Ok(())
 }
 
@@ -413,7 +415,9 @@ fn appearance_needs_startup_projection(appearance: &zentty_core::AppearanceConfi
 }
 
 fn main() -> ExitCode {
-    if std::env::args_os().nth(1).as_deref() == Some(std::ffi::OsStr::new("--internal-workload-owner")) {
+    if std::env::args_os().nth(1).as_deref()
+        == Some(std::ffi::OsStr::new("--internal-workload-owner"))
+    {
         return match zentty_linux::workload::wait_for_gui_exit() {
             Ok(()) => ExitCode::SUCCESS,
             Err(error) => {

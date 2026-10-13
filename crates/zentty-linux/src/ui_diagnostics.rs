@@ -312,7 +312,7 @@ mod tests {
         for step in 1..50 {
             let now = start + Duration::from_millis(step * 1000);
             let state = State {
-                heartbeat: now - Duration::from_millis(600),
+                heartbeat: now.checked_sub(Duration::from_millis(600)).unwrap(),
                 ..state
             };
             reports += usize::from(budget.observe(state, now).is_some());

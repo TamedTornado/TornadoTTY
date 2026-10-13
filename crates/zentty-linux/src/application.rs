@@ -595,27 +595,9 @@ impl ApplicationCoordinator {
                 title,
                 body,
             } => {
-                let coordinator = coordinator.borrow();
-                let Some(shell) = coordinator.shells.get(&target.window_id) else {
-                    return;
-                };
-                let shell = shell.borrow();
-                if !shell.contains_attention_target(&target) {
-                    return;
-                }
-                if !shell.notify_when_pane_visible()
-                    && shell.attention_target_is_visibly_displayed(&target)
-                {
-                    return;
-                }
-                if let Err(error) = coordinator.desktop_notifications.send_terminal(
-                    target,
-                    &title,
-                    &body,
-                    &coordinator.config.notifications,
-                ) {
-                    eprintln!("zentty-linux: desktop-terminal result=unavailable detail={error}");
-                }
+                coordinator
+                    .borrow()
+                    .send_terminal_notification(target, &title, &body);
             }
             crate::application_shell::ApplicationAction::ActivateAttention(target) => {
                 let shell = coordinator.borrow().shells.get(&target.window_id).cloned();
@@ -697,6 +679,33 @@ impl ApplicationCoordinator {
             for shell in coordinator.borrow().shells.values() {
                 shell.borrow().refresh_attention_inbox();
             }
+        }
+    }
+
+    fn send_terminal_notification(
+        &self,
+        target: zentty_core::AttentionTarget,
+        title: &str,
+        body: &str,
+    ) {
+        let Some(shell) = self.shells.get(&target.window_id) else {
+            return;
+        };
+        let shell = shell.borrow();
+        if !shell.contains_attention_target(&target) {
+            return;
+        }
+        if !shell.notify_when_pane_visible() && shell.attention_target_is_visibly_displayed(&target)
+        {
+            return;
+        }
+        if let Err(error) = self.desktop_notifications.send_terminal(
+            target,
+            title,
+            body,
+            &self.config.notifications,
+        ) {
+            eprintln!("zentty-linux: desktop-terminal result=unavailable detail={error}");
         }
     }
 
@@ -897,10 +906,7 @@ impl ApplicationCoordinator {
         })
     }
 
-    fn show_task_manager(
-        coordinator: &Rc<RefCell<Self>>,
-        parent: Option<&gtk::Window>,
-    ) {
+    fn show_task_manager(coordinator: &Rc<RefCell<Self>>, parent: Option<&gtk::Window>) {
         let existing = coordinator.borrow().task_manager.clone();
         let controller = if let Some(existing) = existing {
             existing
@@ -1271,17 +1277,17 @@ impl ApplicationCoordinator {
         let attention_changed = self.attention_inbox.borrow_mut().advance(current_time_ms());
         let deliveries = self.attention_inbox.borrow_mut().drain_deliveries();
         for delivery in deliveries {
-            let (pane_visible, notify_when_pane_visible) = self
-                .shells
-                .get(&delivery.item.target.window_id)
-                .map(|shell| {
-                    let shell = shell.borrow();
-                    (
-                        shell.attention_target_is_visibly_displayed(&delivery.item.target),
-                        shell.notify_when_pane_visible(),
-                    )
-                })
-                .unwrap_or((false, self.config.notifications.notify_when_pane_visible));
+            let (pane_visible, notify_when_pane_visible) =
+                self.shells.get(&delivery.item.target.window_id).map_or(
+                    (false, self.config.notifications.notify_when_pane_visible),
+                    |shell| {
+                        let shell = shell.borrow();
+                        (
+                            shell.attention_target_is_visibly_displayed(&delivery.item.target),
+                            shell.notify_when_pane_visible(),
+                        )
+                    },
+                );
             match crate::notification_service::desktop_attention_decision(
                 delivery.desktop_allowed,
                 notify_when_pane_visible,

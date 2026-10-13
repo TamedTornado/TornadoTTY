@@ -65,7 +65,7 @@ fn phase_status(
     // These generic lifecycle tests cover agents whose Idle event is a
     // completion signal. Codex's separate semantic channel is tested through
     // AgentStatusStore in agent_status.rs.
-    status.agent_name = "Claude".to_owned();
+    "Claude".clone_into(&mut status.agent_name);
     status.phase = phase;
     status
 }

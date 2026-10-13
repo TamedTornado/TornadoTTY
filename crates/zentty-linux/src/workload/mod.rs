@@ -14,6 +14,11 @@ pub struct WorkloadId {
 }
 
 impl WorkloadId {
+    /// Construct a host-generated pane workload identity.
+    ///
+    /// # Errors
+    /// Returns an error unless the instance is 32 lowercase hexadecimal bytes
+    /// and the pane sequence is nonzero.
     pub fn new(instance: &str, sequence: u64) -> Result<Self, String> {
         if instance.len() != 32
             || !instance

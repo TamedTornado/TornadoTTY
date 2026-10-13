@@ -331,11 +331,7 @@ impl ConfigStore {
             let mut document = source
                 .parse::<toml_edit::DocumentMut>()
                 .map_err(|error| format!("could not edit invalid configuration: {error}"))?;
-            for section in [
-                "agent_teams",
-                "agent_caffeination",
-                "agent_integrations",
-            ] {
+            for section in ["agent_teams", "agent_caffeination", "agent_integrations"] {
                 document
                     .entry(section)
                     .or_insert_with(|| toml_edit::Item::Table(toml_edit::Table::new()));
@@ -1212,10 +1208,10 @@ mod tests {
     use zentty_core::{
         AgentCaffeinationConfig, AgentIntegrationState, AgentIntegrationsConfig, AgentTeamsConfig,
         AppConfig, BackgroundOpacity, ClipboardConfig, CommandFlattenAggressiveness,
-        ConfirmationsConfig, FocusFollowsMouseDelay, NewWorklanePlacement,
-        NotificationsConfig, OpenWithConfig, OpenWithCustomApp, PaneConfig, PaneLayoutConfig,
-        PaneRightBehaviorMode, RestoreConfig, ServerBrowserCustomApp, ServerDetectionConfig,
-        SidebarConfig, SidebarVisibilityMode, ThemeMode, ThemeSpec, WorklaneConfig,
+        ConfirmationsConfig, FocusFollowsMouseDelay, NewWorklanePlacement, NotificationsConfig,
+        OpenWithConfig, OpenWithCustomApp, PaneConfig, PaneLayoutConfig, PaneRightBehaviorMode,
+        RestoreConfig, ServerBrowserCustomApp, ServerDetectionConfig, SidebarConfig,
+        SidebarVisibilityMode, ThemeMode, ThemeSpec, WorklaneConfig,
     };
 
     fn private_root(name: &str) -> std::path::PathBuf {

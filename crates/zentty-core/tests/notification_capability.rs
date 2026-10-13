@@ -31,7 +31,9 @@ fn only_explicit_unambiguous_tui_contract_is_recognized() {
     }
     for prefix in ["-c", "--config="] {
         let packed = known()
-            .chunks_exact(2)
+            .as_chunks::<2>()
+            .0
+            .iter()
             .map(|pair| format!("{prefix}{}", pair[1]))
             .collect::<Vec<_>>();
         assert_eq!(
@@ -85,7 +87,7 @@ fn real_launch_plan_and_conflicting_overrides_are_classified() {
             &args,
             "/bin/tornadotty-cli",
             "launch",
-            &Default::default(),
+            &std::collections::BTreeMap::default(),
         )
         .unwrap();
         assert_eq!(
@@ -99,7 +101,7 @@ fn real_launch_plan_and_conflicting_overrides_are_classified() {
         &["--config=tui.notifications=true".into()],
         "/bin/tornadotty-cli",
         "launch",
-        &Default::default(),
+        &std::collections::BTreeMap::default(),
     )
     .unwrap();
     assert_eq!(

@@ -33,6 +33,10 @@ pub struct Manager {
 impl Manager {
     /// Create the workload-only parent before launching any pane. The GUI and
     /// its lifetime observer must never enter this memory budget.
+    ///
+    /// # Errors
+    /// Returns an error if the policy cannot produce a budget or the user
+    /// manager cannot start the aggregate slice successfully.
     pub fn start_aggregate(
         &self,
         policy: zentty_core::WorkloadPolicy,
@@ -58,6 +62,10 @@ impl Manager {
     }
 
     /// Call only from the pre-exec helper or an existing background worker.
+    ///
+    /// # Errors
+    /// Returns an error for an invalid slice name, an unavailable session bus,
+    /// or a failed subscription to user-manager job completion signals.
     pub fn connect(slice: &str) -> Result<Self, String> {
         let stem = slice
             .strip_suffix(".slice")
@@ -101,6 +109,10 @@ impl Manager {
 
     /// Keep the lifetime observer out of the pane aggregate. Only the pidfd,
     /// not a numeric PID or inherited pipe writer, determines owner lifetime.
+    ///
+    /// # Errors
+    /// Returns an error for a nonabsolute or non-UTF-8 executable path, failure
+    /// to create or transfer the GUI pidfd, or failure to start the owner unit.
     pub fn start_owner(&self, id: &WorkloadId, executable: &std::path::Path) -> Result<(), String> {
         let executable = executable.to_str().ok_or("owner executable is not UTF-8")?;
         if !std::path::Path::new(executable).is_absolute() {
@@ -148,6 +160,10 @@ impl Manager {
 
     /// The only attach operation accepts the *calling process*, never an
     /// arbitrary PID supplied by a pane or asynchronous GUI observation.
+    ///
+    /// # Errors
+    /// Returns an error for invalid limits, a failed scope start, unverified
+    /// kernel membership, or missing or unreadable required cgroup controllers.
     pub fn join_current_process(
         &self,
         id: &WorkloadId,

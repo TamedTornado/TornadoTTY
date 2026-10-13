@@ -314,7 +314,9 @@ fn state_class(state: FleetState) -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    use zentty_core::{AgentProgress, AttentionTarget, FleetPaneSnapshot, FleetState, FleetSummary};
+    use zentty_core::{
+        AgentProgress, AttentionTarget, FleetPaneSnapshot, FleetState, FleetSummary,
+    };
 
     use super::{INDICATOR_LAYOUT, IndicatorLayout, fleet_status_text, indicator_state};
 

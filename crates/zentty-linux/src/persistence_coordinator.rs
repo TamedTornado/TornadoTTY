@@ -131,15 +131,14 @@ impl PersistenceCoordinator {
         ))
     }
 
-    pub(crate) fn complete_launch(&mut self) -> Result<(), String> {
+    pub(crate) fn complete_launch(&mut self) {
         if !self.prepared_restore {
-            return Ok(());
+            return;
         }
         // Keep the recovery snapshot until a newer snapshot atomically replaces
         // it. A renderer/PTY crash immediately after launch must not erase the
         // only durable copy of the user's workspace.
         self.prepared_restore = false;
-        Ok(())
     }
 
     pub(crate) fn observe_live_snapshot(
@@ -534,13 +533,9 @@ mod tests {
             .unwrap();
         // Launch completion must not wait behind that storage operation.
         let started = std::time::Instant::now();
-        let result = coordinator.complete_launch();
+        coordinator.complete_launch();
         let elapsed = started.elapsed();
         drop(lock);
-        assert!(
-            result.is_ok(),
-            "launch waited on locked storage: {result:?}"
-        );
         assert!(
             elapsed < Duration::from_millis(200),
             "launch blocked for {elapsed:?}"
@@ -564,7 +559,7 @@ mod tests {
         assert_eq!(launch.active_window_id.as_deref(), Some("window-main"));
         assert!(launch.warning.is_none());
         assert!(store.snapshot_path().is_file());
-        coordinator.complete_launch().unwrap();
+        coordinator.complete_launch();
         coordinator.worker.synchronize();
         assert!(store.snapshot_path().exists());
         let recovered = store.prepare_for_launch(false).unwrap().unwrap();
@@ -586,7 +581,7 @@ mod tests {
         let mut first_state = WorkspaceState::from_window_recipe(&first_window.window).unwrap();
         assert!(first_state.seed_restored_agent(&original_draft, 2));
         assert!(first_state.reconcile_terminal_title(&original_draft.pane_id, "bash", 3));
-        first.complete_launch().unwrap();
+        first.complete_launch();
         first
             .save_clean_exit(
                 vec![snapshot(
@@ -606,7 +601,7 @@ mod tests {
         let mut second_state = WorkspaceState::from_window_recipe(&second_window.window).unwrap();
         assert!(second_state.seed_restored_agent(&original_draft, 5));
         assert!(second_state.reconcile_terminal_title(&original_draft.pane_id, "bash", 6));
-        second.complete_launch().unwrap();
+        second.complete_launch();
         second
             .save_clean_exit(
                 vec![snapshot(

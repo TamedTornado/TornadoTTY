@@ -5,7 +5,6 @@ mod agent_consent;
 mod agent_fleet;
 mod agent_launch;
 mod agent_protocol;
-mod notification_capability;
 mod agent_sleep_inhibition;
 mod agent_status;
 mod app_config;
@@ -21,6 +20,7 @@ mod command_palette;
 mod dev_server;
 mod git_review_context;
 mod global_search;
+mod notification_capability;
 mod open_with;
 mod pane_focus_history;
 mod pane_layout;
@@ -34,10 +34,10 @@ mod sidebar_width;
 mod ssh_identity;
 mod support_diagnostics;
 mod task_runner;
+mod workload_policy;
 mod workspace_recipe;
 mod workspace_state;
 mod workspace_template;
-mod workload_policy;
 
 pub use workload_policy::{MemoryBudget, WorkloadBudgets, WorkloadPolicy};
 
@@ -56,9 +56,6 @@ pub use agent_launch::{
 pub use agent_protocol::{
     AgentArtifactKind, AgentArtifactLink, AgentEvent, AgentInteractionKind, AgentProtocolError,
 };
-pub use notification_capability::{
-    NotificationCapability, codex_notification_capability, notification_launch_digest,
-};
 pub use agent_sleep_inhibition::{AgentSleepInhibitionState, SleepInhibitionTransition};
 pub use agent_status::{
     AgentPhase, AgentProcessProbe, AgentProgress, AgentSignalConfidence, AgentSignalOrigin,
@@ -67,9 +64,9 @@ pub use agent_status::{
 pub use app_config::{
     AgentCaffeinationConfig, AgentIntegrationsConfig, AgentTeamsConfig, AppConfig,
     AppearanceConfig, ClipboardConfig, ConfirmationsConfig, ErrorReportingConfig,
-    FocusFollowsMouseDelay, NewWorklanePlacement, NotificationsConfig,
-    OpenWithConfig, OpenWithCustomApp, PaneConfig, PaneLayoutConfig, PaneRightBehaviorMode,
-    PartialAppConfig, RestoreConfig, ServerBrowserCustomApp, ServerDetectionConfig, SidebarConfig,
+    FocusFollowsMouseDelay, NewWorklanePlacement, NotificationsConfig, OpenWithConfig,
+    OpenWithCustomApp, PaneConfig, PaneLayoutConfig, PaneRightBehaviorMode, PartialAppConfig,
+    RestoreConfig, ServerBrowserCustomApp, ServerDetectionConfig, SidebarConfig,
     SidebarVisibilityMode, UpdateChannel, UpdatesConfig, WorklaneConfig,
 };
 pub use appearance::{
@@ -83,6 +80,9 @@ pub use attention_inbox::{
 };
 pub use bookmark_store::{
     BookmarkStore, BookmarkStoreError, BookmarkStoreSnapshot, WorkspaceTemplateExportEnvelope,
+};
+pub use notification_capability::{
+    NotificationCapability, codex_notification_capability, notification_launch_digest,
 };
 pub use pane_focus_history::PaneReference;
 pub use pane_layout::{PaneLayoutPolicy, PaneRightInsertionBehavior};

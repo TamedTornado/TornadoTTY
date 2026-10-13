@@ -335,22 +335,7 @@ impl PaneRestoreDraft {
             return Some(format!("opencode --session {session_id}"));
         }
         if self.tool_name.eq_ignore_ascii_case("amp") {
-            let session_id = validated_amp_thread_id(&self.session_id)?;
-            let resume_arguments = sanitize_amp_resume_arguments(
-                self.agent_launch_snapshot
-                    .as_ref()
-                    .map_or(&[], |snapshot| snapshot.arguments.as_slice()),
-            )?;
-            return Some(
-                ["amp", "threads", "continue"]
-                    .into_iter()
-                    .map(str::to_owned)
-                    .chain(resume_arguments)
-                    .chain([session_id])
-                    .map(|argument| shell_quoted_argument(&argument))
-                    .collect::<Vec<_>>()
-                    .join(" "),
-            );
+            return self.amp_resume_command();
         }
         if self.tool_name.eq_ignore_ascii_case("pi") {
             self.require_working_directory()?;
@@ -387,6 +372,25 @@ impl PaneRestoreDraft {
             return self.vibe_resume_command();
         }
         None
+    }
+
+    fn amp_resume_command(&self) -> Option<String> {
+        let session_id = validated_amp_thread_id(&self.session_id)?;
+        let resume_arguments = sanitize_amp_resume_arguments(
+            self.agent_launch_snapshot
+                .as_ref()
+                .map_or(&[], |snapshot| snapshot.arguments.as_slice()),
+        )?;
+        Some(
+            ["amp", "threads", "continue"]
+                .into_iter()
+                .map(str::to_owned)
+                .chain(resume_arguments)
+                .chain([session_id])
+                .map(|argument| shell_quoted_argument(&argument))
+                .collect::<Vec<_>>()
+                .join(" "),
+        )
     }
 
     fn grok_resume_command(&self) -> Option<String> {

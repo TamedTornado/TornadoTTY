@@ -271,7 +271,7 @@ impl AttentionInbox {
         };
         let mut changed = false;
         if item.primary_text != primary_text {
-            item.primary_text = primary_text.to_owned();
+            primary_text.clone_into(&mut item.primary_text);
             changed = true;
         }
         if item.location_text.as_deref() != location_text {

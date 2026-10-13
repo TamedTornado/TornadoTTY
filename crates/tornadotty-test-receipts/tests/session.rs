@@ -315,7 +315,10 @@ fn stop_reaps_the_owned_process_group_and_is_not_reported_as_product_failure() {
     let mut fixture = Fixture::new();
     let session = fixture.session("cleanup");
     let descendant_path = fixture.root.join("descendant.pid");
-    let script = "sleep 60 & child=$!; printf '%s' \"$child\" >\"$1\"; wait";
+    // Publish readiness atomically: existence must mean the PID is complete,
+    // not merely that shell redirection has opened an empty file.
+    let script =
+        "sleep 60 & child=$!; printf '%s' \"$child\" >\"$1.tmp\"; mv \"$1.tmp\" \"$1\"; wait";
     fixture.supervise(
         &session,
         &[],
@@ -420,7 +423,8 @@ fn unexpected_product_kill_reaps_and_reports_a_live_child_leak() {
     let mut fixture = Fixture::new();
     let session = fixture.session("killed-product");
     let descendant_path = fixture.root.join("killed-descendant.pid");
-    let script = "sleep 60 & child=$!; printf '%s' \"$child\" >\"$1\"; wait";
+    let script =
+        "sleep 60 & child=$!; printf '%s' \"$child\" >\"$1.tmp\"; mv \"$1.tmp\" \"$1\"; wait";
     fixture.supervise(
         &session,
         &[],

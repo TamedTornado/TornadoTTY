@@ -132,6 +132,44 @@ pub(super) fn request(shell: &mut ApplicationShell, force: bool) {
     });
 }
 
+fn project(shell: &mut ApplicationShell) {
+    shell.open_with_runtime.catalog = zentty_core::OpenWithCatalog::resolve(
+        &shell.config.open_with,
+        shell.catalog_discovery.apps.clone(),
+    );
+    let catalog = &shell.open_with_runtime.catalog;
+    eprintln!(
+        "zentty-linux: open-with-discovery available={} primary={} unavailable={}",
+        catalog.enabled.len(),
+        catalog
+            .primary
+            .as_ref()
+            .map_or("none", |target| target.id.as_str()),
+        catalog.unavailable_ids.join(",")
+    );
+    shell.chrome.configure_open_with(catalog);
+    shell
+        .chrome
+        .set_open_with_context_available(open_with_runtime::focused_context_is_available(
+            catalog,
+            open_with_runtime::focused_context(shell).as_ref(),
+        ));
+    shell.server_runtime.browser_catalog = zentty_core::ServerBrowserCatalog::resolve(
+        &shell.config.server_detection,
+        shell.catalog_discovery.browsers.clone(),
+    );
+    let catalog = &shell.server_runtime.browser_catalog;
+    eprintln!(
+        "zentty-linux: server-browser-discovery available={} preferred={} unavailable={}",
+        catalog.enabled.len(),
+        catalog
+            .preferred
+            .as_ref()
+            .map_or("none", |target| target.id.as_str()),
+        catalog.unavailable_ids.join(",")
+    );
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -186,42 +224,4 @@ mod tests {
         let latest = state.begin(&a, false).unwrap();
         assert!(state.finish(&a, latest));
     }
-}
-
-fn project(shell: &mut ApplicationShell) {
-    shell.open_with_runtime.catalog = zentty_core::OpenWithCatalog::resolve(
-        &shell.config.open_with,
-        shell.catalog_discovery.apps.clone(),
-    );
-    let catalog = &shell.open_with_runtime.catalog;
-    eprintln!(
-        "zentty-linux: open-with-discovery available={} primary={} unavailable={}",
-        catalog.enabled.len(),
-        catalog
-            .primary
-            .as_ref()
-            .map_or("none", |target| target.id.as_str()),
-        catalog.unavailable_ids.join(",")
-    );
-    shell.chrome.configure_open_with(catalog);
-    shell
-        .chrome
-        .set_open_with_context_available(open_with_runtime::focused_context_is_available(
-            catalog,
-            open_with_runtime::focused_context(shell).as_ref(),
-        ));
-    shell.server_runtime.browser_catalog = zentty_core::ServerBrowserCatalog::resolve(
-        &shell.config.server_detection,
-        shell.catalog_discovery.browsers.clone(),
-    );
-    let catalog = &shell.server_runtime.browser_catalog;
-    eprintln!(
-        "zentty-linux: server-browser-discovery available={} preferred={} unavailable={}",
-        catalog.enabled.len(),
-        catalog
-            .preferred
-            .as_ref()
-            .map_or("none", |target| target.id.as_str()),
-        catalog.unavailable_ids.join(",")
-    );
 }

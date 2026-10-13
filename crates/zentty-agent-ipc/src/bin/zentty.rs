@@ -86,6 +86,10 @@ fn run() -> Result<(), String> {
         );
     }
     let remaining = arguments.collect::<Vec<_>>();
+    run_agent_event(&remaining, installed_hook.as_deref())
+}
+
+fn run_agent_event(remaining: &[String], installed_hook: Option<&str>) -> Result<(), String> {
     let adapter = remaining
         .iter()
         .find_map(|argument| argument.strip_prefix("--adapter="));
@@ -117,7 +121,7 @@ fn run() -> Result<(), String> {
         println!("{{}}");
         return Ok(());
     }
-    if let Some(command) = installed_hook.as_deref()
+    if let Some(command) = installed_hook
         && (events.is_empty()
             || std::env::var_os("ZENTTY_INSTANCE_SOCKET").is_none()
             || std::env::var_os("ZENTTY_PANE_TOKEN").is_none())
@@ -138,7 +142,7 @@ fn run() -> Result<(), String> {
     }
     if adapter == Some("gemini") {
         println!("{{}}");
-    } else if let Some(command) = installed_hook.as_deref() {
+    } else if let Some(command) = installed_hook {
         println!(
             "{}",
             installed_hook_response(command, default_event.map(String::as_str))
@@ -384,10 +388,12 @@ fn run_server(arguments: &[String]) -> Result<(), String> {
 }
 
 fn send_server_command(command: &ServerCommand) -> Result<(), String> {
-    let socket = std::env::var("ZENTTY_INSTANCE_SOCKET")
-        .map_err(|_| "tornadotty-cli server commands must run inside a TornadoTTY pane".to_owned())?;
-    let token = require_pane_credential()
-        .map_err(|_| "tornadotty-cli server commands must run inside a TornadoTTY pane".to_owned())?;
+    let socket = std::env::var("ZENTTY_INSTANCE_SOCKET").map_err(|_| {
+        "tornadotty-cli server commands must run inside a TornadoTTY pane".to_owned()
+    })?;
+    let token = require_pane_credential().map_err(|_| {
+        "tornadotty-cli server commands must run inside a TornadoTTY pane".to_owned()
+    })?;
     let route = command
         .route()
         .ok_or_else(|| "server watch must be handled by the watch runner".to_owned())?;
