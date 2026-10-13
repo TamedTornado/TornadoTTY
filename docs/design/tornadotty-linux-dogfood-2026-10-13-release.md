@@ -199,3 +199,46 @@
   original finding or establish a repair. Original, raw, suppressed, and
   diagnostic receipts remain preserved; all four suppression-file hashes remain
   unchanged. Debug symbols/tools were extracted under `/tmp`, not installed.
+
+## Renderer first-frame ordering (#210)
+
+- The early origin/poisoning diagnostics did not reproduce the worker finding.
+  GLX graphics replay completed with existing driver-owned contexts only; EGL
+  tracing/replay had tool compatibility limitations and is not release evidence.
+  Matching Mesa symbols then made the worker/producer distinction explicit.
+- Source inspection identified GTK drawing before the renderer worker's first
+  terminal snapshot. Extended the existing engine GTK embedding spike to draw a
+  newly initialized renderer in a real GL context before any snapshot update,
+  then update from real terminal state and draw again. This deterministically
+  FAILed with `UnpreparedFrameWasPresented` on both surfaces. Raw origin-tracked
+  Memcheck reproduced the original llvmpipe worker Cond/Value8 stack family,
+  tracing undefined data to Ghostty `Renderer.init`, not a driver exemption:
+  exit 99, 10,881 errors / 110 contexts including existing external findings.
+- The repair defers drawing under the existing draw mutex while the cell grid
+  is empty. The first snapshot schedules the normal draw. The regression now
+  PASSes on X11 and Wayland and verifies both no unprepared presentation and
+  successful presentation once snapshot data exists. No sleep, retry, relaxed
+  assertion, or changed suppression. Engine repair and regression are pushed as
+  [Ghostty `485b32104`](https://github.com/TamedTornado/ghostty/commit/485b32104b66bf52d9e7c449742d46f49a5374a3).
+- Green raw origin tracking has 151 errors / 20 existing external contexts,
+  with no llvmpipe worker finding or undefined origin from `Renderer.init`.
+  The paired suppression-enabled first-frame regression completes with zero
+  errors and zero definite/indirect leaks: **PASS with reviewed suppressions**.
+  Recreate via the existing private X11/Wayland wrapper and engine
+  `GHOSTTY_EMBED_SPIKE_FIRST_FRAME=1 zig build gtk-embed-spike`.
+- `build-local` Debug integration succeeds. Real two-pane Wayland lifecycle and
+  X11 Fcitx exact-byte composition/focus/destruction PASS with both fixes.
+  Architecture/negative tests, the exact 26-file/14-export API audit and its
+  negative tests, Zig format, ShellCheck warning/error severity, and diff checks
+  PASS. The integrated product's original paired Debug X11 two-pane Valgrind
+  journey completes under the unchanged 300-second phase limit: both real
+  lifecycles PASS, with zero post-suppression errors and zero definite/indirect
+  leaks (**PASS with reviewed suppressions**). The raw receipt remains visible
+  with 940 errors / 852 contexts; raw cleanliness is not claimed. Aggregate
+  suppression governance and the remaining release matrix are not certified by
+  this focused run. This is a development evidence bundle, not final clean release provenance;
+  nothing has been installed, restarted, tagged, or published as a release.
+- Receipts: `/tmp/tornadotty-gh210-spike-{red,green}.log`,
+  `/tmp/tornadotty-gh210-spike-wayland-green.log`, and
+  `/tmp/tornadotty-gh210-first-frame-valgrind-{red,green-raw,green-suppressed}.log`.
+  Copies are preserved in `build/release-v0.1.2-evidence/gh210-first-frame/`.

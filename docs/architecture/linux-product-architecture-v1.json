@@ -11,7 +11,7 @@
     "legacy_sources_removed": true,
     "legacy_matrix_cells_removed": true
   },
-  "ghostty_revision": "d21021ad6a9956f04bb53d91ece1c1ac4abc6bfa",
+  "ghostty_revision": "485b32104b66bf52d9e7c449742d46f49a5374a3",
   "workspace_crates": [
     {
       "name": "tornadotty-test-receipts",

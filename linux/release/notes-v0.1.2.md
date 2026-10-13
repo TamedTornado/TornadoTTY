@@ -13,6 +13,10 @@
   absolute, escaping, cyclic, and unresolved links.
 - Improve bounded local stall diagnostics and move more discovery, persistence,
   and process-monitoring work off the GTK thread.
+- Cancel stale input-method commits after pane focus changes, preventing extra
+  text during Fcitx composition.
+- Defer the first terminal draw until its snapshot is ready, preventing
+  uninitialized shader input during pane startup.
 - Use the installed `tornadotty` and `tornadotty-cli` entry points; the legacy
   Zentty executable aliases and system-tray agent-status feature are removed.
 

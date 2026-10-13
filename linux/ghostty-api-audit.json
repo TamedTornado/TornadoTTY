@@ -17,9 +17,9 @@
     "official_repository": "https://github.com/ghostty-org/ghostty.git",
     "fork_repository": "https://github.com/TamedTornado/ghostty.git",
     "official_base": "6dcf68fc0b12e8caebbfc43770d66edac124b4f8",
-    "candidate_branch": "zentty/gh209-ime-focus",
-    "head": "d21021ad6a9956f04bb53d91ece1c1ac4abc6bfa",
-    "downstream_commit_count": 41
+    "candidate_branch": "zentty/gh210-first-frame",
+    "head": "485b32104b66bf52d9e7c449742d46f49a5374a3",
+    "downstream_commit_count": 42
   },
   "patch_series": [
     {
@@ -98,6 +98,13 @@
       "last": "d21021ad6a9956f04bb53d91ece1c1ac4abc6bfa",
       "purpose": "Reject stale input-method commits after the owning surface loses focus (TornadoTTY #209); exact-byte Fcitx and IBus focus journeys cover X11 and Wayland.",
       "upstream_disposition": "generic GTK fix retained downstream; upstream interaction requires separate operator approval"
+    },
+    {
+      "id": "first-terminal-frame",
+      "first": "485b32104b66bf52d9e7c449742d46f49a5374a3",
+      "last": "485b32104b66bf52d9e7c449742d46f49a5374a3",
+      "purpose": "Defer GTK-requested draws until the renderer has a terminal snapshot, preventing undefined shader inputs (TornadoTTY #210); deterministic real-GL early/prepared frame regression.",
+      "upstream_disposition": "generic renderer fix retained downstream; upstream interaction requires separate operator approval"
     }
   ],
   "changed_files": [
@@ -122,9 +129,10 @@
     {"status":"A","path":"src/gtk_embed_lib.zig","owner":"ghostty-abi","purpose":"Opaque runtime and fourteen language-neutral embedding operations.","tests":["linux/tests/api-contract.c","linux/tests/runtime-init-order","linux/tests/ghostty-api-audit"]},
     {"status":"A","path":"src/gtk_embed_options.zig","owner":"ghostty-abi","purpose":"Size-versioned copied surface option validation.","tests":["zig build gtk-embed-lib-test","linux/tests/api-contract.c"]},
     {"status":"A","path":"src/gtk_embed_spike.valgrind.supp","owner":"ghostty-test","purpose":"Reviewed external-library suppressions for Ghostty's alternate-host test only.","tests":["linux/tests/suppression-governance"]},
-    {"status":"A","path":"src/gtk_embed_spike.zig","owner":"ghostty-test","purpose":"Engine-owned alternate-host lifecycle, PTY, input, clipboard, signal, resize, and scale exercise.","tests":["zig build gtk-embed-spike","linux/tests/ghostty-regression"]},
+    {"status":"A","path":"src/gtk_embed_spike.zig","owner":"ghostty-test","purpose":"Engine-owned alternate-host lifecycle, PTY, input, clipboard, signal, resize, scale, and deterministic first-frame exercise.","tests":["zig build gtk-embed-spike","GHOSTTY_EMBED_SPIKE_FIRST_FRAME=1 zig build gtk-embed-spike","linux/tests/ghostty-regression"]},
     {"status":"M","path":"src/os/open.zig","owner":"ghostty-core","purpose":"Drain opener stderr without looping on an unread delimiter and reap completed children.","tests":["linux/tests/ghostty-regression"]},
     {"status":"A","path":"src/os/open_stderr.zig","owner":"ghostty-core","purpose":"Bounded stderr record reader with EOF, blank-line, long-record and real child-pipe regressions.","tests":["linux/tests/ghostty-regression"]},
+    {"status":"M","path":"src/renderer/generic.zig","owner":"ghostty-renderer","purpose":"Do not submit undefined grid uniforms and cell buffers before the first terminal snapshot.","tests":["GHOSTTY_EMBED_SPIKE_FIRST_FRAME=1 zig build gtk-embed-spike","linux/tests/memory-safety"]},
     {"status":"M","path":"src/termio/Exec.zig","owner":"ghostty-core","purpose":"Keep copied shell command text alive for the child process.","tests":["zig build test","linux/tests/ghostty-regression"]}
   ],
   "abi": {
