@@ -687,6 +687,20 @@ verification of this sequence on the repaired build are NOT RUN; post-restart
 desktop confirmation remains pending. These steps are recorded in GH-191 as
 well as this report, rather than relying on conversation context.
 
+### September 22: OpenCode launch rejected npm bin symlinks
+
+`opencode` from a project shell failed before exec:
+
+`tornadotty-cli: could not prepare agent launch: OpenCode source config contains a symlink: ~/.config/opencode/node_modules/.bin/node-gyp-build-optional-packages-test`
+
+That config has seven symlinks, all relative `node_modules/.bin` links whose lexical targets stay inside the config. The source tree was not modified.
+
+Mac `AgentLaunchBootstrap.copyDirectoryContents` copies each entry with `FileManager.copyItem` and has no symlink rejection. The Linux port's `copy_directory_contents` rejected every symlink, including those npm bin links, so launch never reached OpenCode.
+
+The copier now reproduces a symlink when its lexical target stays inside the source config, and still refuses a link that points outside. Focused `launch_cli` OpenCode tests PASS (5). An isolated debug CLI launch, with a private socket and a stand-in executable, copied the real config into a temp overlay, preserved all seven links, and exited 0.
+
+Jason asked for the CLI to be installed. Release-safe `zentty` was built from the dirty worktree at 59dccb56e860 and installed by same-filesystem rename over `/usr/lib/tornadotty/bin/tornadotty-cli`. Installed sha256 19983e5f6f321637a98dc9a632085ed265c3d0438293eb32c4f06c49ac76ed45 matches the build. `tornadotty-cli version` reports `zentty 0.1.1 (59dccb56e860)`. The previous CLI is at `/tmp/tornadotty-cli-opencode-symlink-rollback/tornadotty-cli`. A second isolated launch of the installed CLI copied the real config, preserved all seven links, and exited 0. GUI PIDs 8983 and 261399 still run inode 75497503 and were not restarted. Not committed.
+
 ### September 25: live lag inspection (no repair or restart)
 
 Jason reported current lag. Read-only host sampling at approximately 10:35–10:37
@@ -1466,3 +1480,34 @@ pending the coordinated bug-batch release. GH-174 remains open for that adoption
   Rollback: `/tmp/tornadotty-gh185-menu-rollback.C0VBqU`. No live restart,
   signals, input or saved-state modification. Repair activates next user launch;
   live confirmation is pending, not passed.
+
+### 2026-10-13: recover and review the uncommitted OpenCode launch repair (#205)
+
+- Jason requested disposition of every remaining edit. The substantive remainder
+  was September 22's installed OpenCode config-symlink repair, its two regressions,
+  and the installation note above. Ten other files contained only whitespace or
+  Rust module/import ordering changes; those were discarded, not behavioral fixes.
+- Review under [#205](https://github.com/TamedTornado/TornadoTTY/issues/205)
+  reproduced two defects in the uncommitted candidate using private fixtures:
+  an absolute in-tree `plugins` link caused managed-plugin installation to write
+  into the source config, and an indirect relative link followed by `..` escaped
+  despite lexical containment. A dangling-link rejection regression also FAILed.
+  The first indirect fixture failed later on a missing overlay directory instead
+  of exercising rejection; corrected to a non-plugin entry, it FAILed before repair.
+- Retained the original npm-bin compatibility fix, but canonicalized the source
+  root and checked relative targets component by component. Absolute links,
+  unresolved/cyclic links, and paths leaving the root (even if they later reenter)
+  now fail before agent exec. Safe relative chains and relative config paths with
+  spaces work; writes through copied links leave source files unchanged. This is
+  not a race-proof snapshot against concurrent malicious source-tree replacement.
+- Fresh ReleaseSafe checks PASS: nine focused OpenCode real-CLI tests, the whole
+  launcher suite (31), CLI identity (1), strict library-only Clippy, targeted
+  rustfmt, and diff checks. The launcher tests include a real authenticated Unix
+  socket prelaunch event. Broader CLI/test Clippy FAILs on the unchanged 107-line
+  `run` function's 100-line lint limit; no suppression or unrelated rewrite.
+- Integrated `build-local` PASS at `build/gh205-opencode-symlinks`, dirty fac32d0f
+  base, unchanged Ghostty b62d1c57f; dependency age audit PASS, 91 packages and
+  zero exceptions. Receipts: `/tmp/tornadotty-opencode-review-{red,indirect-red,green,launch-suite,clippy,lib-clippy,build}.log`.
+  No full qualification, GUI/PTY journey, real OpenCode model session, new install,
+  or live-client restart was performed. The original installation note is
+  historical evidence, not verification that this hardened candidate is installed.

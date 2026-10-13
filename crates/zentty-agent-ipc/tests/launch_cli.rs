@@ -860,6 +860,217 @@ fn opencode_rejects_source_symlinks_before_exec_and_selects_its_real_sibling() {
 }
 
 #[test]
+fn opencode_reproduces_in_tree_npm_bin_symlinks_in_the_private_overlay() {
+    let tool = FakeTool::new("opencode");
+    let source = tool.directory.join("opencode-source");
+    let package = source.join("node_modules/node-gyp-build-optional-packages");
+    let bin = source.join("node_modules/.bin");
+    fs::create_dir_all(&package).unwrap();
+    fs::create_dir_all(&bin).unwrap();
+    fs::write(source.join("opencode.json"), b"{\"model\":\"user-choice\"}").unwrap();
+    fs::write(package.join("build-test.js"), b"bin-script").unwrap();
+    symlink(
+        "../node-gyp-build-optional-packages/build-test.js",
+        bin.join("node-gyp-build-optional-packages-test"),
+    )
+    .unwrap();
+    tool.resource(
+        "opencode/plugins/zentty-opencode-zentty.js",
+        "export const source = 'zentty';\n",
+    );
+
+    let output = tool
+        .command("opencode")
+        .arg("run")
+        .env("OPENCODE_CONFIG_DIR", &source)
+        .env("ZENTTY_RESOURCE_ROOT", tool.directory.join("resources"))
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        fs::read(package.join("build-test.js")).unwrap(),
+        b"bin-script"
+    );
+    let receipt = fs::read_to_string(&tool.receipt).unwrap();
+    let overlay = receipt
+        .lines()
+        .find_map(|line| line.strip_prefix("OPENCODE_CONFIG="))
+        .unwrap();
+    let overlay_link = std::path::Path::new(overlay)
+        .join("node_modules/.bin/node-gyp-build-optional-packages-test");
+    assert!(
+        fs::symlink_metadata(&overlay_link)
+            .unwrap()
+            .file_type()
+            .is_symlink()
+    );
+    assert_eq!(
+        fs::read_link(&overlay_link).unwrap(),
+        std::path::Path::new("../node-gyp-build-optional-packages/build-test.js")
+    );
+    assert_eq!(fs::read(&overlay_link).unwrap(), b"bin-script");
+    fs::write(&overlay_link, b"overlay-only").unwrap();
+    assert_eq!(
+        fs::read(package.join("build-test.js")).unwrap(),
+        b"bin-script"
+    );
+}
+
+#[test]
+fn opencode_rejects_absolute_config_links_without_writing_source() {
+    let tool = FakeTool::new("opencode");
+    let source = tool.directory.join("opencode-source");
+    let plugins = source.join("plugin-store");
+    fs::create_dir_all(&plugins).unwrap();
+    symlink(&plugins, source.join("plugins")).unwrap();
+    tool.resource(
+        "opencode/plugins/zentty-opencode-zentty.js",
+        "export default {};\n",
+    );
+
+    let rejected = tool
+        .command("opencode")
+        .env("OPENCODE_CONFIG_DIR", &source)
+        .env("ZENTTY_RESOURCE_ROOT", tool.directory.join("resources"))
+        .output()
+        .unwrap();
+    assert!(
+        !plugins.join("zentty-opencode-zentty.js").exists(),
+        "managed plugin installation must not write through a link into source config"
+    );
+    assert!(!rejected.status.success());
+    assert!(!tool.receipt.exists());
+}
+
+#[test]
+fn opencode_rejects_indirect_parent_escape_before_exec() {
+    let tool = FakeTool::new("opencode");
+    let source = tool.directory.join("opencode-source");
+    let outside = tool.directory.join("outside");
+    fs::create_dir_all(source.join("nested")).unwrap();
+    fs::create_dir_all(&outside).unwrap();
+    symlink("..", source.join("nested/alias")).unwrap();
+    // Lexically inside the source, but alias resolves to the source root,
+    // making the subsequent parent component escape to the sibling directory.
+    symlink("nested/alias/../outside", source.join("escape")).unwrap();
+    assert_eq!(fs::canonicalize(source.join("escape")).unwrap(), outside);
+    tool.resource(
+        "opencode/plugins/zentty-opencode-zentty.js",
+        "export default {};\n",
+    );
+
+    let rejected = tool
+        .command("opencode")
+        .env("OPENCODE_CONFIG_DIR", &source)
+        .env("ZENTTY_RESOURCE_ROOT", tool.directory.join("resources"))
+        .output()
+        .unwrap();
+    assert!(!rejected.status.success());
+    assert!(!tool.receipt.exists());
+    assert!(!outside.join("zentty-opencode-zentty.js").exists());
+}
+
+#[test]
+fn opencode_preserves_safe_relative_link_chains_with_a_relative_config_path() {
+    let tool = FakeTool::new("opencode");
+    let source = tool.directory.join("opencode source");
+    fs::create_dir_all(source.join("packages/bin")).unwrap();
+    fs::write(source.join("packages/bin/command"), b"original").unwrap();
+    symlink("packages/bin", source.join("bin")).unwrap();
+    symlink("bin/command", source.join("command")).unwrap();
+    tool.resource(
+        "opencode/plugins/zentty-opencode-zentty.js",
+        "export default {};\n",
+    );
+
+    let output = tool
+        .command("opencode")
+        .current_dir(&tool.directory)
+        .env("OPENCODE_CONFIG_DIR", "opencode source")
+        .env("ZENTTY_RESOURCE_ROOT", tool.directory.join("resources"))
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let receipt = fs::read_to_string(&tool.receipt).unwrap();
+    let overlay = receipt
+        .lines()
+        .find_map(|line| line.strip_prefix("OPENCODE_CONFIG="))
+        .map(std::path::Path::new)
+        .unwrap();
+    assert_eq!(
+        fs::read_link(overlay.join("command")).unwrap(),
+        std::path::Path::new("bin/command")
+    );
+    assert_eq!(fs::read(overlay.join("command")).unwrap(), b"original");
+    fs::write(overlay.join("command"), b"overlay-only").unwrap();
+    assert_eq!(
+        fs::read(source.join("packages/bin/command")).unwrap(),
+        b"original"
+    );
+}
+
+#[test]
+fn opencode_rejects_invalid_config_link_targets_before_exec() {
+    for target in ["missing", "link", "../opencode-source"] {
+        let tool = FakeTool::new("opencode");
+        let source = tool.directory.join("opencode-source");
+        fs::create_dir_all(&source).unwrap();
+        symlink(target, source.join("link")).unwrap();
+        tool.resource(
+            "opencode/plugins/zentty-opencode-zentty.js",
+            "export default {};\n",
+        );
+        let rejected = tool
+            .command("opencode")
+            .env("OPENCODE_CONFIG_DIR", &source)
+            .env("ZENTTY_RESOURCE_ROOT", tool.directory.join("resources"))
+            .output()
+            .unwrap();
+        assert!(!rejected.status.success(), "unsafe target: {target}");
+        assert!(!tool.receipt.exists());
+    }
+}
+
+#[test]
+fn opencode_rejects_config_symlinks_that_escape_the_source_tree() {
+    let tool = FakeTool::new("opencode");
+    let source = tool.directory.join("opencode-source");
+    fs::create_dir_all(&source).unwrap();
+    fs::write(tool.directory.join("private.json"), b"private").unwrap();
+    symlink("../private.json", source.join("escape.json")).unwrap();
+    tool.resource(
+        "opencode/plugins/zentty-opencode-zentty.js",
+        "export default {};\n",
+    );
+
+    let rejected = tool
+        .command("opencode")
+        .env("OPENCODE_CONFIG_DIR", &source)
+        .env("ZENTTY_RESOURCE_ROOT", tool.directory.join("resources"))
+        .output()
+        .unwrap();
+    assert!(!rejected.status.success());
+    assert!(
+        String::from_utf8_lossy(&rejected.stderr).contains("contains a symlink"),
+        "{}",
+        String::from_utf8_lossy(&rejected.stderr)
+    );
+    assert!(!tool.receipt.exists());
+    assert_eq!(
+        fs::read(tool.directory.join("private.json")).unwrap(),
+        b"private"
+    );
+}
+
+#[test]
 fn opencode_prelaunch_event_crosses_the_authenticated_socket_before_exec() {
     let tool = FakeTool::new("opencode");
     tool.resource(

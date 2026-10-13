@@ -1005,6 +1005,19 @@ fn opencode_source_config(environment: &BTreeMap<String, String>) -> Option<Path
 }
 
 fn copy_directory_contents(source: &Path, destination: &Path) -> Result<(), LaunchError> {
+    let root = source.canonicalize().map_err(|error| {
+        LaunchError::Plan(format!(
+            "could not resolve OpenCode config directory: {error}"
+        ))
+    })?;
+    copy_opencode_config_tree(&root, &root, destination)
+}
+
+fn copy_opencode_config_tree(
+    root: &Path,
+    source: &Path,
+    destination: &Path,
+) -> Result<(), LaunchError> {
     for entry in fs::read_dir(source)
         .map_err(|error| LaunchError::Plan(format!("could not read OpenCode config: {error}")))?
     {
@@ -1014,14 +1027,14 @@ fn copy_directory_contents(source: &Path, destination: &Path) -> Result<(), Laun
         let metadata = entry.file_type().map_err(|error| {
             LaunchError::Plan(format!("could not inspect OpenCode config entry: {error}"))
         })?;
-        if metadata.is_symlink() {
-            return Err(LaunchError::Plan(format!(
-                "OpenCode source config contains a symlink: {}",
-                entry.path().display()
-            )));
-        }
         let target = destination.join(entry.file_name());
-        if metadata.is_dir() {
+        if metadata.is_symlink() {
+            // npm's node_modules/.bin entries are relative symlinks. The Mac
+            // launcher copies those links. Keep only relative links whose
+            // complete resolution stays inside the source tree: absolute
+            // links would still point at the user's config after copying.
+            reproduce_opencode_config_symlink(root, &entry.path(), &target)?;
+        } else if metadata.is_dir() {
             fs::create_dir(&target).map_err(|error| {
                 LaunchError::Plan(format!(
                     "could not create OpenCode overlay directory: {error}"
@@ -1032,7 +1045,7 @@ fn copy_directory_contents(source: &Path, destination: &Path) -> Result<(), Laun
                     "could not protect OpenCode overlay directory: {error}"
                 ))
             })?;
-            copy_directory_contents(&entry.path(), &target)?;
+            copy_opencode_config_tree(root, &entry.path(), &target)?;
         } else if metadata.is_file() {
             let bytes = fs::read(entry.path()).map_err(|error| {
                 LaunchError::Plan(format!("could not read OpenCode config entry: {error}"))
@@ -1041,6 +1054,51 @@ fn copy_directory_contents(source: &Path, destination: &Path) -> Result<(), Laun
         }
     }
     Ok(())
+}
+
+fn reproduce_opencode_config_symlink(
+    root: &Path,
+    source: &Path,
+    destination: &Path,
+) -> Result<(), LaunchError> {
+    let link = fs::read_link(source).map_err(|error| {
+        LaunchError::Plan(format!("could not read OpenCode config symlink: {error}"))
+    })?;
+    if !opencode_symlink_target_stays_inside(root, source, &link) {
+        return Err(LaunchError::Plan(format!(
+            "OpenCode source config contains a symlink that is not a resolvable in-tree relative link: {}",
+            source.display()
+        )));
+    }
+    std::os::unix::fs::symlink(&link, destination).map_err(|error| {
+        LaunchError::Plan(format!(
+            "could not reproduce OpenCode config symlink: {error}"
+        ))
+    })?;
+    Ok(())
+}
+
+fn opencode_symlink_target_stays_inside(root: &Path, link_path: &Path, target: &Path) -> bool {
+    if target.is_absolute() {
+        return false;
+    }
+    let Some(parent) = link_path.parent() else {
+        return false;
+    };
+    let mut resolved = parent.to_path_buf();
+    for component in target.components() {
+        // Resolve before processing the next component: lexically removing
+        // `alias/..` ignores where alias actually points. Reject excursions
+        // outside root even if later components would return to the source.
+        let Ok(next) = resolved.join(component).canonicalize() else {
+            return false;
+        };
+        if !next.starts_with(root) {
+            return false;
+        }
+        resolved = next;
+    }
+    true
 }
 
 fn resolve_opencode_sibling(executable: PathBuf) -> PathBuf {
