@@ -129,11 +129,11 @@ thread. If progress stops, it reports at approximately 500 ms, 2 seconds and
 (including recovery). Healthy updates produce no observer records.
 
 The records distinguish layout/application ticks, server ranking, server
-projection, tooltip/accessibility updates, menu construction and popover
-replacement. They include a correlation sequence, elapsed times and available
-Linux kernel wait name/syscall **number only**. They contain no terminal text,
-agent messages, URLs, paths, syscall arguments or protocol payloads. State is
-fixed-size, with no event queue. Nonblocking local journal delivery can drop
+projection, tooltip/accessibility updates, menu construction/content updates and
+initial popover attachment. They include a correlation sequence, elapsed times
+and available Linux kernel wait name/syscall **number only**. They contain no
+terminal text, agent messages, URLs, paths, syscall arguments or protocol payloads.
+State is fixed-size, with no event queue. Nonblocking local journal delivery can drop
 records if the journal is unavailable or full; startup reports installation
 failure explicitly. Journal retention follows the system's existing limits.
 

@@ -17,6 +17,7 @@ pub(crate) enum Phase {
     ServerTooltip,
     ServerAccessibility,
     ServerMenuBuild,
+    ServerMenuContent,
     ServerPopoverReplace,
 }
 
@@ -223,8 +224,10 @@ impl Drop for Observer {
 }
 
 fn send_journal(journal: &UnixDatagram, message: &str) -> std::io::Result<usize> {
+    // The native protocol requires a newline after every field, including the
+    // last one. A successful send without it silently loses MESSAGE at ingest.
     let record =
-        format!("PRIORITY=4\nSYSLOG_IDENTIFIER=tornadotty-ui-diagnostics\nMESSAGE={message}");
+        format!("PRIORITY=4\nSYSLOG_IDENTIFIER=tornadotty-ui-diagnostics\nMESSAGE={message}\n");
     journal.send(record.as_bytes())
 }
 
@@ -359,6 +362,71 @@ mod tests {
             kernel_wait(None),
             ("unavailable".to_owned(), "unavailable".to_owned())
         );
+    }
+
+    #[test]
+    #[ignore = "requires a readable local systemd journal and its native socket"]
+    fn local_journal_retains_stall_message_before_blocked_scope_returns() {
+        use std::process::Command;
+
+        let output = Command::new("journalctl")
+            .args(["--no-pager", "--lines=0", "--show-cursor"])
+            .output()
+            .expect("local journal cursor");
+        assert!(output.status.success(), "local journal must be readable");
+        let cursor = String::from_utf8(output.stdout)
+            .unwrap()
+            .lines()
+            .find_map(|line| line.strip_prefix("-- cursor: ").map(str::to_owned))
+            .expect("local journal must provide a cursor");
+        let journal = UnixDatagram::unbound().unwrap();
+        journal.connect("/run/systemd/journal/socket").unwrap();
+        journal.set_nonblocking(true).unwrap();
+        let observer = Observer::start(move |message| {
+            send_journal(&journal, &message).expect("send local diagnostic");
+        })
+        .unwrap();
+        let blocked = enter(Phase::ServerPopoverReplace);
+        let deadline = Instant::now() + Duration::from_secs(3);
+        loop {
+            let output = Command::new("journalctl")
+                .args([
+                    "--no-pager",
+                    "--output=json",
+                    "--lines=3",
+                    "--after-cursor",
+                    &cursor,
+                    "SYSLOG_IDENTIFIER=tornadotty-ui-diagnostics",
+                    &format!("_PID={}", std::process::id()),
+                ])
+                .output()
+                .expect("read local diagnostic");
+            assert!(output.status.success(), "local journal read must succeed");
+            let reports = String::from_utf8(output.stdout).unwrap();
+            let retained = reports.lines().any(|line| {
+                let record: serde_json::Value = serde_json::from_str(line).unwrap();
+                record["MESSAGE"].as_str().is_some_and(|message| {
+                    message.contains("state=stalled")
+                        && message.contains("phase=ServerPopoverReplace")
+                })
+            });
+            if retained {
+                // The real journal, not just a successful send or mock sink,
+                // must retain evidence while this GUI operation is blocked.
+                assert_eq!(
+                    observer.state.lock().unwrap().phase,
+                    Phase::ServerPopoverReplace
+                );
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "journal did not retain the blocked-phase MESSAGE"
+            );
+            thread::sleep(Duration::from_millis(25));
+        }
+        drop(blocked);
+        drop(observer);
     }
 
     #[test]

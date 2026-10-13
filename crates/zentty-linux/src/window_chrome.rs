@@ -79,6 +79,7 @@ pub(crate) struct WindowChrome {
     rendered_fleet: RefCell<Vec<zentty_core::FleetPaneSnapshot>>,
     server_primary: gtk::Button,
     server_menu: gtk::MenuButton,
+    server_popover: gtk::Popover,
     rendered_servers: RefCell<Vec<(String, String, String)>>,
     open_with_primary: gtk::Button,
     open_with_menu: gtk::MenuButton,
@@ -174,6 +175,12 @@ impl WindowChrome {
         server_menu.set_icon_name("pan-down-symbolic");
         server_menu.set_tooltip_text(Some("Show server menu"));
         server_menu.update_property(&[gtk::accessible::Property::Label("Show server menu")]);
+        let server_popover = gtk::Popover::new();
+        {
+            let _attach =
+                crate::ui_diagnostics::enter(crate::ui_diagnostics::Phase::ServerPopoverReplace);
+            server_menu.set_popover(Some(&server_popover));
+        }
         server_menu.set_visible(false);
         server_menu.connect_active_notify(|button| {
             eprintln!(
@@ -224,6 +231,7 @@ impl WindowChrome {
             rendered_fleet: RefCell::new(Vec::new()),
             server_primary,
             server_menu,
+            server_popover,
             rendered_servers: RefCell::new(Vec::new()),
             open_with_primary,
             open_with_menu,
@@ -245,6 +253,7 @@ impl WindowChrome {
             })
             .collect::<Vec<_>>();
         let Some(primary) = visible.first() else {
+            self.server_popover.popdown();
             self.server_primary.set_visible(false);
             self.server_menu.set_visible(false);
             return;
@@ -281,7 +290,6 @@ impl WindowChrome {
         *self.rendered_servers.borrow_mut() = projection;
 
         let build = enter(Phase::ServerMenuBuild);
-        let popover = gtk::Popover::new();
         let list = gtk::Box::new(gtk::Orientation::Vertical, 2);
         list.set_margin_top(6);
         list.set_margin_bottom(6);
@@ -298,7 +306,7 @@ impl WindowChrome {
             button.set_tooltip_text(Some(&ranked.server.url));
             button.set_action_name(Some("workspace.open-server"));
             button.set_action_target_value(Some(&ranked.server.origin.to_variant()));
-            let menu = popover.downgrade();
+            let menu = self.server_popover.downgrade();
             button.connect_clicked(move |_| {
                 if let Some(menu) = menu.upgrade() {
                     menu.popdown();
@@ -306,11 +314,15 @@ impl WindowChrome {
             });
             list.append(&button);
         }
-        popover.set_child(Some(&list));
         drop(build);
         {
-            let _replace = enter(Phase::ServerPopoverReplace);
-            self.server_menu.set_popover(Some(&popover));
+            let _contents = enter(Phase::ServerMenuContent);
+            // Reattaching a fresh popover can block GTK for seconds in a
+            // long-running host. Keep its parent/native lifetime stable and
+            // release only the obsolete rows. Dismiss a changed open menu as
+            // before, rather than changing click targets under the pointer.
+            self.server_popover.popdown();
+            self.server_popover.set_child(Some(&list));
         }
         self.server_menu.set_visible(true);
         self.server_menu.set_sensitive(true);

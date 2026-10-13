@@ -26,7 +26,98 @@ fn servers() -> Vec<RankedServer> {
 
 #[test]
 #[ignore = "requires a controlled GTK display"]
-fn blocked_server_popover_reports_before_gtk_returns_without_payloads() {
+fn server_menu_updates_preserve_the_native_popup_and_route_current_entries() {
+    gtk::init().expect("controlled GTK display");
+    let chrome = WindowChrome::new();
+    let window = gtk::Window::new();
+    window.set_child(Some(chrome.widget()));
+    let mut entries = servers();
+    chrome.configure_servers(&entries, "regulate");
+    gtk::prelude::WidgetExt::realize(&window);
+    let popup = chrome.server_menu.popover().unwrap();
+    gtk::prelude::WidgetExt::realize(&popup);
+    let surface = popup.surface().expect("real native popup surface");
+    let renderer = popup.renderer().expect("real native popup renderer");
+    assert!(renderer.is_realized());
+
+    let activated = std::rc::Rc::new(RefCell::new(Vec::new()));
+    let observed = std::rc::Rc::clone(&activated);
+    let action = gtk::gio::SimpleAction::new("open-server", Some(gtk::glib::VariantTy::STRING));
+    action.connect_activate(move |_, parameter| {
+        observed
+            .borrow_mut()
+            .push(parameter.unwrap().str().unwrap().to_owned());
+    });
+    let actions = gtk::gio::SimpleActionGroup::new();
+    actions.add_action(&action);
+    window.insert_action_group("workspace", Some(&actions));
+
+    for iteration in 0..32 {
+        let old_list = popup.child().unwrap().downgrade();
+        let lane = if iteration % 2 == 0 {
+            "bro"
+        } else {
+            "regulate"
+        };
+        for entry in &mut entries {
+            entry.server.worklane_id = lane.to_owned();
+        }
+        let origin = format!("http://localhost:{}", 4000 + iteration);
+        entries[0].server.origin.clone_from(&origin);
+        entries[0].server.url = format!("{origin}/current");
+        entries[0].server.display = format!("current server {iteration}");
+        entries[1].tier = ServerRelevanceTier::Hidden;
+        chrome.configure_servers(&entries, lane);
+
+        assert_eq!(
+            chrome.server_menu.popover().unwrap(),
+            popup,
+            "server churn and lane changes must not replace the native popup"
+        );
+        assert_eq!(popup.surface().unwrap(), surface);
+        assert_eq!(popup.renderer().unwrap(), renderer);
+        assert!(renderer.is_realized());
+        assert!(
+            old_list.upgrade().is_none(),
+            "obsolete entries must finalize"
+        );
+        let list = popup.child().unwrap();
+        assert_eq!(
+            list.observe_children().n_items(),
+            7,
+            "heading plus six visible servers"
+        );
+        let first = list
+            .first_child()
+            .unwrap()
+            .next_sibling()
+            .unwrap()
+            .downcast::<gtk::Button>()
+            .unwrap();
+        assert_eq!(
+            first.label().as_deref(),
+            Some(entries[0].server.display.as_str())
+        );
+        assert_eq!(
+            first.tooltip_text().as_deref(),
+            Some(entries[0].server.url.as_str())
+        );
+        first.emit_clicked();
+        assert_eq!(activated.borrow().last(), Some(&origin));
+
+        chrome.configure_servers(&[], "empty");
+        assert!(!chrome.server_primary.is_visible());
+        assert!(!chrome.server_menu.is_visible());
+        chrome.configure_servers(&entries, lane);
+        assert_eq!(popup.surface().unwrap(), surface);
+        assert_eq!(popup.renderer().unwrap(), renderer);
+    }
+    window.destroy();
+}
+
+#[test]
+#[ignore = "requires a controlled GTK display"]
+fn blocked_server_menu_content_reports_before_gtk_returns_without_payloads() {
     gtk::init().expect("controlled GTK display");
     let (sender, receiver) = std::sync::mpsc::sync_channel(4);
     let _observer = crate::ui_diagnostics::Observer::for_test(move |message| {
@@ -35,14 +126,14 @@ fn blocked_server_popover_reports_before_gtk_returns_without_payloads() {
     let chrome = WindowChrome::new();
     let reported = std::rc::Rc::new(std::cell::Cell::new(false));
     let observed = std::rc::Rc::clone(&reported);
-    chrome.server_menu.connect_popover_notify(move |_| {
-        // GTK is inside set_popover here. Evidence must arrive from the
+    chrome.server_popover.connect_child_notify(move |_| {
+        // GTK is inside set_child here. Evidence must arrive from the
         // observer before this deliberately blocked GUI callback can return.
         let message = receiver
             .recv_timeout(std::time::Duration::from_secs(3))
             .unwrap();
         assert!(message.contains("state=stalled"));
-        assert!(message.contains("phase=ServerPopoverReplace"));
+        assert!(message.contains("phase=ServerMenuContent"));
         assert!(!message.contains("PRIVATE_DIAGNOSTIC_MARKER"));
         eprintln!("controlled-ui-report {message}");
         observed.set(true);
@@ -62,14 +153,17 @@ fn server_menu_reuses_unchanged_widgets_and_releases_replaced_widgets() {
     let chrome = WindowChrome::new();
     let mut servers = servers();
     chrome.configure_servers(&servers, "regulate");
-    let previous = chrome.server_menu.popover().unwrap().downgrade();
+    let original_popup = chrome.server_menu.popover().unwrap();
+    let previous = original_popup.child().unwrap().downgrade();
     servers[0].server.display = "renamed server".into();
     chrome.configure_servers(&servers, "regulate");
     assert!(
         previous.upgrade().is_none(),
-        "replaced menu must finalize, not retain its buttons in a cycle"
+        "replaced entries must finalize, not retain their buttons in a cycle"
     );
     let current = chrome.server_menu.popover().unwrap();
+    assert_eq!(current, original_popup, "changed entries reuse the popup");
+    drop(original_popup);
     for _ in 0..25 {
         servers[0].server.updated_at_ms += 1;
         chrome.configure_servers(&servers, "regulate");

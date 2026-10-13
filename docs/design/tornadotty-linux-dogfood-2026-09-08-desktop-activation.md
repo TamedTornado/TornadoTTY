@@ -1296,3 +1296,173 @@ pending the coordinated bug-batch release. GH-174 remains open for that adoption
   and no binary/configuration changed. Bro can relaunch from the current pane;
   actual resumed-session confirmation and permanent per-session binding remain
   pending under #204. Operational recovery is not a permanent fix.
+
+### 2026-10-10: Bro stalls, display disconnect, and missing observer messages
+
+- Jason reported repeated Wait / Force Quit prompts, suspected Bro's first
+  pane, then an application exit requiring restart. He reaffirmed that shell
+  activity must not take down the entire workspace. That acceptance boundary
+  is recorded under [#160](https://github.com/TamedTornado/TornadoTTY/issues/160):
+  app-owned presentation triggered by pane activity must also remain bounded;
+  subprocess separation or successful restart is not sufficient containment.
+- Failed GUI PID 3905299 has 111 completed server-chrome stalls in the bounded
+  06:00–07:00:21 CEST journal interval, all for Bro/worklane-1. Twenty-two are
+  at least ten seconds; maximum 22,386 ms at 06:37:14, summed server-stage time
+  741,714 ms. Bro's first pane is pane-19. This attributes delay to the active
+  lane's server-controls path, not specifically its shell, ranking, or GTK
+  setter. Other measured stages are near zero in representative entries.
+- At 07:00:19, a 3946 ms server stage is followed by Wayland errno=32,
+  display-error=0, protocol-code=0, object-id=0, interface=none and GDK Broken
+  pipe. GNOME logs client communication error for the same PID. New GUI
+  1248514 starts ca9f824e41c9 at 07:00:22. The old startup revision was not
+  recovered from the inspected interval; the new build is not its provenance.
+  No contemporary OOM/segfault/GPU-reset evidence found in the inspected kernel
+  interval; coredumpctl is unavailable. This matches #190's exit mechanism,
+  not a proven native pane crash or a demonstrated stall-to-disconnect cause.
+- Confirmed separate #199 defect: 361 native observer journal records exist in
+  that hour, but none has a MESSAGE field. The sender omitted the final newline
+  required by the [native journal protocol](https://systemd.io/JOURNAL_NATIVE_PROTOCOL/).
+  Journald accepted the datagram but discarded the unterminated field. Earlier
+  mock-sink/GTK callback tests verified production of evidence, not journal
+  ingestion. This explains the missing phase details; it does not recover them.
+- Added a real-journal regression to the existing observer test module: retain
+  a readable stalled-phase message while its scope remains blocked. Initial
+  sandbox run was BLOCKED at the native socket, not a product reproduction.
+  Host run FAILs with the missing MESSAGE. Repair adds the required terminator
+  without changing rate limits, nonblocking delivery, privacy, or GUI behavior.
+  Receipts: `/tmp/tornadotty-gh199-journal-{red,host-red,green}.log`.
+- Focused observer tests PASS (6, including real-journal GREEN); existing
+  blocked-GTK phase/privacy test PASS on private X11 and native Wayland.
+  Integrated `build-local` PASS at `build/gh199-journal` (dirty 1bf3c660 base,
+  unchanged Ghostty b62d1c57f); dependency age audit PASS, 91 packages and zero
+  exceptions. Edited Rust file formatting and diff checks PASS. Workspace
+  formatting check FAILs on pre-existing unrelated formatting; not rewritten.
+  Receipts: `/tmp/tornadotty-gh199-gtk-{x11,wayland}.log`,
+  `/tmp/tornadotty-gh199-build.log`, `/tmp/tornadotty-gh199-fmt-check.log`.
+  No full qualification, mutation-strength claim, commit, or push. Installation
+  coordination requested; staged artifacts are not the currently running GUI.
+- #185/#190/#199 and the containment epic have the bounded evidence and explicit
+  gaps. Original freeze/disconnect remains unreproduced in isolation and unfixed;
+  no speculative server-menu, backend, or broker change. No live input, signal,
+  tracing, restart, saved-state modification, or installation performed.
+- Subsequent explicit install request completed without restart. The tested
+  dirty 1bf3c6601933 GUI was staged beside the installed executable, byte-verified,
+  then atomically renamed into place with root:root/0755 ownership and mode.
+  Installed SHA256 `a15780dae254c1527bd86384cc9756ae6c696f140d48dcbfef982cbec79c3ab6`;
+  installed version and bundled-loader resolution PASS. Existing Ghostty and
+  layer-shell libraries match the staged build exactly; both and the CLI were
+  left untouched and their hashes verified after installation.
+- At installation the live GUI was PID 2277571 (started 07:14:17 CEST), not the
+  earlier investigation PID. It and helper PID 2335466 retain executable
+  identity `66307:75497578:226107688` before/after; no signal, input, or restart
+  was sent. Rollback executable and metadata:
+  `/tmp/tornadotty-gh199-journal-rollback.QG0D42`. Fixed evidence delivery starts
+  on the next user launch, not in this still-running old process. No fresh test
+  run, commit, push, release, or freeze/crash-resolution claim is implied by
+  installation.
+
+### 2026-10-11: slow switching still occurs in the pre-install GUI (#185)
+
+- Jason reported slow worklane switching at 19:57 CEST. GUI PID 2277571 still
+  runs its October 10 07:14:17 executable, identity
+  `66307:75497578:226107688`; the installed replacement is
+  `66307:75497477:226107560`. The journal-framing repair has not run in this
+  session. Recent observer records still have no MESSAGE field.
+- Completed switch/render records at 19:56:59, 19:57:04, and 19:57:15 report
+  server-controls times of 2454, 2160, and 2213 ms for worklanes 1, 6, and 3.
+  Layout takes 1–2 ms; other chrome phases are approximately zero. Further
+  lane-1/lane-6 records at 19:58:06/:11 show 1990/2028 ms. This confirms a
+  multi-worklane server-controls stall, not a Bro-only or shell-startup defect.
+  Ranking versus the GTK setters remains unresolved.
+- Attempted nonblocking recovery of the existing observer's otherwise-lost
+  messages at its dedicated thread's journal send boundary. Exact PID/TID
+  filters, bounded static diagnostic bytes, 60-second and then coordinated
+  120-second windows; no GTK probes, stack collection, ptrace stops, terminal
+  payloads, input, or signals to the app. Initial tracer setup rejected a
+  512-byte string limit before attaching; corrected to its supported 200-byte
+  bound. Both captures completed and detached with no observer messages.
+- The second capture's journal also has no switches, completed slow operations,
+  or observer records after 20:00:45: no recurrence was sampled, not a passing
+  responsiveness test or proof that capture delivery works. User switch check
+  remains pending. Local receipts: `/tmp/tornadotty-gh185-observer-20261011*`
+  and `/tmp/tornadotty-gh185-observer-switch-20261011*`. Live executable identity
+  is unchanged afterward. No behavioral repair, new test/build, installation,
+  restart, saved-state change, commit, or push. Root cause remains open.
+- Jason subsequently restarted at 20:14:33 CEST. New GUI PID 404171 reports
+  dirty 1bf3c6601933 and enables the observer; its executable byte-matches the
+  installed diagnostics repair (SHA256
+  `a15780dae254c1527bd86384cc9756ae6c696f140d48dcbfef982cbec79c3ab6`).
+  The repair is now running, not merely installed. Through 20:15:17 no slow
+  worklane or observer stall record appears for this new PID. No recurrence
+  has yet exercised live message delivery; absence is not a latency-fix claim.
+
+### 2026-10-13: Wait / Force Quit now localizes to server popover attachment
+
+- Jason reported another prompt near 14:46 CEST. GUI PID 404171 still runs the
+  verified dirty 1bf3c660 diagnostics build. The observer now delivers readable
+  real-incident records: one `ServerPopoverReplace` sequence reaches 9839 ms
+  phase age at 14:46:33; completed server stages at :33/:42 are 9881/8258 ms.
+  The second stage is also sampled inside replacement. This identifies
+  `gtk_menu_button_set_popover`, not ranking, tooltip or accessibility setters.
+- A separate MainLoop episode at 14:40 lasts about ten seconds, including a
+  page-wait sample before entering server replacement. Do not assign every
+  heartbeat delay or the earlier #190 disconnect to the newly localized call.
+  No display-failure record found in the inspected 14:37–14:47:30 interval.
+- Two bounded 60-second, main-thread/PID-filtered eBPF duration samples ran
+  without stacks, terminal data, ptrace stops, live input or app signals.
+  First measures one 1191 ms menu replacement, with no nested native/renderer
+  unrealize observed. Second measures `gtk_widget_set_parent` taking
+  2641/3741/2283 ms inside replacements of 2641/3741/2284 ms. Attaching the new
+  popover accounts for those delays; renderer teardown is not the measured
+  cause. Both probes completed and detached before any test compilation.
+- GTK 4.14.5's
+  [menu-button implementation](https://github.com/GNOME/gtk/blob/4.14.5/gtk/gtkmenubutton.c)
+  unparents the previous popover and parents the replacement on every setter.
+  Repair direction: retain one attached server popup and replace only entries,
+  preserving dismissal, action routing, native lifetime, and stale-child
+  release. The deeper GTK attachment cost remains unknown; avoiding repeated
+  attachment is not proof that all long-running stalls or crashes are solved.
+- Bounded receipts: `/tmp/tornadotty-gh185-20261013-incident.log`,
+  `/tmp/tornadotty-gh185-popover-timings-20261013.{bt,log}`, and
+  `/tmp/tornadotty-gh185-parent-timings-20261013.{bt,log}`. Focused regression
+  work uses the existing chrome lifecycle tests and development-server journey;
+  no full qualification or live-client changes.
+- Repair implemented: one window-owned server popover is attached during
+  construction. Changed projections dismiss the open popup as before and swap
+  its contents, not the popup itself. Unchanged projections reuse their entries;
+  empty lanes hide/dismiss controls. Button callbacks retain weak popup refs.
+  Content updates get their own diagnostic phase, `ServerMenuContent`.
+- New real GTK regression FAILs the old implementation on the first changed
+  projection replacing the native popup. Candidate PASSes on isolated X11 and
+  native Wayland: 32 lane/URL/label changes, preserved surface and realized
+  renderer, fresh action routing, hidden-entry filtering, empty-lane return,
+  and obsolete-child release. Existing ownership and controlled-stall/privacy
+  tests PASS on both backends (three GTK tests each); six observer tests,
+  including real-journal ingestion, PASS. Initial test compilation had an
+  ambiguous NativeExt/WidgetExt `realize` call; corrected to WidgetExt before
+  the RED run. The fresh-instance test does not recreate the live ten-second
+  duration; it prevents the measured repeated popup-attachment path.
+- Existing `rust-development-servers` product journey PASS on private X11:
+  real GTK/Ghostty/PTY/listener and authenticated watch, physical menu/primary
+  interaction, browser routing, persisted ignore, safe stop and isolated restart.
+  Native Wayland product journey NOT RUN; native GTK coverage is not a substitute.
+  Integrated `build-local` PASS at `build/gh185-persistent-menu`, dirty 1bf3c660
+  base and unchanged Ghostty b62d1c57f. Age audit PASS: 91 packages, zero
+  exceptions. Targeted formatting/diff checks PASS. Strict host Clippy FAILs
+  on six pre-existing missing-errors documentation findings in workload library
+  code, before binary linting; no suppressions or unrelated rewrites.
+- Receipts: `/tmp/gh185-persistent-menu-{red,build,product-x11,clippy}.log`,
+  `/tmp/gh185-server_menu_updates_preserve_the_native_popup_and_route_current_entries-{x11,wayland}.log`,
+  the neighboring ownership/content-diagnostics logs, and
+  `/tmp/gh185-observer-tests.log`. No full qualification, mutation-strength
+  claim, commit, push or release; broader long-running responsiveness and
+  disconnect causality remain open under #185/#190.
+- Jason authorized installation without restart. GUI alone atomically replaced,
+  byte/owner/mode/version/loader checks PASS; SHA256
+  `f53b9435a5aa75f48e0824159a423477b495e305c68306b572739db518186854`.
+  Matching engine/layer-shell libraries and CLI were untouched and hash-verified.
+  Live GUI 404171 and helper 3242306 retain identity
+  `66307:75497477:226107560` before/after; they still run the previous build.
+  Rollback: `/tmp/tornadotty-gh185-menu-rollback.C0VBqU`. No live restart,
+  signals, input or saved-state modification. Repair activates next user launch;
+  live confirmation is pending, not passed.
