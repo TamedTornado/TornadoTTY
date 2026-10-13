@@ -1,0 +1,62 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+temporary="$(mktemp -d)"
+trap 'rm -rf -- "${temporary}"' EXIT
+mkdir -p "${temporary}/bin" "${temporary}/bundle"
+export PUBLISH_TEST_ARGS="${temporary}/args"
+export PUBLISH_TEST_NOTES="${temporary}/published-notes"
+cat >"${temporary}/bin/gh" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+case "${1:-}:${2:-}" in
+    release:view) exit 1 ;;
+    release:create)
+        printf '%s\n' "$@" >"${PUBLISH_TEST_ARGS}"
+        while (( $# > 0 )); do
+            if [[ "$1" == --notes-file ]]; then
+                cp -- "$2" "${PUBLISH_TEST_NOTES}"
+                break
+            fi
+            shift
+        done
+        ;;
+    *) exit 64 ;;
+esac
+EOF
+chmod +x "${temporary}/bin/gh"
+export PATH="${temporary}/bin:${PATH}"
+export ZENTTY_RELEASE_CARGO_VERSION=0.1.2
+export ZENTTY_RELEASE_HEAD_TAGS=v0.1.2
+jq -n --arg revision "$(git -C "${repo_root}" rev-parse HEAD)" \
+    '{schema_version:1,identity:{tag:"v0.1.2"},zentty_revision:$revision,
+      prerelease:true,artifacts:[{family:"debian"},{family:"arch"}]}' \
+    >"${temporary}/bundle/release-metadata.json"
+printf 'fixture bytes\n' >"${temporary}/bundle/artifact"
+(cd "${temporary}/bundle"; sha256sum artifact release-metadata.json >SHA256SUMS)
+notes="${temporary}/current release notes.md"
+printf 'Current release: focused checks passed; other coverage remains pending.\n' >"${notes}"
+publisher="${repo_root}/linux/scripts/publish-release"
+"${publisher}" v0.1.2 "${temporary}/bundle" "${notes}"
+cmp "${notes}" "${PUBLISH_TEST_NOTES}"
+grep -Fxq -- '--verify-tag' "${PUBLISH_TEST_ARGS}"
+grep -Fxq -- '--prerelease' "${PUBLISH_TEST_ARGS}"
+grep -Fxq -- 'TamedTornado/TornadoTTY' "${PUBLISH_TEST_ARGS}"
+grep -Fxq -- 'Tornado TTY 0.1.2' "${PUBLISH_TEST_ARGS}"
+rm -- "${PUBLISH_TEST_ARGS}" "${PUBLISH_TEST_NOTES}"
+if "${publisher}" v0.1.2 "${temporary}/bundle" "${temporary}/missing-notes" \
+    >"${temporary}/failure" 2>&1; then
+    echo 'publish-release-test: missing notes unexpectedly published' >&2
+    exit 1
+fi
+grep -Fq 'release notes are missing or empty' "${temporary}/failure"
+[[ ! -e "${PUBLISH_TEST_ARGS}" ]]
+printf 'changed bytes\n' >>"${temporary}/bundle/artifact"
+if "${publisher}" v0.1.2 "${temporary}/bundle" "${notes}" \
+    >"${temporary}/failure" 2>&1; then
+    echo 'publish-release-test: corrupt bundle unexpectedly published' >&2
+    exit 1
+fi
+[[ ! -e "${PUBLISH_TEST_ARGS}" ]]
+echo 'publish-release-test: PASS current-notes+explicit-repository+prerelease+missing-notes+corrupt-bundle'

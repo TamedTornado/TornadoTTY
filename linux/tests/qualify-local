@@ -33,6 +33,9 @@ support_tests=(
     linux/tests/application-api-schema
     linux/tests/packaging-policy-test
     linux/tests/package-notices-test
+    linux/tests/publish-release-test
+    linux/tests/release-version-test
+    linux/tests/release-workflow-contract-test
     linux/tests/debian-package-builder-contract-test
     linux/tests/debian-package-lifecycle-test
     linux/tests/package-qualification-receipt-test
