@@ -51,6 +51,7 @@ pub(crate) fn configure_header(
             button.set_widget_name(BUTTON_NAME);
             button.set_icon_name("starred-symbolic");
             button.set_tooltip_text(Some("Bookmarks & presets"));
+            crate::menu_tooltip::suppress_while_open(&button);
             button.set_accessible_role(gtk::AccessibleRole::Button);
             button.update_property(&[gtk::accessible::Property::Label("Bookmarks and presets")]);
             button.connect_active_notify(|button| {
@@ -202,6 +203,7 @@ fn create_menu(window: &gtk::Window, parent_popover: &gtk::Popover) -> gtk::Menu
     });
     menu.set_icon_name("list-add-symbolic");
     menu.set_tooltip_text(Some("Create or import bookmark or preset"));
+    crate::menu_tooltip::suppress_while_open(&menu);
     let popover = gtk::Popover::new();
     let actions = gtk::Box::new(gtk::Orientation::Vertical, 4);
     actions.set_margin_top(6);
@@ -385,6 +387,7 @@ fn template_row(
     });
     menu.set_icon_name("view-more-symbolic");
     menu.set_tooltip_text(Some("Template actions"));
+    crate::menu_tooltip::suppress_while_open(&menu);
     menu.update_property(&[gtk::accessible::Property::Label(&format!(
         "Actions for {}",
         template.name

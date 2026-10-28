@@ -597,6 +597,7 @@ fn make_worklane_card(
     menu.set_widget_name(&widget_name("worklane-menu", &summary.worklane_id));
     menu.set_icon_name("view-more-symbolic");
     menu.set_tooltip_text(Some("Worklane actions"));
+    crate::menu_tooltip::suppress_while_open(&menu);
     menu.set_accessible_role(gtk::AccessibleRole::Button);
     menu.update_property(&[gtk::accessible::Property::Label("Worklane actions")]);
     menu.set_popover(Some(&make_context_menu(
@@ -1200,6 +1201,7 @@ fn make_pane_row(
     pane_menu.add_css_class("sidebar-pane-actions");
     pane_menu.set_icon_name("view-more-symbolic");
     pane_menu.set_tooltip_text(Some("Pane actions"));
+    crate::menu_tooltip::suppress_while_open(&pane_menu);
     pane_menu.set_accessible_role(gtk::AccessibleRole::Button);
     pane_menu.update_property(&[gtk::accessible::Property::Label("Pane actions")]);
     let focus_pane_id = pane.pane_id.clone();
@@ -1711,6 +1713,7 @@ fn make_move_to_worklane_button(
     let button = gtk::MenuButton::new();
     button.add_css_class("pane-context-action");
     button.set_tooltip_text(Some(source_ui::MOVE_PANE_TO_WORKLANE));
+    crate::menu_tooltip::suppress_while_open(&button);
     button.update_property(&[gtk::accessible::Property::Label(
         source_ui::MOVE_PANE_TO_WORKLANE,
     )]);

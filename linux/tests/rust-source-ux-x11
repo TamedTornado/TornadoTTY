@@ -517,7 +517,12 @@ capture_unmasked_visual_scenario empty-dark-x11
 # divider to its source default before the remaining coordinate-driven flow.
 xdotool mousemove --window "${window_id}" 282 350 mousedown 1
 xdotool mousemove --sync --window "${window_id}" 360 350 mouseup 1
-sleep 0.2
+# The allocation receipt follows the preferred-width receipt on a later frame.
+for _ in $(seq 1 100); do
+    [[ "$(grep -F 'zentty-linux: sidebar-width=' "${log}" | tail -1)" != \
+        'zentty-linux: sidebar-width=280' ]] && break
+    sleep 0.05
+done
 dragged_sidebar_width="$(
     grep -F 'zentty-linux: sidebar-width=' "${log}" | tail -1 | cut -d= -f2
 )"
@@ -546,9 +551,17 @@ if [[ "${ZENTTY_SOURCE_UX_SIDEBAR_RESIZE_ONLY:-false}" == true ]]; then
     echo 'Rust source UX sidebar resize evidence passed: x11, real-pointer=true, persisted-width=true'
     exit 0
 fi
-xdotool mousemove --window "${window_id}" "$((dragged_sidebar_width + 2))" 350 mousedown 1
-xdotool mousemove --sync --window "${window_id}" 288 350 mouseup 1
-sleep 0.2
+# The wide sidebar handle keeps the exact grab offset inside its separator, so
+# return the grab point by that offset to land on the preferred width.
+return_grab_x="$((dragged_sidebar_width + 2))"
+xdotool mousemove --window "${window_id}" "${return_grab_x}" 350 mousedown 1
+xdotool mousemove --sync --window "${window_id}" \
+    "$((280 + return_grab_x - dragged_sidebar_width))" 350 mouseup 1
+for _ in $(seq 1 100); do
+    [[ "$(grep -F 'zentty-linux: sidebar-width=' "${log}" | tail -1)" != \
+        "zentty-linux: sidebar-width=${dragged_sidebar_width}" ]] && break
+    sleep 0.05
+done
 restored_sidebar_width="$(
     grep -F 'zentty-linux: sidebar-width=' "${log}" | tail -1 | cut -d= -f2
 )"
@@ -1111,42 +1124,55 @@ sleep 0.15
 xdotool key --window "${window_id}" ctrl+Tab
 sleep 0.1
 
-# X11 horizontal wheel buttons exercise the real GTK scroll controller. The
-# source owns horizontal/Shift-wheel gestures for pane switching while leaving
-# ordinary vertical terminal scrollback alone.
-previous_count="$(grep -Fxc 'zentty-linux: action=previous-pane worklane=worklane-1 pane=pane-1' "${log}" || true)"
-xdotool mousemove --window "${window_id}" 900 350 click 6
-for _ in $(seq 1 100); do
-    (( $(grep -Fxc 'zentty-linux: action=previous-pane worklane=worklane-1 pane=pane-1' "${log}" || true) > previous_count )) && break
-    sleep 0.05
-done
-(( $(grep -Fxc 'zentty-linux: action=previous-pane worklane=worklane-1 pane=pane-1' "${log}" || true) > previous_count )) ||
-    fail "horizontal wheel-left did not traverse to the previous pane"
-xdotool type --window "${window_id}" --delay 10 'wheel-previous'
-xdotool key --window "${window_id}" Return
-for _ in $(seq 1 100); do
-    grep -Fxq 'zentty-linux: title-pane=pane-1 value=focus:wheel-previous' "${log}" && break
-    sleep 0.05
-done
-grep -Fxq 'zentty-linux: title-pane=pane-1 value=focus:wheel-previous' "${log}" ||
-    fail "horizontal wheel traversal did not restore the original PTY"
+# X11 wheel buttons exercise the real GTK scroll controller. Shift+wheel
+# settles the adjacent column of the active pane strip and stops at either
+# edge, as the source does. Linux deliberately ignores unshifted discrete
+# wheel tilt: tilt wheels emit stray horizontal notches during ordinary
+# scrolling (GH-211). A typed probe answered by the expected real PTY orders
+# each check after every preceding X11 wheel event.
+expect_wheel_probe_pane() {
+    local pane="$1" probe="$2" message="$3"
+    xdotool type --window "${window_id}" --delay 10 "${probe}"
+    xdotool key --window "${window_id}" Return
+    for _ in $(seq 1 100); do
+        grep -Fxq "zentty-linux: title-pane=${pane} value=focus:${probe}" "${log}" && return 0
+        sleep 0.05
+    done
+    fail "${message}"
+}
+shift_wheel() {
+    xdotool mousemove --window "${window_id}" "$1" 350 keydown shift click "$2" keyup shift
+}
+wheel_switch_receipts() {
+    grep -Ec '^zentty-linux: (pane-scroll-switch|action=(previous|next)-pane) ' "${log}" || true
+}
 
-next_count="$(grep -Fxc 'zentty-linux: action=next-pane worklane=worklane-1 pane=pane-2' "${log}" || true)"
-xdotool mousemove --window "${window_id}" 500 350 click 7
-for _ in $(seq 1 100); do
-    (( $(grep -Fxc 'zentty-linux: action=next-pane worklane=worklane-1 pane=pane-2' "${log}" || true) > next_count )) && break
-    sleep 0.05
+shift_wheel 900 4
+expect_wheel_probe_pane pane-1 wheel-previous \
+    "Shift+wheel-up did not settle the left column PTY"
+grep -Fxq 'zentty-linux: pane-scroll-switch direction=left result=focused worklane=worklane-1 pane=pane-1' "${log}" ||
+    fail "Shift+wheel-up did not report the settled left column"
+
+shift_wheel 500 4
+expect_wheel_probe_pane pane-1 wheel-left-edge \
+    "Shift+wheel-up at the first column wrapped away from its PTY"
+grep -Fxq 'zentty-linux: pane-scroll-switch direction=left result=edge worklane=worklane-1 pane=pane-1' "${log}" ||
+    fail "Shift+wheel-up at the first column did not report the strip edge"
+
+shift_wheel 500 5
+expect_wheel_probe_pane pane-2 wheel-next \
+    "Shift+wheel-down did not settle the right column PTY"
+grep -Fxq 'zentty-linux: pane-scroll-switch direction=right result=focused worklane=worklane-1 pane=pane-2' "${log}" ||
+    fail "Shift+wheel-down did not report the settled right column"
+
+for button in 6 7; do
+    wheel_receipts_before="$(wheel_switch_receipts)"
+    xdotool mousemove --window "${window_id}" 900 350 click "${button}"
+    expect_wheel_probe_pane pane-2 "wheel-tilt-${button}" \
+        "an unshifted wheel tilt (button ${button}) moved input away from the focused PTY"
+    (( $(wheel_switch_receipts) == wheel_receipts_before )) ||
+        fail "an unshifted wheel tilt (button ${button}) claimed a pane switch"
 done
-(( $(grep -Fxc 'zentty-linux: action=next-pane worklane=worklane-1 pane=pane-2' "${log}" || true) > next_count )) ||
-    fail "horizontal wheel-right did not traverse to the next pane"
-xdotool type --window "${window_id}" --delay 10 'wheel-next'
-xdotool key --window "${window_id}" Return
-for _ in $(seq 1 100); do
-    grep -Fxq 'zentty-linux: title-pane=pane-2 value=focus:wheel-next' "${log}" && break
-    sleep 0.05
-done
-grep -Fxq 'zentty-linux: title-pane=pane-2 value=focus:wheel-next' "${log}" ||
-    fail "horizontal wheel traversal did not restore the second PTY"
 
 # Return focus to the original terminal with a real pointer click. GTK focus
 # entering a Ghostty descendant must update the durable workspace selection;
@@ -1199,7 +1225,17 @@ pane_viewport_height="$(sed -n 's/.* viewport=\([0-9][0-9]*\) .*/\1/p' <<<"${hei
 [[ "${left_width}" =~ ^[1-9][0-9]*$ ]] || fail "leading column width was not observable"
 [[ "${top_height}" =~ ^[1-9][0-9]*$ ]] || fail "top pane height was not observable"
 [[ "${pane_viewport_height}" =~ ^[1-9][0-9]*$ ]] || fail "pane viewport height was not observable"
-divider_x="$((restored_sidebar_width + left_width - 3))"
+# The pane strip ends at the window's right edge. Derive its origin from the
+# observed viewport instead of assuming it starts at the sidebar width: the
+# wide sidebar handle sits between them.
+pane_viewport_width="$(sed -n 's/.* viewport=\([0-9][0-9]*\) .*/\1/p' <<<"${layout_line}")"
+window_width="$(xdotool getwindowgeometry --shell "${window_id}" | sed -n 's/^WIDTH=//p')"
+[[ "${pane_viewport_width}" =~ ^[1-9][0-9]*$ && "${window_width}" =~ ^[1-9][0-9]*$ ]] ||
+    fail "pane strip geometry was not observable"
+pane_strip_x="$((window_width - pane_viewport_width))"
+(( pane_strip_x >= restored_sidebar_width )) ||
+    fail "the pane strip overlapped the pinned sidebar"
+divider_x="$((pane_strip_x + left_width - 3))"
 column_resize_count="$(grep -Fc 'zentty-linux: pane-divider-resize axis=horizontal after=column-worklane-1 ' "${log}" || true)"
 xdotool mousemove --window "${window_id}" "${divider_x}" 350 mousedown 1
 xdotool mousemove --sync --window "${window_id}" "$((divider_x + 60))" 350 mouseup 1
@@ -1207,14 +1243,14 @@ for _ in $(seq 1 100); do
     (( $(grep -Fc 'zentty-linux: pane-divider-resize axis=horizontal after=column-worklane-1 ' "${log}" || true) > column_resize_count )) && break
     sleep 0.05
 done
-resized_left_width="$(grep -F 'zentty-linux: pane-divider-resize axis=horizontal after=column-worklane-1 ' "${log}" | tail -1 | sed -n 's/.*leading=\([0-9.]*\).*/\1/p')"
+resized_left_width="$(grep -F 'zentty-linux: pane-divider-resize axis=horizontal after=column-worklane-1 ' "${log}" | tail -1 | sed -n 's/.*leading=\([0-9.]*\).*/\1/p' || true)"
 awk -v before="${left_width}" -v after="${resized_left_width}" 'BEGIN { exit !(after >= before + 50 && after <= before + 70) }' ||
     fail "real horizontal pane-divider drag did not follow the pointer"
 
 divider_y="$((700 - pane_viewport_height + top_height - 3))"
 pane_resize_count="$(grep -Fc 'zentty-linux: pane-divider-resize axis=vertical column=column-worklane-1 after=pane-1 ' "${log}" || true)"
-xdotool mousemove --window "${window_id}" "$((restored_sidebar_width + left_width / 2))" "${divider_y}" mousedown 1
-xdotool mousemove --sync --window "${window_id}" "$((restored_sidebar_width + left_width / 2))" "$((divider_y + 50))" mouseup 1
+xdotool mousemove --window "${window_id}" "$((pane_strip_x + left_width / 2))" "${divider_y}" mousedown 1
+xdotool mousemove --sync --window "${window_id}" "$((pane_strip_x + left_width / 2))" "$((divider_y + 50))" mouseup 1
 for _ in $(seq 1 100); do
     (( $(grep -Fc 'zentty-linux: pane-divider-resize axis=vertical column=column-worklane-1 after=pane-1 ' "${log}" || true) > pane_resize_count )) && break
     sleep 0.05
@@ -1226,8 +1262,8 @@ done
 # is nondeterministic under parallel qualification, so equalization is kept at
 # the deterministic model/gesture contract layer rather than weakening this
 # real-system journey with a flaky timing dependency.
-xdotool mousemove --window "${window_id}" "$((restored_sidebar_width + left_width / 2))" "$((divider_y + 50))" mousedown 1
-xdotool mousemove --sync --window "${window_id}" "$((restored_sidebar_width + left_width / 2))" "${divider_y}" mouseup 1
+xdotool mousemove --window "${window_id}" "$((pane_strip_x + left_width / 2))" "$((divider_y + 50))" mousedown 1
+xdotool mousemove --sync --window "${window_id}" "$((pane_strip_x + left_width / 2))" "${divider_y}" mouseup 1
 xdotool mousemove --window "${window_id}" "$((divider_x + 60))" 350 mousedown 1
 xdotool mousemove --sync --window "${window_id}" "${divider_x}" 350 mouseup 1
 sleep 0.2
@@ -1570,6 +1606,26 @@ for _ in $(seq 1 100); do
 done
 grep -Fxq 'zentty-linux: worklane-peek=commit worklane=worklane-2 pane=pane-6' "${log}" ||
     fail "Peek did not return to the temporary neighboring worklane"
+
+# GH-211: a single-pane worklane has no adjacent column in either direction.
+# Neither Shift+wheel nor a stray tilt may cycle into a neighboring worklane.
+shift_wheel 700 4
+expect_wheel_probe_pane pane-6 wheel-single-left \
+    "Shift+wheel-up in a single-pane worklane left its PTY"
+grep -Fxq 'zentty-linux: pane-scroll-switch direction=left result=edge worklane=worklane-2 pane=pane-6' "${log}" ||
+    fail "Shift+wheel-up in a single-pane worklane did not report the strip edge"
+shift_wheel 700 5
+expect_wheel_probe_pane pane-6 wheel-single-right \
+    "Shift+wheel-down in a single-pane worklane left its PTY"
+grep -Fxq 'zentty-linux: pane-scroll-switch direction=right result=edge worklane=worklane-2 pane=pane-6' "${log}" ||
+    fail "Shift+wheel-down in a single-pane worklane did not report the strip edge"
+wheel_receipts_before="$(wheel_switch_receipts)"
+xdotool mousemove --window "${window_id}" 700 350 click 6
+expect_wheel_probe_pane pane-6 wheel-single-tilt \
+    "an unshifted wheel tilt in a single-pane worklane left its PTY"
+(( $(wheel_switch_receipts) == wheel_receipts_before )) ||
+    fail "an unshifted wheel tilt in a single-pane worklane claimed a pane switch"
+
 confirmation_count="$(grep -Fc 'zentty-linux: confirmation shown title="Close this pane?"' "${log}" || true)"
 scroll_focus_before_temp_close="$(grep -Fc 'zentty-linux: pane-scroll-focused' "${log}" || true)"
 xdotool key ctrl+w

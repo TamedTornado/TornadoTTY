@@ -366,7 +366,7 @@
         "schedule_layout_render", "pane_cell_size", "minimum_column_width",
         "minimum_pane_pair_height", "resize_focused_pane_by_cell",
         "render_sidebar", "render_chrome", "refresh_sidebar_metadata", "refresh_project_context_presentation", "ranked_servers", "schedule_active_worklane_reveal",
-        "navigate_history", "select_adjacent_pane", "select_adjacent_worklane",
+        "navigate_history", "select_adjacent_pane", "scroll_switch_pane", "select_adjacent_worklane",
         "pane_references_in_sidebar_order", "current_pane_reference", "select_pane_reference",
         "peek_previews", "topology_generation", "worklane_id_for_pane", "pane_drag_payload", "pane_drag_payloads", "pane_drag_context", "pane_move_target_for_outcome", "adopt_live_pane_at_drop_target", "commit_same_window_pane_drop", "focus_terminal_after_pane_drop", "focus_terminal_after_drag_cancel", "refresh_pane_presentation", "refresh_right_insertion_behavior",
         "reload_ghostty_config", "report_ghostty_reload_metrics", "apply_theme_mode_command"

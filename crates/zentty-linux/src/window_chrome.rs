@@ -174,6 +174,7 @@ impl WindowChrome {
         server_menu.add_css_class("server-menu");
         server_menu.set_icon_name("pan-down-symbolic");
         server_menu.set_tooltip_text(Some("Show server menu"));
+        crate::menu_tooltip::suppress_while_open(&server_menu);
         server_menu.update_property(&[gtk::accessible::Property::Label("Show server menu")]);
         let server_popover = gtk::Popover::new();
         {
@@ -199,6 +200,7 @@ impl WindowChrome {
         open_with_menu.add_css_class("open-with-menu");
         open_with_menu.set_icon_name("pan-down-symbolic");
         open_with_menu.set_tooltip_text(Some(source_ui::SHOW_OPEN_WITH_MENU));
+        crate::menu_tooltip::suppress_while_open(&open_with_menu);
         open_with_menu.update_property(&[gtk::accessible::Property::Label(
             source_ui::SHOW_OPEN_WITH_MENU,
         )]);
@@ -638,6 +640,7 @@ fn configure_menu_button(button: &gtk::MenuButton, spec: ChromeControlSpec) {
     button.add_css_class("zentty-chrome-icon");
     button.set_icon_name(spec.icon);
     button.set_tooltip_text(Some(spec.label));
+    crate::menu_tooltip::suppress_while_open(button);
     button.set_accessible_role(gtk::AccessibleRole::Button);
     button.update_property(&[gtk::accessible::Property::Label(spec.label)]);
     button.set_sensitive(spec.enabled);

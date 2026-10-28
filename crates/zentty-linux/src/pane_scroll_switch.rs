@@ -37,12 +37,15 @@ impl PaneScrollSwitch {
         unit: ScrollUnit,
         now_micros: i64,
     ) -> ScrollSwitchResult {
-        let delta = if dx.abs() > dy.abs() && dx != 0.0 {
-            dx
-        } else if shifted && unit == ScrollUnit::Wheel && dy != 0.0 {
-            dy
-        } else {
-            return ScrollSwitchResult::Unhandled;
+        // Linux divergence (GH-211): tilt wheels emit discrete horizontal
+        // notches under light sideways pressure during ordinary scrolling.
+        // Only an explicit Shift+wheel switches from a discrete wheel; an
+        // unshifted tilt stays with the terminal like any other wheel input.
+        let delta = match unit {
+            ScrollUnit::Wheel if shifted && dy != 0.0 => dy,
+            ScrollUnit::Wheel if shifted && dx != 0.0 => dx,
+            ScrollUnit::Surface if dx.abs() > dy.abs() && dx != 0.0 => dx,
+            ScrollUnit::Wheel | ScrollUnit::Surface => return ScrollSwitchResult::Unhandled,
         };
         if unit == ScrollUnit::Surface && now_micros < self.cooldown_until_micros {
             return ScrollSwitchResult::Consumed;
@@ -120,5 +123,27 @@ mod tests {
         assert!(SOURCE.contains("static let precise: CGFloat = 40"));
         assert!(SOURCE.contains("static let wheel: CGFloat = 1"));
         assert!(SOURCE.contains("postSwitchCooldown: TimeInterval = 0.15"));
+    }
+
+    #[test]
+    fn discrete_wheel_tilt_never_switches_without_shift() {
+        let mut gesture = PaneScrollSwitch::default();
+        for dx in [-1.0, 1.0, -0.25, 3.0] {
+            gesture.reset();
+            assert_eq!(
+                gesture.handle(dx, 0.0, false, ScrollUnit::Wheel, 0),
+                ScrollSwitchResult::Unhandled
+            );
+        }
+        gesture.reset();
+        assert_eq!(
+            gesture.handle(-1.0, 0.0, true, ScrollUnit::Wheel, 0),
+            ScrollSwitchResult::Previous
+        );
+        gesture.reset();
+        assert_eq!(
+            gesture.handle(0.0, 1.0, true, ScrollUnit::Wheel, 0),
+            ScrollSwitchResult::Next
+        );
     }
 }

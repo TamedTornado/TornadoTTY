@@ -2055,13 +2055,17 @@ impl ApplicationShell {
             {
                 ScrollSwitchResult::Previous => {
                     if let Some(shell) = weak.upgrade() {
-                        shell.borrow_mut().select_adjacent_pane(false);
+                        shell
+                            .borrow_mut()
+                            .scroll_switch_pane(application_commands::PaneFocusDirection::Left);
                     }
                     glib::Propagation::Stop
                 }
                 ScrollSwitchResult::Next => {
                     if let Some(shell) = weak.upgrade() {
-                        shell.borrow_mut().select_adjacent_pane(true);
+                        shell
+                            .borrow_mut()
+                            .scroll_switch_pane(application_commands::PaneFocusDirection::Right);
                     }
                     glib::Propagation::Stop
                 }
@@ -4931,6 +4935,27 @@ impl ApplicationShell {
         }
         self.scroll_panes_to_focused();
         self.focus_selected_surface();
+    }
+
+    /// Source `PaneStripView.settleAdjacentPane`: a scroll switch settles the
+    /// adjacent column of the active pane strip and stops at either edge. It
+    /// never cycles into another worklane (GH-211).
+    fn scroll_switch_pane(&mut self, direction: application_commands::PaneFocusDirection) {
+        let direction_name = match direction {
+            application_commands::PaneFocusDirection::Left => "left",
+            application_commands::PaneFocusDirection::Right => "right",
+            application_commands::PaneFocusDirection::Up => "up",
+            application_commands::PaneFocusDirection::Down => "down",
+        };
+        let result = match self.apply_focus_operation(Some(direction)) {
+            Ok(()) => "focused",
+            Err(_) => "edge",
+        };
+        eprintln!(
+            "zentty-linux: pane-scroll-switch direction={direction_name} result={result} worklane={} pane={}",
+            self.state.active_worklane_id(),
+            self.state.focused_pane_id().unwrap_or("none")
+        );
     }
 
     fn select_adjacent_worklane(&mut self, forward: bool) {

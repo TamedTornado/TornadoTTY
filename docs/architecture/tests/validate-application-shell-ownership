@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
+# jq sorts by codepoint; compare its output under the same collation.
+export LC_ALL=C
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 contract="${ZENTTY_APPLICATION_SHELL_OWNERSHIP_CONTRACT:-${repo_root}/docs/architecture/application-shell-responsibilities-v1.json}"

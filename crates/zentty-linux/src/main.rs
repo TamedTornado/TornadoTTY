@@ -26,6 +26,7 @@ mod diagnostics_runtime;
 mod docker_discovery;
 mod general_settings;
 mod global_search_view;
+mod menu_tooltip;
 mod notification_service;
 mod notifications_settings;
 mod open_with_settings;

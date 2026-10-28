@@ -242,3 +242,83 @@
   `/tmp/tornadotty-gh210-spike-wayland-green.log`, and
   `/tmp/tornadotty-gh210-first-frame-valgrind-{red,green-raw,green-suppressed}.log`.
   Copies are preserved in `build/release-v0.1.2-evidence/gh210-first-frame/`.
+
+## Wheel tilt worklane jumps (#211)
+
+- Jason reported that mouse-wheel scrolling in a Claude Code pane intermittently
+  jumped to another worklane. The live client's journal (installed 0.1.2,
+  Wayland) showed `action=previous-pane` landing in a neighboring worklane while
+  he scrolled. A live `evtest` capture of his Logitech G502 confirmed the trigger:
+  over 60 s it sent 6 isolated `REL_HWHEEL -1` notches. One arrived 6 ms
+  into a vertical scroll stream (followed 0.3 ms later by the client's
+  `previous-pane`). Five arrived from light wheel contact with no vertical
+  motion within 24 s. Jason did not intend any tilt.
+- Confirmed cause: the Linux horizontal/Shift-wheel gesture called the global
+  `select_adjacent_pane`, which walks every pane of every worklane and wraps.
+  Source `PaneStripView.settleAdjacentPane` only settles the adjacent column of
+  the current strip and stops at the edges. A "vertical-stream window" filter was
+  considered and rejected: it could not catch the five stray tilts that had no
+  vertical motion nearby.
+- Repair:
+  - The scroll gesture now uses the existing in-worklane
+    `apply_focus_operation(Left/Right)` (parity) and emits a bounded
+    `pane-scroll-switch direction=… result=focused|edge` receipt.
+  - At Jason's direction, an unshifted discrete wheel tilt never switches panes
+    and stays with the terminal (`linux.wheel-tilt-no-pane-switch`).
+  - Shift+wheel and precise horizontal swipes still switch columns.
+  - Keyboard next/previous pane and Peek are unchanged.
+- Unit regression: FAIL before the repair (`dx=-1` unshifted wheel returned
+  `Previous`), PASS after. Strict release-safe Clippy for `zentty-linux` and
+  ShellCheck (warning severity) PASS.
+- `rust-source-ux-x11` gained Shift+wheel left/edge/right, tilt, and
+  single-pane-worklane checks. Each check is ordered by a typed probe that the
+  expected real PTY must answer. The full journey FAILs before the wheel
+  section at HEAD for reasons independent of #211, tracked in #212:
+  - the divider returns to 286 px rather than 278–282;
+  - `empty-dark-x11` differs from its baseline;
+  - an intermittent "pane menu did not open Rename Pane" failure, seen in a
+    HEAD run and a repaired-build run;
+  - one unlocalized silent abort after `pane-controls-revealed-x11`.
+- Diagnostic-only evidence: an uncommitted copy that changed only the divider
+  return coordinate (288 → 282) and a scratch visual map with this actor's
+  baselines uncompared. One repaired-build run passed the complete two-column
+  wheel section (Shift left focused, left edge without wraparound, Shift right
+  focused, tilt buttons 6/7 not switching) and continued past it. The basis is
+  its later `pane-controls-*` visual receipts; the journey deleted its product
+  log on that run's silent exit. This is not a
+  journey PASS. The journey-level red and the single-pane-worklane section have
+  not been observed. Live QA on the G502 is pending.
+
+## Source UX journey triage and menu tooltip repair (#212)
+
+- Triage of the failures that blocked `rust-source-ux-x11`:
+  - The sidebar divider return expectation predates the wide 8 px sidebar
+    handle (`51bf7e73`). The narrow handle measured its grab offset from an
+    extended hit area, so the drag to 288 used to land on 280. It now lands on
+    286. The journey now derives the return point from the grab offset and
+    keeps the 278–282 assertion.
+  - The same handle moved the pane strip 8 px right, so the column-divider
+    press landed inside pane-1. The journey now derives the strip origin as
+    window width minus the observed viewport. Its width extraction no longer
+    aborts silently under `pipefail`.
+  - The forward drag read its allocation receipt after a fixed 0.2 s sleep. It
+    now waits, bounded, for the allocation receipt that follows
+    `sidebar-preferred-width`.
+- Confirmed product defect: a sidebar row's ⋮ "Pane actions" tooltip appeared
+  over the open menu's first item ("Rename Pane…") and swallowed the click.
+  A real-display screenshot taken before the click showed the tooltip covering
+  the target. A real user would hit the same defect. Every tooltip-bearing menu
+  button now suppresses its tooltip while its menu is open
+  (`menu_tooltip::suppress_while_open`). After the repair, three runs passed
+  the Rename step, which had failed three of three immediately before.
+- The ApplicationShell ownership validator compared jq's codepoint-sorted
+  lists with locale-collated `sort`, so it failed under `en_US.UTF-8` at clean
+  HEAD. It now pins `LC_ALL=C`. The contract and its negative tests PASS; it
+  also registers `scroll_switch_pane`.
+- Not resolved: every visual baseline reached so far differs from current
+  presentation, and later journey steps still fail (palette disabled-state
+  receipts, arranged-pane post-layout scroll). Jason directed that this old
+  pixel-baseline journey not be resurrected. Product-cell status was not
+  updated from these runs; no journey PASS is claimed.
+- Jason authorized commit, push, and package installation without restarting
+  the live client. Live QA of #211 and the tooltip repair is pending.
