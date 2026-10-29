@@ -91,10 +91,21 @@ trap 'rm -rf -- "${temporary}"' EXIT
 
 if [[ -z "${index_cache}" ]]; then
     cargo_home="${CARGO_HOME:-${HOME}/.cargo}"
-    mapfile -t index_candidates < <(
-        find "${cargo_home}/registry/index" -mindepth 1 -maxdepth 1 -type d \
-            -name 'index.crates.io-*' -print 2>/dev/null | LC_ALL=C sort
-    )
+    find_index_caches() {
+        mapfile -t index_candidates < <(
+            find "${cargo_home}/registry/index" -mindepth 1 -maxdepth 1 -type d \
+                -name 'index.crates.io-*' -print 2>/dev/null | LC_ALL=C sort
+        )
+    }
+    find_index_caches
+    if (( ${#index_candidates[@]} == 0 )) && [[ "${lock_file}" == "${repo_root}/Cargo.lock" ]]; then
+        # A fresh host (such as a CI runner) has no index cache until Cargo
+        # resolves the lockfile. The fetch obeys the checked-in age policy.
+        command -v cargo >/dev/null || fail "cargo is required to populate the crates.io index cache"
+        cargo fetch --locked --manifest-path "${repo_root}/Cargo.toml" >&2 ||
+            fail "could not populate the crates.io index cache from ${lock_file}"
+        find_index_caches
+    fi
     (( ${#index_candidates[@]} == 1 )) ||
         fail "exactly one crates.io sparse index cache is required"
     index_cache="${index_candidates[0]}/.cache"
