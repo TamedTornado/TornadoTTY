@@ -634,8 +634,23 @@ EOF
     echo "Real Codex startup wheel control passed: ${backend}, two-panes, no-cursor-key-injection, private-home, no-user-auth, no-model-prompt; reported failure not reproduced"
 }
 
-run_codex_review_routing() {
+# Semantic Codex OSC 9 attention requires a live native Codex ancestor whose
+# argv matches the managed launch. Wrap the scripted actor in a native envelope.
+use_native_codex_launcher() {
     local native_actor="${repo_root}/target/release-safe/platform_contract"
+    [[ -x "${native_actor}" ]] || fail "build the existing platform_contract helper for native Codex launch verification"
+    rm -- "${fake_bin}/codex"
+    cp "${native_actor}" "${fake_bin}/codex"
+    export ZENTTY_TEST_CODEX_ACTOR="${actor}"
+}
+
+restore_scripted_codex_launcher() {
+    unset ZENTTY_TEST_CODEX_ACTOR
+    rm -- "${fake_bin}/codex"
+    ln -s "${actor}" "${fake_bin}/codex"
+}
+
+run_codex_review_routing() {
     local notification_receipt
     notification_receipt="$(mktemp)"
     [[ -n "${DBUS_SESSION_BUS_ADDRESS:-}" ]] || fail "Codex routing requires a private dbus-run-session"
@@ -643,10 +658,7 @@ run_codex_review_routing() {
     server_pid=$!
     zentty_product_wait_for_log "${notification_receipt}" '"event":"ready"' \
         "controlled notification daemon did not become ready" || fail "notification daemon missing"
-    [[ -x "${native_actor}" ]] || fail "build the existing platform_contract helper for native Codex launch verification"
-    rm -- "${fake_bin}/codex"
-    cp "${native_actor}" "${fake_bin}/codex"
-    export ZENTTY_TEST_CODEX_ACTOR="${actor}"
+    use_native_codex_launcher
     run_adapter \
         codex \
         'codex' \
@@ -672,9 +684,7 @@ run_codex_review_routing() {
         --method be.zenjoy.Zentty.TestNotificationService.Quit >/dev/null
     wait_for_server "controlled notification daemon"
     rm -- "${notification_receipt}"
-    unset ZENTTY_TEST_CODEX_ACTOR
-    rm -- "${fake_bin}/codex"
-    ln -s "${actor}" "${fake_bin}/codex"
+    restore_scripted_codex_launcher
 }
 
 run_agent_status_lifecycle() {
@@ -799,6 +809,7 @@ run_codex_osc_progress() {
     log="$(mktemp)"
     state_directory="$(mktemp -d)"
     private_home="$(mktemp -d)"
+    use_native_codex_launcher
     PATH="${fake_bin}:${PATH}" GDK_SCALE=1 GDK_DPI_SCALE=1 \
         HOME="${private_home}" \
         ZENTTY_CONTROLLED_AGENT_PROFILE=codex-progress \
@@ -819,6 +830,7 @@ run_codex_osc_progress() {
         "OSC progress did not resume canonical Codex running state"
 
     wait_for_product "Codex OSC-progress product run" 200
+    restore_scripted_codex_launcher
     rm -f -- "${log}"
     rm -rf -- "${state_directory}" "${private_home}"
     log=""
