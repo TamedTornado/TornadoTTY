@@ -122,4 +122,4 @@ grep -Fq 'sha512-EQLEXecAG2ptxI7UpBMo2TR/ga5596/c/OsYF/0LoUDh5JANZ7IoGqlzBEWbuEV
     "${repo_root}/linux/ci/node-tools/pnpm-lock.yaml" ||
     fail "Codex lockfile integrity changed"
 
-echo "validate-ci-environment: PASS baseline=ubuntu-24.04-amd64 rust=1.97.1 zig=0.16.0 pnpm=10.32.1"
+echo "validate-ci-environment: PASS baseline=ubuntu-24.04-amd64 rust=1.100.0-nightly zig=0.16.0 pnpm=10.32.1"
