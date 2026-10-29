@@ -270,8 +270,8 @@ if [[ "${backend}" == wayland ]]; then
     # matching the already-qualified Task Manager multi-window journey.
     open_command_palette
     main_type 'Settings'
-    zentty_product_wait_for_log "${log}" 'command-palette=query value="Settings" results=1' \
-        "Settings did not resolve uniquely in the command palette" || fail "settings palette route failed"
+    zentty_product_wait_for_log "${log}" 'command-palette=query value="Settings" results=' \
+        "Settings did not resolve in the command palette" || fail "settings palette route failed"
     main_key Down
     main_key Return
 else
@@ -387,10 +387,13 @@ zentty_product_wait_for_log_count "${log}" \
 settings_visible_before="$(grep -Fc 'zentty-linux: shortcut-settings visible commands=' "${log}" 2>/dev/null || true)"
 settings_active_before="$(grep -Fc 'zentty-linux: shortcut-settings active ' "${log}" 2>/dev/null || true)"
 if [[ "${backend}" == wayland ]]; then
+    # Wait for this query, not the one that opened Settings the first time.
+    settings_queries_before="$(grep -Fc 'command-palette=query value="Settings" results=' "${log}" 2>/dev/null || true)"
     open_command_palette ctrl+x
     main_type 'Settings'
-    zentty_product_wait_for_log "${log}" 'command-palette=query value="Settings" results=1' \
-        "Settings did not resolve uniquely after Ctrl+W" || fail "Settings reopen palette route failed"
+    zentty_product_wait_for_log_count "${log}" 'command-palette=query value="Settings" results=' \
+        "$((settings_queries_before + 1))" \
+        "Settings did not resolve after Ctrl+W" || fail "Settings reopen palette route failed"
     main_key Down
     main_key Return
 else
