@@ -57,6 +57,7 @@ jq -e \
   (.tools.pnpm == $m.toolchains.node.pnpm_version) and
   (.tools.fish == "fish, version \($m.toolchains.qualification_shells.fish.version)") and
   (.tools.nu == $m.toolchains.qualification_shells.nu.version) and
+  (.tools.bun == $m.toolchains.bun.version) and
   (.tools.gemini == $m.reviewed_agent_clis.gemini.version) and
   (.tools.codex == "codex-cli \($m.reviewed_agent_clis.codex.version)") and
   (.tools.claude == "\($m.reviewed_agent_clis.claude.version) (Claude Code)") and

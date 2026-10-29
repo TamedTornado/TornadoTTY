@@ -39,6 +39,11 @@ jq -e '
   (.toolchains.zig.version == "0.16.0") and
   (.toolchains.zig.url == "https://ziglang.org/download/0.16.0/zig-x86_64-linux-0.16.0.tar.xz") and
   (.toolchains.zig.sha256 | test("^[0-9a-f]{64}$")) and
+  (.toolchains.bun == {
+    version:"1.3.4",
+    url:"https://github.com/oven-sh/bun/releases/download/bun-v1.3.4/bun-linux-x64.zip",
+    sha256:"33c6996049e8d37e8b815959b14b05e5b6f496121352bf11bae7d047193c28bf"
+  }) and
   (.toolchains.blueprint_compiler.version == "0.16.0") and
   (.toolchains.blueprint_compiler.revision | test("^[0-9a-f]{40}$")) and
   (.toolchains.node == {

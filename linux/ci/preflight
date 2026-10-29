@@ -103,6 +103,8 @@ pnpm_command="$(command -v pnpm || true)"
     fail "Fish version is not reviewed"
 [[ "$("${nu}" --version)" == "$(jq -r '.toolchains.qualification_shells.nu.version' "${manifest}")" ]] ||
     fail "Nushell version is not reviewed"
+[[ "$(bun --version 2>/dev/null)" == "$(jq -r '.toolchains.bun.version' "${manifest}")" ]] ||
+    fail "Bun version is not reviewed"
 [[ "$(readlink -f -- "${fish}")" != "${repo_root}/"* &&
     "$(readlink -f -- "${nu}")" != "${repo_root}/"* ]] ||
     fail "qualification shells must remain available outside the source checkout"
@@ -141,6 +143,7 @@ jq -n \
     --arg pnpm "$("${pnpm}" --version)" \
     --arg fish "$("${fish}" --version)" \
     --arg nu "$("${nu}" --version)" \
+    --arg bun "$(bun --version)" \
     --arg gemini "$(gemini --version 2>/dev/null | tail -1)" \
     --arg codex "$(codex --version 2>/dev/null)" \
     --arg claude "$(claude --version 2>/dev/null)" \
@@ -154,7 +157,7 @@ jq -n \
       environment_manifest_sha256:$manifest_sha256,
       qualification_profile:$qualification_profile,
       apt_packages:$apt_packages,
-      tools:{zig:$zig,rust:$rust,pnpm:$pnpm,fish:$fish,nu:$nu,
+      tools:{zig:$zig,rust:$rust,pnpm:$pnpm,fish:$fish,nu:$nu,bun:$bun,
         gemini:$gemini,codex:$codex,claude:$claude},
       prerequisites:{user_namespaces:true,bubblewrap:true,controlled_x11:true,controlled_wayland:true}
     }

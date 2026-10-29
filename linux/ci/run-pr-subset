@@ -109,6 +109,9 @@ run_cell() {
     log="${logs_dir}/${id}.log"
     report="${logs_dir}/${id}.environment.json"
     rm -f -- "${log}" "${report}"
+    # Mirror the qualifier's profile wrappers, including the compositor and
+    # scaling selections that share the input-capable Wayland harness.
+    profile_environment=()
     case "${profile}" in
         isolated-none-v1)
             wrapper="${repo_root}/linux/tests/isolated-session"
@@ -130,6 +133,31 @@ run_cell() {
             report_variable=ZENTTY_NESTED_WAYLAND_INPUT_REPORT
             backend=wayland
             ;;
+        nested-wayland-multiwindow-v1)
+            wrapper="${repo_root}/linux/tests/nested-wayland-input"
+            report_variable=ZENTTY_NESTED_WAYLAND_INPUT_REPORT
+            backend=wayland
+            profile_environment=(ZENTTY_NESTED_WAYLAND_INPUT_COMPOSITOR=weston)
+            ;;
+        nested-wayland-scaling-v1)
+            wrapper="${repo_root}/linux/tests/nested-wayland-input"
+            report_variable=ZENTTY_NESTED_WAYLAND_INPUT_REPORT
+            backend=wayland
+            profile_environment=(
+                ZENTTY_NESTED_WAYLAND_INPUT_COMPOSITOR=labwc
+                ZENTTY_NESTED_WAYLAND_SCALING_PROFILE=1
+            )
+            ;;
+        nested-xwayland-scaling-v1)
+            wrapper="${repo_root}/linux/tests/nested-wayland-input"
+            report_variable=ZENTTY_NESTED_WAYLAND_INPUT_REPORT
+            backend=wayland
+            profile_environment=(
+                ZENTTY_NESTED_WAYLAND_INPUT_COMPOSITOR=labwc
+                ZENTTY_NESTED_WAYLAND_SCALING_PROFILE=1
+                ZENTTY_NESTED_WAYLAND_XWAYLAND_PROFILE=1
+            )
+            ;;
         *) fail "selected cell has unsupported environment profile: ${id}=${profile}" ;;
     esac
     cell_started_at_epoch="$(date +%s)"
@@ -139,6 +167,10 @@ run_cell() {
         -u ZENTTY_NESTED_X11_REPORT \
         -u ZENTTY_NESTED_WAYLAND_REPORT \
         -u ZENTTY_NESTED_WAYLAND_INPUT_REPORT \
+        -u ZENTTY_NESTED_WAYLAND_INPUT_COMPOSITOR \
+        -u ZENTTY_NESTED_WAYLAND_SCALING_PROFILE \
+        -u ZENTTY_NESTED_WAYLAND_XWAYLAND_PROFILE \
+        "${profile_environment[@]}" \
         "${report_variable}=${report}" \
         "${wrapper}" bash -o pipefail -c "${command}" >"${log}" 2>&1
     code=$?

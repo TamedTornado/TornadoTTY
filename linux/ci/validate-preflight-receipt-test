@@ -44,6 +44,7 @@ jq -n \
       pnpm:$m.toolchains.node.pnpm_version,
       fish:"fish, version \($m.toolchains.qualification_shells.fish.version)",
       nu:$m.toolchains.qualification_shells.nu.version,
+      bun:$m.toolchains.bun.version,
       gemini:$m.reviewed_agent_clis.gemini.version,
       codex:"codex-cli \($m.reviewed_agent_clis.codex.version)",
       claude:"\($m.reviewed_agent_clis.claude.version) (Claude Code)"
@@ -71,6 +72,7 @@ expect_rejected dirty-source '.source.trees = "dirty"'
 expect_rejected missing-package '.apt_packages |= del(.fish)'
 expect_rejected wrong-tool '.tools.codex = "codex-cli latest"'
 expect_rejected wrong-rust '.tools.rust = "rustc 1.97.1 (stale)"'
+expect_rejected missing-bun '.tools |= del(.bun)'
 expect_rejected wrong-shell '.tools.fish = "fish, version 3.7.0"'
 expect_rejected wrong-profile '.qualification_profile = "not-reviewed"'
 expect_rejected missing-prerequisite '.prerequisites.controlled_wayland = false'
@@ -95,4 +97,4 @@ if ZENTTY_CI_QUALIFICATION_PROFILE=public-pr \
     fail "public-pr profile accepted a two-hour-old receipt"
 fi
 
-echo "validate-preflight-receipt-test: PASS profiles=full+public-pr negatives=schema+stale+source+apt+tool+rust+shell+profile+prerequisite+run+secret"
+echo "validate-preflight-receipt-test: PASS profiles=full+public-pr negatives=schema+stale+source+apt+tool+rust+bun+shell+profile+prerequisite+run+secret"
