@@ -24,8 +24,6 @@ validate_only=false
 qualification_jobs="${ZENTTY_QUALIFICATION_JOBS:-$(zentty_qualification_matrix_jobs)}"
 qualification_display_jobs="${ZENTTY_QUALIFICATION_DISPLAY_JOBS:-$(zentty_qualification_display_jobs)}"
 qualification_interactive_jobs="${ZENTTY_QUALIFICATION_INTERACTIVE_JOBS:-$(zentty_qualification_interactive_jobs)}"
-qualification_work_cpu_set="${ZENTTY_QUALIFICATION_WORK_CPU_SET:-$(zentty_qualification_cpu_set work)}"
-qualification_display_cpu_set="${ZENTTY_QUALIFICATION_DISPLAY_CPU_SET:-$(zentty_qualification_cpu_set display)}"
 
 if [[ "${1:-}" == "--validate-only" ]]; then
     validate_only=true
@@ -55,17 +53,23 @@ monotonic_milliseconds() {
     fail "ZENTTY_QUALIFICATION_INTERACTIVE_JOBS must be a positive integer"
 (( qualification_interactive_jobs <= qualification_display_jobs )) ||
     fail "ZENTTY_QUALIFICATION_INTERACTIVE_JOBS must not exceed display jobs"
-[[ "${qualification_work_cpu_set}" =~ ^[0-9]+(,[0-9]+)*$ ]] ||
-    fail "ZENTTY_QUALIFICATION_WORK_CPU_SET must be a comma-separated CPU list"
-[[ "${qualification_display_cpu_set}" =~ ^[0-9]+(,[0-9]+)*$ ]] ||
-    fail "ZENTTY_QUALIFICATION_DISPLAY_CPU_SET must be a comma-separated CPU list"
-if comm -12 \
-    <(tr ',' '\n' <<<"${qualification_work_cpu_set}" | sort) \
-    <(tr ',' '\n' <<<"${qualification_display_cpu_set}" | sort) | grep -q .; then
-    fail "qualification work and display CPU sets must not overlap"
-fi
-
 if ! "${validate_only}"; then
+    # Validation must not depend on host topology; only a real run pins cells.
+    cpu_set_override="set ZENTTY_QUALIFICATION_WORK_CPU_SET and ZENTTY_QUALIFICATION_DISPLAY_CPU_SET"
+    qualification_work_cpu_set="${ZENTTY_QUALIFICATION_WORK_CPU_SET:-$(zentty_qualification_cpu_set work)}" ||
+        fail "cannot partition fewer than four physical cores; ${cpu_set_override}"
+    qualification_display_cpu_set="${ZENTTY_QUALIFICATION_DISPLAY_CPU_SET:-$(zentty_qualification_cpu_set display)}" ||
+        fail "cannot partition fewer than four physical cores; ${cpu_set_override}"
+    [[ "${qualification_work_cpu_set}" =~ ^[0-9]+(,[0-9]+)*$ ]] ||
+        fail "ZENTTY_QUALIFICATION_WORK_CPU_SET must be a comma-separated CPU list"
+    [[ "${qualification_display_cpu_set}" =~ ^[0-9]+(,[0-9]+)*$ ]] ||
+        fail "ZENTTY_QUALIFICATION_DISPLAY_CPU_SET must be a comma-separated CPU list"
+    if comm -12 \
+        <(tr ',' '\n' <<<"${qualification_work_cpu_set}" | sort) \
+        <(tr ',' '\n' <<<"${qualification_display_cpu_set}" | sort) | grep -q .; then
+        fail "qualification work and display CPU sets must not overlap"
+    fi
+
     command -v flock >/dev/null || fail "flock is required"
     mkdir -p "$(dirname "${summary}")"
     summary="$(cd "$(dirname "${summary}")" && pwd)/$(basename "${summary}")"
