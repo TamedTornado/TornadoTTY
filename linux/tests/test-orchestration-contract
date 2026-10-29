@@ -130,7 +130,7 @@ require "the placement policy does not state Wayland compositor ownership" \
 require "the placement policy does not reject an X11-only product path" \
     grep -Fq 'X11-only move implementation' "${window_placement_policy}"
 inline_actor_files="$({
-    grep -RIl --include='*' -E 'cat[[:space:]]*>.*[/}]codex|cat[[:space:]]*>.*[/}]claude' \
+    grep -RIl --include='*' -E 'cat[[:space:]]*>.*[/}](codex|claude)["'"'"']?([[:space:]]|$)' \
         "${repo_root}/linux/tests" || true
 } | grep -vFx "${actor}" || true)"
 if [[ -n "${inline_actor_files}" ]]; then

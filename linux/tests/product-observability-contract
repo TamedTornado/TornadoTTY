@@ -51,30 +51,35 @@ for key in crate event_definition parser writer driver session_supervisor input_
     [[ -e "${repo_root}/${path}" ]] || fail "authority path is missing: ${path}"
 done
 
+# Search tracked and untracked non-ignored sources without requiring ripgrep.
+source_grep() {
+    git -C "${repo_root}" grep --untracked -I "$@"
+}
+self_exclusions=(
+    ':!linux/tests/product-observability-contract'
+    ':!linux/tests/product-observability-contract-test'
+)
+source_paths=(crates linux/tests linux/scripts "${self_exclusions[@]}")
+
 jq -r '.authority.activation_sites[]' "${policy}" | sort >"${temp_dir}/declared-activation"
-rg -l 'TORNADOTTY_TEST_RECEIPT_FILE' \
-    --glob '!product-observability-contract' --glob '!product-observability-contract-test' \
-    "${repo_root}/crates" "${repo_root}/linux/tests" "${repo_root}/linux/scripts" |
-    sed "s#^${repo_root}/##" | sort >"${temp_dir}/actual-activation"
+source_grep -l 'TORNADOTTY_TEST_RECEIPT_FILE' -- "${source_paths[@]}" |
+    sort >"${temp_dir}/actual-activation"
 cmp -s "${temp_dir}/declared-activation" "${temp_dir}/actual-activation" || {
     diff -u "${temp_dir}/declared-activation" "${temp_dir}/actual-activation" >&2 || true
     fail "typed product receipt activation escaped its declared authority"
 }
 
 jq -r '.legacy_human_log_consumers[].path' "${policy}" | sort >"${temp_dir}/declared-logs"
-rg -l 'zentty-linux:' --glob '!product-observability-contract' \
-    --glob '!product-observability-contract-test' "${repo_root}/linux/tests" |
-    sed "s#^${repo_root}/##" | sort >"${temp_dir}/actual-logs"
+source_grep -l 'zentty-linux:' -- linux/tests "${self_exclusions[@]}" |
+    sort >"${temp_dir}/actual-logs"
 cmp -s "${temp_dir}/declared-logs" "${temp_dir}/actual-logs" || {
     diff -u "${temp_dir}/declared-logs" "${temp_dir}/actual-logs" >&2 || true
     fail "machine-consumed human log inventory drifted"
 }
 
 jq -r '.receipt_channels[].name' "${policy}" | sort >"${temp_dir}/declared-channels"
-rg -o '(ZENTTY|TORNADOTTY)_[A-Z0-9_]*RECEIPT[A-Z0-9_]*' \
-    --glob '!product-observability-contract' --glob '!product-observability-contract-test' \
-    "${repo_root}/crates" "${repo_root}/linux/tests" "${repo_root}/linux/scripts" |
-    sed 's/.*://' | sort -u >"${temp_dir}/actual-channels"
+source_grep -hoE '(ZENTTY|TORNADOTTY)_[A-Z0-9_]*RECEIPT[A-Z0-9_]*' -- "${source_paths[@]}" |
+    sort -u >"${temp_dir}/actual-channels"
 cmp -s "${temp_dir}/declared-channels" "${temp_dir}/actual-channels" || {
     diff -u "${temp_dir}/declared-channels" "${temp_dir}/actual-channels" >&2 || true
     fail "receipt channel inventory drifted"
@@ -99,9 +104,7 @@ grep -Fq 'tornadotty_test_receipts' \
     "${repo_root}/crates/tornadotty-test-receipts/src/bin/tornadotty-journey-driver.rs" ||
     fail "journey driver does not use the authoritative Rust parser"
 
-if rg -q 'ZENTTY_TEST_RECEIPTS' \
-    --glob '!product-observability-contract' --glob '!product-observability-contract-test' \
-    "${repo_root}/crates" "${repo_root}/linux/tests" "${repo_root}/linux/scripts"; then
+if source_grep -q 'ZENTTY_TEST_RECEIPTS' -- "${source_paths[@]}"; then
     fail "retired ambiguous product receipt channel returned"
 fi
 
