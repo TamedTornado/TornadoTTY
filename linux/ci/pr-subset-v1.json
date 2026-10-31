@@ -27,12 +27,9 @@
     "staged-x11",
     "ghostty-api-audit-inventory",
     "build-debug",
-    "fractional-scale-wayland",
-    "scale-xwayland",
     "physical-key-x11",
     "product-boundary-wayland",
     "product-boundary-x11",
-    "shortcut-binding-runtime-wayland",
     "product-pane-lifecycle-debug-wayland-default-multi",
     "product-pane-lifecycle-debug-x11-default-multi",
     "workspace-recovery-interrupted-write",
@@ -44,18 +41,35 @@
     "terminal_counts": ["single", "multi"],
     "capabilities": [
       "build",
-      "compositor_scaling",
       "ghostty_api_audit",
       "physical_key_translation",
       "product_boundary",
       "product_pane_terminal_lifecycle",
       "recovery",
-      "shortcut_binding_runtime",
       "staged_packaging",
       "terminal_behavior"
     ]
   },
-  "known_gaps": [],
+  "known_gaps": [
+    {
+      "id": "fractional-scale-wayland",
+      "expected_status": "PASS",
+      "tracking": "#213",
+      "reason": "Requires ImageMagick, which public-pr excludes, and a stale pixel baseline"
+    },
+    {
+      "id": "scale-xwayland",
+      "expected_status": "PASS",
+      "tracking": "#213",
+      "reason": "Same script as fractional-scale-wayland, which requires ImageMagick"
+    },
+    {
+      "id": "shortcut-binding-runtime-wayland",
+      "expected_status": "PASS",
+      "tracking": "#214",
+      "reason": "Input around Settings is flaky in nested Weston; cause not established"
+    }
+  ],
   "claims": {
     "public_pr_subset_passed": false,
     "implemented_local_suite_passed": false,

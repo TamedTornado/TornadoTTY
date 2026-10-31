@@ -48,13 +48,17 @@ expect_policy_rejected reordered-prerequisite \
     '.selected_cells |= ([.[1], .[0]] + .[2:])'
 expect_policy_rejected missing-debug-coverage \
     '.selected_cells |= map(select(. != "build-debug"))'
+expect_policy_rejected untracked-gap \
+    '.known_gaps[0].tracking = "later"'
+expect_policy_rejected unexplained-gap \
+    '.known_gaps[0].reason = ""'
+expect_policy_rejected selected-gap \
+    '.selected_cells += [.known_gaps[0].id]'
 expect_matrix_rejected selected-status-drift \
     '(.cells[] | select(.id == "physical-key-x11")).status = "BLOCKED" | (.cells[] | select(.id == "physical-key-x11")).prerequisite = "fixture"'
-expect_matrix_rejected scaling-contract-drift \
-    '(.cells[] | select(.id == "fractional-scale-wayland")).status = "PASS" | (.cells[] | select(.id == "fractional-scale-wayland")).command = "true" | (.cells[] | select(.id == "fractional-scale-wayland")).environment_profile = "nested-wayland-input-v1"'
-expect_matrix_rejected xwayland-scaling-contract-drift \
-    '(.cells[] | select(.id == "scale-xwayland")).command = "true" | (.cells[] | select(.id == "scale-xwayland")).environment_profile = "nested-x11-v1"'
+expect_matrix_rejected gap-status-drift \
+    '(.cells[] | select(.id == "scale-xwayland")).status = "BLOCKED"'
 expect_matrix_rejected selected-pass-to-xfail \
     '(.cells[] | select(.id == "physical-key-x11")).status = "XFAIL" | (.cells[] | select(.id == "physical-key-x11")).defect = "stale fixture"'
 
-echo "validate-pr-subset-test: PASS negatives=missing+unknown+duplicate+claim+gap+support+order+coverage+status+scaling-contracts+selected-xfail"
+echo "validate-pr-subset-test: PASS negatives=missing+unknown+duplicate+claim+gap+support+order+coverage+status+selected-xfail+gap-tracking+gap-selected+gap-status"

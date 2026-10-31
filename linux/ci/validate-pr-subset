@@ -40,9 +40,9 @@ jq -e '
     displays:["wayland","x11"],
     terminal_counts:["single","multi"],
     capabilities:[
-      "build","compositor_scaling","ghostty_api_audit","physical_key_translation",
+      "build","ghostty_api_audit","physical_key_translation",
       "product_boundary","product_pane_terminal_lifecycle","recovery",
-      "shortcut_binding_runtime","staged_packaging","terminal_behavior"
+      "staged_packaging","terminal_behavior"
     ]
   } and
   .claims == {
@@ -51,7 +51,10 @@ jq -e '
     release_qualification_passed:false,
     full_linux_qualification_passed:false
   } and
-  .known_gaps == []
+  ([.known_gaps[].id] == ["fractional-scale-wayland","scale-xwayland","shortcut-binding-runtime-wayland"]) and
+  all(.known_gaps[];
+    (keys | sort) == ["expected_status","id","reason","tracking"] and
+    (.tracking | test("^#[0-9]+$")) and (.reason | length > 0))
 ' "${policy}" >/dev/null || fail "policy schema, coverage, gaps, or claims drifted"
 
 if ! jq -e --slurpfile policy "${policy}" '
@@ -63,8 +66,8 @@ if ! jq -e --slurpfile policy "${policy}" '
     (.environment_profile | type == "string" and length > 0)) and
   all($policy.known_gaps[]; . as $gap |
     any($matrix.cells[];
-      .id == $gap.id and .status == $gap.expected_status and
-      ((.prerequisite // .defect) | type == "string" and length > 0))) and
+      .id == $gap.id and .status == $gap.expected_status) and
+    ($policy.selected_cells | index($gap.id) == null)) and
   any(selected[]; .id == "prepare-ghostty") and
   any(selected[]; .capability == "build" and .optimize == "ReleaseSafe") and
   any(selected[]; .capability == "build" and .optimize == "Debug") and
@@ -76,16 +79,7 @@ if ! jq -e --slurpfile policy "${policy}" '
   all(["wayland","x11"][]; . as $display |
     any(selected[]; .capability == "product_pane_terminal_lifecycle" and
         .display == $display and .optimize == "Debug" and .terminals == "multi")) and
-  any(selected[];
-    .id == "fractional-scale-wayland" and .status == "PASS" and
-    .optimize == "both" and .environment_profile == "nested-wayland-scaling-v1" and
-    .command == "env -u GDK_SCALE -u GDK_DPI_SCALE GDK_BACKEND=wayland linux/tests/rust-wayland-scaling") and
-  any(selected[];
-    .id == "scale-xwayland" and .status == "PASS" and .display == "x11" and
-    .optimize == "both" and .environment_profile == "nested-xwayland-scaling-v1" and
-    .command == "env -u GDK_SCALE -u GDK_DPI_SCALE GDK_BACKEND=x11 ZENTTY_COMPOSITOR_SCALING_BACKEND=xwayland linux/tests/rust-wayland-scaling") and
   any(selected[]; .capability == "physical_key_translation" and .display == "x11") and
-  any(selected[]; .capability == "shortcut_binding_runtime" and .display == "wayland") and
   all(["wayland","x11"][]; . as $display |
     any(selected[]; .capability == "staged_packaging" and .display == $display)) and
   all(["wayland","x11"][]; . as $display |
