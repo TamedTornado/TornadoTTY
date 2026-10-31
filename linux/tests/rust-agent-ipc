@@ -95,8 +95,8 @@ trap cleanup EXIT
 
 case "${scenario}" in
     terminal-notifications | codex-startup-scroll) ;;
-    full | installed-gemini | codex-enrichment | codex-review-routing | copilot-presentation | amp-plugin | cursor-hooks | droid-hooks | kimi-hooks | remaining-hooks | event-coalescing | overload) ;;
-    *) fail "ZENTTY_AGENT_IPC_SCENARIO must be full, installed-gemini, codex-enrichment, codex-review-routing, copilot-presentation, amp-plugin, cursor-hooks, droid-hooks, kimi-hooks, remaining-hooks, event-coalescing, or overload" ;;
+    full | fleet-pointer | installed-gemini | codex-enrichment | codex-review-routing | copilot-presentation | amp-plugin | cursor-hooks | droid-hooks | kimi-hooks | remaining-hooks | event-coalescing | overload) ;;
+    *) fail "ZENTTY_AGENT_IPC_SCENARIO must be full, fleet-pointer, installed-gemini, codex-enrichment, codex-review-routing, copilot-presentation, amp-plugin, cursor-hooks, droid-hooks, kimi-hooks, remaining-hooks, event-coalescing, or overload" ;;
 esac
 
 case "${backend}" in
@@ -838,6 +838,75 @@ run_codex_osc_progress() {
     private_home=""
 }
 
+# A mouse click leaves the pointer over the row, so dismissing the popover makes
+# GTK synthesize a crossing while the activation still mutably borrows the shell.
+# Keyboard activation never crossed that path, and the panic aborted the product.
+run_fleet_pointer_activation() {
+    local response_receipt
+    [[ "${backend}" == x11 ]] || return 0
+    log="$(mktemp)"
+    state_directory="$(mktemp -d)"
+    private_home="$(mktemp -d)"
+    response_receipt="${state_directory}/response"
+    PATH="${fake_bin}:${PATH}" GDK_SCALE=1 GDK_DPI_SCALE=1 \
+        HOME="${private_home}" \
+        ZENTTY_CONTROLLED_AGENT_PROFILE=attention-inbox \
+        ZENTTY_CONTROLLED_ATTENTION_RECEIPT="${response_receipt}" \
+        "${product}" \
+        --command codex \
+        --state-directory "${state_directory}" \
+        --no-session-restore >"${log}" 2>&1 &
+    product_pid=$!
+
+    zentty_product_wait_for_log "${log}" 'sidebar-agent-status pane=pane-1 phase=NeedsInput' \
+        "controlled agent did not reach a waiting fleet row"
+    zentty_product_prepare_input "${backend}" "${log}"
+    zentty_product_ctrl_shift_key "${backend}" p
+    zentty_product_wait_for_log "${log}" 'zentty-linux: command-palette=shown' \
+        "command palette did not open for Agent Status"
+    zentty_product_type "${backend}" "agent activity across every Tornado TTY window"
+    zentty_product_wait_for_log "${log}" 'zentty-linux: command-palette=query value="agent activity' \
+        "Agent Status did not resolve in the command palette"
+    zentty_product_key "${backend}" Down
+    zentty_product_key "${backend}" Return
+    zentty_product_wait_for_log "${log}" 'zentty-linux: fleet-row-focus window=window-1' \
+        "Agent Status did not present its waiting row"
+
+    # The attention commit is the last refresh that rebuilds the row. A click
+    # racing that rebuild has no target and would not test activation at all.
+    zentty_product_wait_for_log "${log}" 'zentty-linux: attention-inbox commit items=1' \
+        "controlled attention did not settle before the click"
+    sleep 0.5
+    # One settled click on the first row, as a person would. Inert clicks first
+    # disturb GTK's pointer state enough to hide the crossing being tested.
+    xdotool mousemove --sync --window "${ZENTTY_PRODUCT_WINDOW_ID}" 211 192
+    sleep 0.3
+    xdotool click 1
+    for _ in {1..40}; do
+        zentty_process_is_running "${product_pid}" || fail "mouse fleet activation aborted the product"
+        grep -Fq 'zentty-linux: fleet-activate ' "${log}" && break
+        sleep 0.05
+    done
+    zentty_product_wait_for_log "${log}" \
+        'zentty-linux: fleet-activate window=window-1 worklane=worklane-1 pane=pane-1 result=' \
+        "a mouse click did not activate the fleet row"
+    zentty_product_wait_for_log "${log}" 'zentty-linux: chrome-popover=agent-fleet state=closed' \
+        "fleet activation did not dismiss its popover"
+
+    # The pane must remain live and own input after the pointer-driven dismissal.
+    zentty_product_prepare_input "${backend}" "${log}"
+    zentty_product_type "${backend}" "fleet-pointer-ok"
+    zentty_product_key "${backend}" Return
+    wait_for_product "fleet pointer activation product run" 200
+    [[ "$(cat "${response_receipt}")" == "response=fleet-pointer-ok" ]] ||
+        fail "pane did not receive input after mouse fleet activation"
+    rm -f -- "${log}"
+    rm -rf -- "${state_directory}" "${private_home}"
+    log=""
+    state_directory=""
+    private_home=""
+}
+
 run_copilot_presentation() {
     log="$(mktemp)"
     state_directory="$(mktemp -d)"
@@ -1322,6 +1391,12 @@ if [[ "${scenario}" == event-coalescing ]]; then
     exit 0
 fi
 
+if [[ "${scenario}" == fleet-pointer ]]; then
+    run_fleet_pointer_activation
+    echo "Rust fleet pointer activation passed: ${backend}, pointer=real-click, popover=dismissed, pane-input=checked"
+    exit 0
+fi
+
 if [[ "${scenario}" == codex-review-routing ]]; then
     run_codex_review_routing
     echo "Rust Codex review routing passed: ${backend}, pre-policy-hook=non-attention, verified-tui=attention, legacy-and-override=ordinary-delivery, helper=real-process, transport=real-unix-socket, child=real-pty, gtk=real"
@@ -1343,6 +1418,7 @@ run_adapter \
     'zentty-linux: sidebar-agent-status pane=pane-1 phase=NeedsInput interaction=GenericInput attention=true'
 run_codex_title_transcript_enrichment
 run_codex_osc_progress
+run_fleet_pointer_activation
 run_copilot_presentation
 run_agent_status_lifecycle
 case "${ZENTTY_RUN_CODEX_LIFECYCLE:-false}" in

@@ -3,11 +3,47 @@ use super::ApplicationShell;
 use gtk::{gdk, glib, prelude::*};
 use std::{
     cell::{Cell, RefCell},
-    rc::Rc,
+    rc::{Rc, Weak},
 };
+
+/// Delivers observed Ctrl state to the shell's pane runtime.
+///
+/// These handlers can run inside a mutable shell borrow: closing a popover
+/// under the pointer makes GTK synthesize a crossing synchronously, so the
+/// window's motion controller fires while the code that closed it still holds
+/// the shell. A blocked update waits for an idle, which applies the newest
+/// state because GDK events outrank idles and may have superseded this one.
+struct BypassObserver {
+    shell: Weak<RefCell<ApplicationShell>>,
+    desired: Cell<bool>,
+    idle_pending: Cell<bool>,
+}
+
+impl BypassObserver {
+    fn observe(self: &Rc<Self>, bypassed: bool) {
+        self.desired.set(bypassed);
+        let Some(shell) = self.shell.upgrade() else {
+            return;
+        };
+        if let Ok(shell) = shell.try_borrow() {
+            shell.pane_runtime.set_controls_bypassed(bypassed);
+        } else if !self.idle_pending.replace(true) {
+            let observer = Rc::clone(self);
+            glib::idle_add_local_once(move || {
+                observer.idle_pending.set(false);
+                observer.observe(observer.desired.get());
+            });
+        }
+    }
+}
 
 pub(super) fn install(shell: &Rc<RefCell<ApplicationShell>>) {
     let window = shell.borrow().window.clone();
+    let observer = Rc::new(BypassObserver {
+        shell: Rc::downgrade(shell),
+        desired: Cell::new(false),
+        idle_pending: Cell::new(false),
+    });
     let key = gtk::EventControllerKey::new();
     key.set_propagation_phase(gtk::PropagationPhase::Capture);
     // GDK key-event modifier masks describe the state before that key's
@@ -15,39 +51,27 @@ pub(super) fn install(shell: &Rc<RefCell<ApplicationShell>>) {
     // does not wait for a later mouse/key event. Track both sides separately.
     let held_controls = Rc::new(Cell::new(0_u8));
     let held = Rc::clone(&held_controls);
-    let weak = Rc::downgrade(shell);
+    let on_event = Rc::clone(&observer);
     key.connect_key_pressed(move |_, key, _, _| {
         let bit = control_bit(key);
         if bit != 0 {
             held.set(held.get() | bit);
-            if let Some(shell) = weak.upgrade() {
-                shell.borrow().pane_runtime.set_controls_bypassed(true);
-            }
+            on_event.observe(true);
         }
         glib::Propagation::Proceed
     });
     let held = Rc::clone(&held_controls);
-    let weak = Rc::downgrade(shell);
+    let on_event = Rc::clone(&observer);
     key.connect_key_released(move |_, key, _, _| {
         let bit = control_bit(key);
         if bit != 0 {
             held.set(held.get() & !bit);
-            if let Some(shell) = weak.upgrade() {
-                shell
-                    .borrow()
-                    .pane_runtime
-                    .set_controls_bypassed(held.get() != 0);
-            }
+            on_event.observe(held.get() != 0);
         }
     });
-    let weak = Rc::downgrade(shell);
+    let on_event = Rc::clone(&observer);
     key.connect_modifiers(move |_, modifiers| {
-        if let Some(shell) = weak.upgrade() {
-            shell
-                .borrow()
-                .pane_runtime
-                .set_controls_bypassed(modifiers.contains(gdk::ModifierType::CONTROL_MASK));
-        }
+        on_event.observe(modifiers.contains(gdk::ModifierType::CONTROL_MASK));
         glib::Propagation::Proceed
     });
     window.add_controller(key);
@@ -56,46 +80,39 @@ pub(super) fn install(shell: &Rc<RefCell<ApplicationShell>>) {
     // pane owns keyboard focus. Capture observes motion above toolbar children.
     let motion = gtk::EventControllerMotion::new();
     motion.set_propagation_phase(gtk::PropagationPhase::Capture);
-    let weak = Rc::downgrade(shell);
+    let on_event = Rc::clone(&observer);
     motion.connect_enter(move |controller, _, _| {
-        if let Some(shell) = weak.upgrade() {
-            shell.borrow().pane_runtime.set_controls_bypassed(
-                controller
-                    .current_event_state()
-                    .contains(gdk::ModifierType::CONTROL_MASK),
-            );
-        }
+        on_event.observe(
+            controller
+                .current_event_state()
+                .contains(gdk::ModifierType::CONTROL_MASK),
+        );
     });
-    let weak = Rc::downgrade(shell);
+    let on_event = Rc::clone(&observer);
     motion.connect_motion(move |controller, _, _| {
-        if let Some(shell) = weak.upgrade() {
-            shell.borrow().pane_runtime.set_controls_bypassed(
-                controller
-                    .current_event_state()
-                    .contains(gdk::ModifierType::CONTROL_MASK),
-            );
-        }
+        on_event.observe(
+            controller
+                .current_event_state()
+                .contains(gdk::ModifierType::CONTROL_MASK),
+        );
     });
     window.add_controller(motion);
 
     // A release delivered to another application must not strand this window.
-    let weak = Rc::downgrade(shell);
     window.connect_is_active_notify(move |window| {
         if !window.is_active() {
             held_controls.set(0);
         }
-        if let Some(shell) = weak.upgrade() {
-            let held = window.is_active()
-                && gtk::prelude::WidgetExt::display(window)
-                    .default_seat()
-                    .and_then(|seat| seat.keyboard())
-                    .is_some_and(|keyboard| {
-                        keyboard
-                            .modifier_state()
-                            .contains(gdk::ModifierType::CONTROL_MASK)
-                    });
-            shell.borrow().pane_runtime.set_controls_bypassed(held);
-        }
+        let held = window.is_active()
+            && gtk::prelude::WidgetExt::display(window)
+                .default_seat()
+                .and_then(|seat| seat.keyboard())
+                .is_some_and(|keyboard| {
+                    keyboard
+                        .modifier_state()
+                        .contains(gdk::ModifierType::CONTROL_MASK)
+                });
+        observer.observe(held);
     });
 }
 
