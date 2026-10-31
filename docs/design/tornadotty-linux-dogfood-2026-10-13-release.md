@@ -322,3 +322,56 @@
   updated from these runs; no journey PASS is claimed.
 - Jason authorized commit, push, and package installation without restarting
   the live client. Live QA of #211 and the tooltip repair is pending.
+
+## Client abort on mouse-clicking an Agent Status row
+
+- Field report, 2026-10-31 16:38:56: the whole client (PID 5606) aborted when
+  Jason opened Agent Status from the gear icon and clicked the row for pane-54,
+  the fifth worklane. Journal:
+  `pane_control_bypass.rs:62 RefCell already mutably borrowed`, then
+  `panic in a function that cannot unwind`. Every window in the process died.
+- Confirmed cause: `activate_attention_target` holds the shell mutably and calls
+  `dismiss_status_popovers`. Unmapping the popover under the pointer makes GTK
+  synthesize a crossing synchronously, so the window's capture motion controller
+  from #203 (`ca9f824e`) called `shell.borrow()` inside that mutable borrow. The
+  stack shows the signal emitted from the `gtk_widget_unmap` cascade.
+- Keyboard activation does not cross, which is why the existing journeys that
+  activate rows from the keyboard missed it.
+- Repair: all six Ctrl observers go through `BypassObserver`. A blocked update
+  waits for one idle, which applies the newest state rather than the state it
+  captured, because GDK events outrank idles and may have superseded it.
+- Regression: `ZENTTY_AGENT_IPC_SCENARIO=fleet-pointer linux/tests/rust-agent-ipc`
+  performs a real X11 click and then checks that the pane still takes input.
+  - Before the repair: 6 of 6 runs aborted with the panic above. A separate
+    scratch reproduction aborted 9 of 9.
+  - After the repair: 6 of 6 PASS, scratch reproduction 3 of 3 survived, the
+    full X11 `rust-agent-ipc` run PASS, and the #203 Ctrl-bypass journey
+    (`rust-divider-layout-driver`, X11) PASS.
+- Early versions of the regression were invalid. A sweep of clicks hid the
+  crossing, and a single click 4 of 5 times activated nothing and did not abort.
+  Waiting for the attention commit and settling first made the abort
+  deterministic. Hypothesis, not confirmed: a click racing a popover re-render
+  has no target, which would be a separate missed-click bug for real users.
+- Not tested: Wayland (the scenario is X11-only) and Bell inbox rows, which
+  reach the same `activate_attention_target` call.
+- Not resolved, tracked in #143: the row claimed input was needed when it was
+  not. pane-54 (Codex) reported `NeedsInput GenericInput` on all 12829 status
+  lines from 00:01 until the abort, so the state was stuck for over 16 hours.
+  Hypothesis, not confirmed because the entry predates the journal window read:
+  `apply_codex_terminal_notification` maps any Codex OSC 9, including genuine
+  completion, to `NeedsInput`. Those lines also log an unchanged status every
+  few seconds, which the logging policy says not to do by default.
+
+## Public CI subset reduced to what it can run
+
+- Jason chose to drop the cells blocking advisory CI and track them as gaps
+  rather than repair them now. `known_gaps` in `linux/ci/pr-subset-v1.json`
+  names them, and the validator requires each to be tracked, explained, present
+  in the matrix and absent from `selected_cells`.
+- Dropped: `fractional-scale-wayland` and `scale-xwayland` (#213), and
+  `shortcut-binding-runtime-wayland` (#214). `scale-xwayland` was not in the
+  original request. It runs the same script, which unconditionally requires
+  ImageMagick, so keeping it would have left CI red. CI never reached it, so its
+  failure there is inferred from the script.
+- Public CI therefore no longer exercises compositor scaling or runtime shortcut
+  binding. The matrix cells and their local status are unchanged.
